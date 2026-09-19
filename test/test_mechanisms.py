@@ -47,17 +47,8 @@ def test_every_registered_mechanism_meets_the_contract(parents):
         assert mechanism.evaluate(parents, noise).shape == (N, mechanism.dim)
 
 
-def test_combine_sums_its_contributions(parents):
-    mechanism = Combine(TERMS, noise=Normal(std=0.0))
-    contributions = mechanism.contributions(parents)
-    assert set(contributions) == {"x", "s", ("x", "y"), ("s", "y")}
-    expected = sum(term.evaluate(parents) for term in TERMS)
-    np.testing.assert_allclose(mechanism.evaluate(parents, np.zeros((N, 1))), expected)
-    np.testing.assert_allclose(sum(contributions.values()), expected)
-
-
-def test_every_reduction_reduces_the_same_terms(parents):
-    terms = np.stack(list(Combine(TERMS).contributions(parents).values()))
+def test_every_reduction_reduces_the_effects_terms(parents):
+    terms = np.stack([effect.evaluate(parents) for effect in TERMS])
     zeros = np.zeros((N, 1))
     for op, reduce in REDUCTIONS.items():
         np.testing.assert_allclose(

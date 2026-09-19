@@ -186,16 +186,8 @@ class Combine(Mechanism):
     def parents(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(p for effect in self.effects for p in effect.parents))
 
-    def contributions(
-        self, parents: dict[str, np.ndarray]
-    ) -> dict[str | tuple[str, ...], np.ndarray]:
-        out: dict[str | tuple[str, ...], np.ndarray] = {}
-        for effect in self.effects:
-            out[effect.key] = out.get(effect.key, 0.0) + effect.evaluate(parents)
-        return out
-
     def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
-        terms = list(self.contributions(parents).values()) or [np.zeros_like(noise)]
+        terms = [effect.evaluate(parents) for effect in self.effects] or [np.zeros_like(noise)]
         return REDUCTIONS[self.op](np.stack(terms)) + noise
 
 
