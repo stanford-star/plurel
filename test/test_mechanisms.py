@@ -171,7 +171,9 @@ def test_nearest_effect_one_hot_encodes_the_closest_center(values):
 def test_mlp_effect_places_activations_between_layers(values):
     h = values["h"]
     w1, w2 = MLP.weights
-    np.testing.assert_allclose(MLP.apply(h), np.tanh(h @ w1) @ w2)
+    np.testing.assert_allclose(MLP.apply(h), h @ w1 @ w2)
+    hidden = MLPEffect("h", (w1, w2), activations=("linear", "tanh", "linear"))
+    np.testing.assert_allclose(hidden.apply(h), np.tanh(h @ w1) @ w2)
     first = MLPEffect("h", (w1,), activations=("tanh", "linear"))
     np.testing.assert_allclose(first.apply(h), np.tanh(h) @ w1)
     with pytest.raises(ValueError):

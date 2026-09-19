@@ -148,7 +148,7 @@ class MLPEffect(Effect):
 
     def apply(self, x: np.ndarray) -> np.ndarray:
         depth = len(self.weights)
-        activations = self.activations or ("linear", *("tanh",) * (depth - 1), "linear")
+        activations = self.activations or ("linear",) * (depth + 1)
         biases = self.biases or (0.0,) * depth
         h = apply_transform(activations[0], x)
         for weight, bias, activation in zip(self.weights, biases, activations[1:]):
