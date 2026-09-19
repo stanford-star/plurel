@@ -137,4 +137,12 @@ year={2026}
 }
 ```
 
-If you use the pretrained checkpoints or the Relational Transformer code, please also cite the [Relational Transformer paper](https://arxiv.org/abs/2510.06377) (see [`examples/relational_transformer/`](examples/relational_transformer/)).
+If you use the architecture, training loop or sampler code, please also cite the Relational Transformer paper:
+```bibtex
+@inproceedings{ranjan2026relationaltransformer,
+    title={{Relational Transformer:} Toward Zero-Shot Foundation Models for Relational Data},
+    author={Rishabh Ranjan and Valter Hudovernik and Mark Znidar and Charilaos Kanatsoulis and Roshan Upendra and Mahmoud Mohammadi and Joe Meyer and Tom Palczewski and Carlos Guestrin and Jure Leskovec},
+    booktitle={The Fourteenth International Conference on Learning Representations},
+    year={2026}
+}
+```
