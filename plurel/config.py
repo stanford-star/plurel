@@ -21,10 +21,12 @@ class Choices:
     Args:
         kind: Either "range" or "set"
         value: For "range", a list of [min, max]. For "set", a list of discrete choices.
+        pl_exponent: If set, ``sample()`` uses ``sample_pl`` with this exponent.
     """
 
     kind: Literal["range", "set"]
     value: list[Any] | Any
+    pl_exponent: float | None = None
 
     def __post_init__(self):
         if self.kind not in ("range", "set"):
@@ -36,6 +38,16 @@ class Choices:
                 raise ValueError(f"'value' of type '{type(self.value)}' is not supported")
             if len(self.value) != 2:
                 raise ValueError("'value' must have two elements to support 'range' based sampling")
+        if self.pl_exponent is not None:
+            if self.kind != "range":
+                raise ValueError("pl_exponent is only supported for 'range' kind")
+            if type(self.value[0]) != int:
+                raise ValueError("pl_exponent is only supported for int ranges")
+
+    def sample(self, size: int | None = None, replace: bool = False):
+        if self.pl_exponent is not None:
+            return self.sample_pl(exponent=self.pl_exponent, size=size, replace=replace)
+        return self.sample_uniform(size=size, replace=replace)
 
     def sample_uniform(self, size: int | None = None, replace: bool = False):
         if self.kind == "range":
@@ -99,19 +111,32 @@ class DatabaseParams:
 
     table_layout_choices: Choices = Choices(
         kind="set",
-        value=["BarabasiAlbert", "ReverseRandomTree", "WattsStrogatz"],
+        value=["BarabasiAlbert", "ReverseRandomTree", "WattsStrogatz", "Layered"],
     )
     num_tables_choices: Choices = Choices(kind="range", value=[3, 20])
     num_rows_entity_table_choices: Choices = Choices(kind="range", value=[500, 1000])
-    num_rows_activity_table_choices: Choices = Choices(kind="range", value=[2000, 5000])
-    num_cols_choices: Choices = Choices(kind="range", value=[3, 40])
+    num_rows_activity_table_choices: Choices = Choices(kind="range", value=[10_000, 30_000])
+    num_cols_choices: Choices = Choices(kind="range", value=[3, 12])
     min_timestamp: pd.Timestamp = pd.Timestamp("1990-01-01")
     max_timestamp: pd.Timestamp = pd.Timestamp("2025-01-01")
     column_nan_perc_choices: Choices = Choices(kind="range", value=[0.01, 0.1])
     col_transform_choices: Choices = Choices(
         kind="set",
-        value=["identity", "rank_uniform", "log", "sqrt", "standardize"],
+        value=[
+            "identity",
+            "rank_uniform",
+            "log",
+            "sqrt",
+            "standardize",
+            "threshold",
+            "square",
+            "expm1",
+        ],
     )
+    zero_inflation_col_prob: float = 0.5
+    zero_inflation_quantile_choices: Choices = Choices(kind="range", value=[0.3, 0.7])
+    bool_col_prob: float = 0.0
+    bool_threshold_quantile_choices: Choices = Choices(kind="range", value=[0.05, 0.95])
 
 
 @dataclass(frozen=True)
@@ -186,6 +211,10 @@ class SCMParams:
 
     bi_hsbm_levels_choices: Choices = Choices(kind="range", value=[1, 5])
     bi_hsbm_clusters_per_level_choices: Choices = Choices(kind="range", value=[1, 3])
+    parent_attractiveness_alpha: float | None = 2.5
+    inactive_parent_frac: float = 0.7
+    fk_null_prob: float = 0.3
+    calendar_aware_timestamps: bool = True
 
     ts_trend_alpha_choices: Choices = Choices(kind="range", value=[0.0, 2.0])
     ts_cycle_freq_perc_choices: Choices = Choices(kind="set", value=[i / 10 for i in range(1, 11)])
@@ -220,15 +249,31 @@ class SCMParams:
     )
     tree_depth_lambda: float = 0.5
     tree_n_estimators_lambda: float = 0.5
+    tree_fit_rows: int = 1024
     source_gen_type_choices: Choices = Choices(
-        kind="set", value=["ts", "uniform", "gaussian", "beta", "mixed"]
+        kind="set",
+        value=[
+            "ts",
+            "uniform",
+            "gaussian",
+            "beta",
+            "mixed",
+            "lognormal",
+            "exponential",
+            "pareto",
+            "poisson",
+        ],
     )
     source_beta_alpha_choices: Choices = Choices(kind="range", value=[0.5, 5.0])
     source_beta_beta_choices: Choices = Choices(kind="range", value=[0.5, 5.0])
+    lognormal_sigma_choices: Choices = Choices(kind="range", value=[0.5, 2.0])
+    pareto_alpha_choices: Choices = Choices(kind="range", value=[1.5, 4.0])
+    poisson_lambda_choices: Choices = Choices(kind="range", value=[0.05, 5.0])
     propagation_mode_choices: Choices = Choices(kind="set", value=["type_eager", "type_lazy"])
     cat_boundary_mode_choices: Choices = Choices(kind="set", value=["rank", "value"])
     cat_label_permute_prob_choices: Choices = Choices(kind="range", value=[0.3, 1.0])
     cat_label_reverse_prob_choices: Choices = Choices(kind="range", value=[0.2, 0.8])
+    binarize_int_categoricals: bool = True
 
     # Rows per chunk for batched propagation. Larger amortizes Python/torch
     # dispatch overhead; smaller bounds peak memory. ~4k keeps each
@@ -247,7 +292,7 @@ class DAGParams:
     ba_m: int = 2
     er_p_choices: Choices = Choices(kind="range", value=[0.3, 0.8])
     ws_rewire_p_choices: Choices = Choices(kind="range", value=[0.1, 0.3])
-    layered_depth_choices: Choices = Choices(kind="range", value=[2, 8])
+    layered_depth_choices: Choices = Choices(kind="range", value=[6, 8])
     layered_edge_dropout_p: float = 0.1
     edge_weight_dist_choices: Choices = Choices(
         kind="set", value=["gaussian", "lognormal", "cauchy", "uniform"]

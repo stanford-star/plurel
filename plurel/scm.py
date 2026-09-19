@@ -19,11 +19,16 @@ from plurel.transforms import CategoricalDecoder, CategoricalEncoder, make_mecha
 from plurel.ts import (
     BetaSourceGenerator,
     CategoricalTSDataGenerator,
+    ExponentialSourceGenerator,
     GaussianSourceGenerator,
     IIDCategoricalGenerator,
+    LogNormalSourceGenerator,
     MixedSourceGenerator,
+    ParetoSourceGenerator,
+    PoissonSourceGenerator,
     TSDataGenerator,
     UniformSourceGenerator,
+    calendar_aware_timestamps,
 )
 from plurel.utils import TableType, set_random_seed
 
@@ -146,12 +151,54 @@ class MixedSourceGenFactory(SourceGenFactory):
         return IIDCategoricalGenerator(num_categories=num_categories)
 
 
+class LogNormalSourceGenFactory(SourceGenFactory):
+    def make_numerical(self, scm_params, num_rows, table_type):
+        sigma = float(scm_params.lognormal_sigma_choices.sample_uniform())
+        mean = float(np.random.uniform(-1.0, 1.0))
+        return LogNormalSourceGenerator(mean=mean, sigma=sigma)
+
+    def make_categorical(self, scm_params, num_categories, num_rows, table_type):
+        return IIDCategoricalGenerator(num_categories=num_categories)
+
+
+class ExponentialSourceGenFactory(SourceGenFactory):
+    def make_numerical(self, scm_params, num_rows, table_type):
+        scale = float(scm_params.ts_value_scale_choices.sample_uniform())
+        return ExponentialSourceGenerator(scale=scale)
+
+    def make_categorical(self, scm_params, num_categories, num_rows, table_type):
+        return IIDCategoricalGenerator(num_categories=num_categories)
+
+
+class ParetoSourceGenFactory(SourceGenFactory):
+    def make_numerical(self, scm_params, num_rows, table_type):
+        alpha = float(scm_params.pareto_alpha_choices.sample_uniform())
+        scale = float(scm_params.ts_value_scale_choices.sample_uniform())
+        return ParetoSourceGenerator(alpha=alpha, scale=scale)
+
+    def make_categorical(self, scm_params, num_categories, num_rows, table_type):
+        return IIDCategoricalGenerator(num_categories=num_categories)
+
+
+class PoissonSourceGenFactory(SourceGenFactory):
+    def make_numerical(self, scm_params, num_rows, table_type):
+        lam = float(scm_params.poisson_lambda_choices.sample_uniform())
+        return PoissonSourceGenerator(lam=lam)
+
+    def make_categorical(self, scm_params, num_categories, num_rows, table_type):
+        return IIDCategoricalGenerator(num_categories=num_categories)
+
+
 SOURCE_GEN_REGISTRY: dict[str, SourceGenFactory] = {
     "ts": TSSourceGenFactory(),
     "uniform": UniformSourceGenFactory(),
     "gaussian": GaussianSourceGenFactory(),
     "beta": BetaSourceGenFactory(),
     "mixed": MixedSourceGenFactory(),
+    "lognormal": LogNormalSourceGenFactory(),
+    "exponential": ExponentialSourceGenFactory(),
+    "pareto": ParetoSourceGenFactory(),
+    "poisson": PoissonSourceGenFactory(),
 }
 
 
@@ -463,7 +510,7 @@ class SCM:
                 _stype = self.scm_params.col_stype_choices.sample_uniform()
                 self.dag.graph.nodes[node]["_stype"] = _stype
                 num_categories = (
-                    self.scm_params.num_categories_choices.sample_uniform()
+                    self.scm_params.num_categories_choices.sample()
                     if _stype == stype.categorical
                     else None
                 )
@@ -628,6 +675,8 @@ class SCM:
                 size_b=self.num_rows,
                 hierarchy_a=hierarchy_a,
                 hierarchy_b=hierarchy_b,
+                parent_attractiveness_alpha=self.scm_params.parent_attractiveness_alpha,
+                inactive_parent_frac=self.scm_params.inactive_parent_frac,
             )
 
     def _apply_categorical_quantization(self):
@@ -667,8 +716,16 @@ class SCM:
         df_dict: dict[str, np.ndarray] = {}
         if self.pkey_col is not None:
             df_dict[self.pkey_col] = np.arange(num_rows, dtype=np.int64)
+        fk_null_prob = self.scm_params.fk_null_prob
         for fkey_col, foreign_table_name in self.fkey_col_to_pkey_table.items():
-            df_dict[fkey_col] = self.foreign_row_idxs_map[foreign_table_name]
+            fk_values = self.foreign_row_idxs_map[foreign_table_name]
+            if fk_null_prob > 0.0:
+                null_mask = np.random.rand(len(fk_values)) < fk_null_prob
+                arr = pd.array(fk_values, dtype="Int64")
+                arr[null_mask] = pd.NA
+                df_dict[fkey_col] = arr
+            else:
+                df_dict[fkey_col] = fk_values
         for node in sorted(self.col_nodes):
             col_name = self.dag.graph.nodes[node]["col_name"]
             value = self.dag.graph.nodes[node]["value"]
@@ -683,10 +740,31 @@ class SCM:
 
         self.strategy.post_generate(scm=self)
         if min_timestamp and max_timestamp:
-            self.df["date"] = pd.date_range(
-                start=min_timestamp, end=max_timestamp, periods=num_rows
-            )
+            if self.scm_params.calendar_aware_timestamps:
+                self.df["date"] = calendar_aware_timestamps(
+                    min_ts=min_timestamp, max_ts=max_timestamp, num_rows=num_rows
+                )
+            else:
+                self.df["date"] = pd.date_range(
+                    start=min_timestamp, end=max_timestamp, periods=num_rows
+                )
         return self.df
+
+    def source_node_flags(self) -> dict[str, bool]:
+        """Per column, True iff its SCM node is a source node."""
+        return {
+            self.dag.graph.nodes[node]["col_name"]: bool(node in self.source_nodes)
+            for node in self.col_nodes
+        }
+
+    def cross_table_input_flags(self) -> dict[str, bool]:
+        """Per column, True iff its SCM node receives foreign-table embeddings."""
+        has_fk_parents = bool(self.foreign_scm_info)
+        return {
+            self.dag.graph.nodes[node]["col_name"]: has_fk_parents
+            and (node not in self.source_nodes)
+            for node in self.col_nodes
+        }
 
     def collate_feature_embeddings(self, row_idxs: np.ndarray, child_table_name: str):
         """Encode parent column values at the given row indices for cross-SCM

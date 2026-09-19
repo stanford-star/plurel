@@ -86,7 +86,7 @@ class RandomSchemaGraphBuilder:
             for feature_col in feature_cols:
                 _stype = self.config.scm_params.col_stype_choices.sample_uniform()
                 if _stype == stype.categorical:
-                    num_categories = self.config.scm_params.num_categories_choices.sample_uniform()
+                    num_categories = self.config.scm_params.num_categories_choices.sample()
                     categories = list(range(num_categories))
                 else:
                     categories = None

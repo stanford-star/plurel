@@ -5,6 +5,35 @@ Synthetic time-series data
 import math
 
 import numpy as np
+import pandas as pd
+
+
+def calendar_aware_timestamps(
+    min_ts: pd.Timestamp,
+    max_ts: pd.Timestamp,
+    num_rows: int,
+    candidate_factor: int = 5,
+) -> pd.DatetimeIndex:
+    """Sample sorted timestamps weighted by per-call weekday weights and a
+    fixed business-hours envelope."""
+    weekday_w = np.empty(7, dtype=np.float64)
+    weekday_w[:5] = np.random.uniform(0.4, 1.0, size=5)
+    weekday_w[5:] = np.random.uniform(0.1, 0.5, size=2)
+
+    hour_w = np.full(24, 0.05, dtype=np.float64)
+    hour_w[7:9] = 0.5
+    hour_w[9:18] = 1.0
+    hour_w[18:22] = 0.5
+    hour_w[22:] = 0.1
+
+    span_seconds = (max_ts - min_ts).total_seconds()
+    n_cand = max(num_rows * candidate_factor, num_rows + 1)
+    offsets_s = np.random.uniform(0.0, span_seconds, size=n_cand)
+    ts = pd.DatetimeIndex(min_ts + pd.to_timedelta(offsets_s, unit="s"))
+    weights = weekday_w[ts.weekday] * hour_w[ts.hour]
+    weights = weights / weights.sum()
+    sampled = np.random.choice(n_cand, size=num_rows, replace=False, p=weights)
+    return ts[sampled].sort_values()
 
 
 class Cycle:
@@ -28,17 +57,24 @@ class Trend:
         max_value: float,
         alpha: float,
         scale: float,
+        clip_max: bool = True,
     ):
+        """For ``alpha >= 5`` the trend is boosted by ``exp((alpha - 5) * x)``
+        and the ``max_value`` clip is released."""
         self.num_points = num_points
         self.min_value = min_value
         self.max_value = max_value
         self.alpha = alpha
         self.scale = scale
+        self.clip_max = clip_max
 
     def get_value(self, row_idx: int) -> float:
         x = row_idx / self.num_points
-        value = self.scale * math.pow(x, self.alpha) + self.min_value
-        return min(value, self.max_value)
+        boost = math.exp(max(0.0, self.alpha - 5.0) * x)
+        value = self.scale * math.pow(x, self.alpha) * boost + self.min_value
+        if self.alpha < 5.0 and self.clip_max:
+            return min(value, self.max_value)
+        return value
 
 
 class TSDataGenerator:
@@ -147,3 +183,37 @@ class IIDCategoricalGenerator:
 
     def get_value(self, row_idx: int) -> int:
         return int(np.random.choice(self.num_categories, p=self.probs))
+
+
+class LogNormalSourceGenerator:
+    def __init__(self, mean: float, sigma: float):
+        self.mean = mean
+        self.sigma = sigma
+
+    def get_value(self, row_idx: int) -> float:
+        return float(np.random.lognormal(mean=self.mean, sigma=self.sigma))
+
+
+class ExponentialSourceGenerator:
+    def __init__(self, scale: float):
+        self.scale = scale
+
+    def get_value(self, row_idx: int) -> float:
+        return float(np.random.exponential(scale=self.scale))
+
+
+class ParetoSourceGenerator:
+    def __init__(self, alpha: float, scale: float):
+        self.alpha = alpha
+        self.scale = scale
+
+    def get_value(self, row_idx: int) -> float:
+        return float(np.random.pareto(a=self.alpha) * self.scale)
+
+
+class PoissonSourceGenerator:
+    def __init__(self, lam: float):
+        self.lam = lam
+
+    def get_value(self, row_idx: int) -> float:
+        return float(np.random.poisson(lam=self.lam))

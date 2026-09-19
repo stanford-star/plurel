@@ -125,7 +125,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/wcwidth-0.5.2-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/wheel-0.46.3-pyhd8ed1ab_0.conda
       - pypi: ./
-      - pypi: git+https://github.com/rishabh-ranjan/relbench?rev=fd74e850688bc761368e0e4f5a0281ebe3b8a2c3#fd74e850688bc761368e0e4f5a0281ebe3b8a2c3
       - pypi: https://files.pythonhosted.org/packages/05/6b/32f747947df2da6994e999492ab306a903659555dddc0fbdeb9d71f75e52/nvidia_cuda_nvrtc_cu12-12.8.93-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/0d/9b/a997b638fcd068ad6e4d53b8551a7d30fe8b404d6f1804abf1df69838932/nvidia_cuda_runtime_cu12-12.8.90-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/0f/31/557a7bf6047553ccb0dec77c239bac5e8d70a9f336b98076f97322e156ab/pytorch_frame-0.3.0-py3-none-any.whl
@@ -145,7 +144,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/70/90/6d240beb0f24b74371762873e9b7f499f1e02166a2d9c5801f4dbf8fa12e/kiwisolver-1.4.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/7b/91/984aca2ec129e2757d1e4e3c81c3fcda9d0f85b74670a094cc443d9ee949/joblib-1.5.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/85/48/9a13d2975803e8cf2777d5ed57b87a0b6ca2cc795f9a4f59796a910bfb80/nvidia_cusolver_cu12-11.7.3.90-py3-none-manylinux_2_27_x86_64.whl
-      - pypi: https://files.pythonhosted.org/packages/91/4c/e0ce1ef95d4000ebc1c11801f9b944fa5910ecc15b5e351865763d8657f8/graphviz-0.21-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/89/91/01023aa87c0e6b15f134e410c3c3e6905c3db20d5742ecf40b6d79d571e7/relbench-3.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/99/a8/6acf48d48838fb8fe480597d98a0668c2beb02ee4755cc136de92a0a956f/torch-2.8.0-cp312-cp312-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl
@@ -265,7 +264,6 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/yaml-0.2.5-h925e9cb_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hbf9d68e_6.conda
       - pypi: ./
-      - pypi: git+https://github.com/rishabh-ranjan/relbench?rev=fd74e850688bc761368e0e4f5a0281ebe3b8a2c3#fd74e850688bc761368e0e4f5a0281ebe3b8a2c3
       - pypi: https://files.pythonhosted.org/packages/0f/31/557a7bf6047553ccb0dec77c239bac5e8d70a9f336b98076f97322e156ab/pytorch_frame-0.3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/32/d5/f9a850d79b0851d1d4ef6456097579a9005b31fea68726a4ae5f2d82ddd9/threadpoolctl-3.6.0-py3-none-any.whl
@@ -280,7 +278,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/73/44/fdd3a4377807b7dcabe2d4b5aa99dbbc98e2e5df3f1ca4e7f0aec492d987/pyarrow-25.0.0-cp312-cp312-macosx_12_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/7b/91/984aca2ec129e2757d1e4e3c81c3fcda9d0f85b74670a094cc443d9ee949/joblib-1.5.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/7e/65/07d5f5c7f7c994f12c768708bd2e17a4f01a2b0f44a1c9eccad872433e2e/matplotlib-3.10.8-cp312-cp312-macosx_11_0_arm64.whl
-      - pypi: https://files.pythonhosted.org/packages/91/4c/e0ce1ef95d4000ebc1c11801f9b944fa5910ecc15b5e351865763d8657f8/graphviz-0.21-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/89/91/01023aa87c0e6b15f134e410c3c3e6905c3db20d5742ecf40b6d79d571e7/relbench-3.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/9a/81/7e4e08678a1f98521201c3079f77db69fb552acd56067661f8c2f534a718/markupsafe-3.0.3-cp312-cp312-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl
@@ -2020,26 +2018,6 @@ packages:
   - torch>=2
   - tqdm
   requires_python: '>=3.12'
-- pypi: git+https://github.com/rishabh-ranjan/relbench?rev=fd74e850688bc761368e0e4f5a0281ebe3b8a2c3#fd74e850688bc761368e0e4f5a0281ebe3b8a2c3
-  name: relbench
-  version: 3.0.0
-  requires_dist:
-  - pandas
-  - huggingface-hub
-  - pyyaml
-  - pyarrow
-  - numpy
-  - duckdb
-  - scikit-learn<=1.6.1
-  - typing-extensions
-  - graphviz
-  - sentence-transformers ; extra == 'example'
-  - pytorch-frame[full] ; extra == 'example'
-  - torch-geometric ; extra == 'example'
-  - tqdm ; extra == 'example'
-  - pytest ; extra == 'dev'
-  - pre-commit ; extra == 'dev'
-  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/05/6b/32f747947df2da6994e999492ab306a903659555dddc0fbdeb9d71f75e52/nvidia_cuda_nvrtc_cu12-12.8.93-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl
   name: nvidia-cuda-nvrtc-cu12
   version: 12.8.93
@@ -2559,26 +2537,28 @@ packages:
   - nvidia-nvjitlink-cu12
   - nvidia-cusparse-cu12
   requires_python: '>=3'
-- pypi: https://files.pythonhosted.org/packages/91/4c/e0ce1ef95d4000ebc1c11801f9b944fa5910ecc15b5e351865763d8657f8/graphviz-0.21-py3-none-any.whl
-  name: graphviz
-  version: '0.21'
-  sha256: 54f33de9f4f911d7e84e4191749cac8cc5653f815b06738c54db9a15ab8b1e42
+- pypi: https://files.pythonhosted.org/packages/89/91/01023aa87c0e6b15f134e410c3c3e6905c3db20d5742ecf40b6d79d571e7/relbench-3.0.1-py3-none-any.whl
+  name: relbench
+  version: 3.0.1
+  sha256: e2f9d77d816c6796f96926cc80377d815d3b9b9550f0f52a72f1002a6b1269d1
   requires_dist:
-  - build ; extra == 'dev'
-  - wheel ; extra == 'dev'
-  - twine ; extra == 'dev'
-  - flake8 ; extra == 'dev'
-  - flake8-pyproject ; extra == 'dev'
-  - pep8-naming ; extra == 'dev'
-  - tox>=3 ; extra == 'dev'
-  - pytest>=7,<8.1 ; extra == 'test'
-  - pytest-mock>=3 ; extra == 'test'
-  - pytest-cov ; extra == 'test'
-  - coverage ; extra == 'test'
-  - sphinx>=5,<7 ; extra == 'docs'
-  - sphinx-autodoc-typehints ; extra == 'docs'
-  - sphinx-rtd-theme>=0.2.5 ; extra == 'docs'
-  requires_python: '>=3.9'
+  - pandas
+  - huggingface-hub
+  - pyyaml
+  - pyarrow
+  - numpy
+  - duckdb
+  - scikit-learn
+  - typing-extensions
+  - tqdm
+  - pytest ; extra == 'dev'
+  - pre-commit ; extra == 'dev'
+  - sentence-transformers ; extra == 'example'
+  - pytorch-frame[full] ; extra == 'example'
+  - torch-geometric ; extra == 'example'
+  - tqdm ; extra == 'example'
+  - graphviz ; extra == 'schema'
+  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/99/a8/6acf48d48838fb8fe480597d98a0668c2beb02ee4755cc136de92a0a956f/torch-2.8.0-cp312-cp312-manylinux_2_28_x86_64.whl
   name: torch
   version: 2.8.0

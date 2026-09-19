@@ -60,10 +60,15 @@ def sample_bipartite_assignments(
     hierarchy_a: list,
     hierarchy_b: list,
     chunk_memory_bytes: int = 100_000_000,
+    parent_attractiveness_alpha: float | None = None,
+    inactive_parent_frac: float = 0.0,
 ) -> np.ndarray:
     """For each of ``size_b`` child nodes, sample one parent index in
     ``[0, size_a)`` according to the hierarchical SBM joint probability:
-    ``P(a, b) ∝ Π_l P_l[cluster_a[a, l], cluster_b[b, l]]``.
+    ``P(a, b) ∝ Π_l P_l[cluster_a[a, l], cluster_b[b, l]] · w_a``.
+
+    ``w_a ~ Pareto(parent_attractiveness_alpha)`` per parent (1 when None), and
+    a random ``inactive_parent_frac`` fraction of parents gets ``w_a = 0``.
 
     Vectorized across the child axis in chunks sized to fit the
     ``(size_a, chunk)`` log-prob matrix in ``chunk_memory_bytes``. Probabilities
@@ -78,11 +83,26 @@ def sample_bipartite_assignments(
         ``parent_idx[b]`` is the sampled parent for child ``b``.
     """
     assert len(hierarchy_a) == len(hierarchy_b), "only similar hierarchy levels are supported"
+    assert 0.0 <= inactive_parent_frac < 1.0, (
+        f"inactive_parent_frac must be in [0, 1), got {inactive_parent_frac}"
+    )
 
     cluster_at_levels_a = assign_cluster_at_levels(num_nodes=size_a, hierarchy=hierarchy_a)
     cluster_at_levels_b = assign_cluster_at_levels(num_nodes=size_b, hierarchy=hierarchy_b)
     probs_at_levels = get_probs_at_levels(hierarchy_a=hierarchy_a, hierarchy_b=hierarchy_b)
     log_p_at_levels = [np.log(p) for p in probs_at_levels]
+
+    parent_log_w = None
+    if parent_attractiveness_alpha is not None:
+        w = np.random.pareto(parent_attractiveness_alpha, size=size_a) + 1.0
+        parent_log_w = np.log(w)
+
+    inactive_mask = None
+    n_inactive = int(round(size_a * inactive_parent_frac))
+    if n_inactive > 0:
+        perm = np.random.permutation(size_a)
+        inactive_mask = np.zeros(size_a, dtype=bool)
+        inactive_mask[perm[:n_inactive]] = True
 
     bytes_per_cell = 8  # float64
     chunk = max(1, min(size_b, chunk_memory_bytes // max(1, size_a * bytes_per_cell)))
@@ -97,6 +117,10 @@ def sample_bipartite_assignments(
                 cluster_at_levels_a[:, l_idx][:, None],
                 cluster_at_levels_b[b_start:b_end, l_idx][None, :],
             ]
+        if parent_log_w is not None:
+            log_p += parent_log_w[:, None]
+        if inactive_mask is not None:
+            log_p[inactive_mask, :] = -np.inf
         # log-softmax per column for numerical stability before exp
         log_p -= log_p.max(axis=0, keepdims=True)
         p = np.exp(log_p)

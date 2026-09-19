@@ -89,7 +89,7 @@ The `Config` class controls all aspects of synthetic database generation through
 
 | Parameters | Description |
 |-----------------|-------------|
-| `DatabaseParams` | Table layout (`BarabasiAlbert`, `ReverseRandomTree`, `WattsStrogatz`), number of tables, row counts, column counts, and timestamp ranges. |
+| `DatabaseParams` | Table layout (`BarabasiAlbert`, `ReverseRandomTree`, `WattsStrogatz`, `Layered`), number of tables, row counts, column counts, timestamp ranges, and column post-processing (transforms, zero inflation, NaN rate). |
 | `SCMParams` | SCM graph layouts, column types, MLP initialization, activation functions, noise distributions, and time-series trend/cycle parameters. |
 | `DAGParams` | DAG-specific parameters like edge dropout, in-degree limits, and rewiring probabilities for different graph types. |
 

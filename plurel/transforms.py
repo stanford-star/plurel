@@ -66,9 +66,8 @@ class Mechanism(abc.ABC):
     ``(..., out_dim)``. A mechanism's parameters are fixed for its lifetime, so
     it behaves as a deterministic function reused across propagation chunks.
     ``MLPMechanism`` is additionally invariant to how rows are batched;
-    ``TreeMechanism`` fits on its first call, so it is batch-invariant only when
-    every row is seen in that first call. Register concrete subclasses in
-    ``MECHANISM_REGISTRY``.
+    ``TreeMechanism`` fits on the first ``tree_fit_rows`` rows of its first call.
+    Register concrete subclasses in ``MECHANISM_REGISTRY``.
     """
 
     @abc.abstractmethod
@@ -120,8 +119,8 @@ class TreeMechanism(Mechanism):
 
     A tree regressor is fit against random Gaussian targets and its predictions
     become the output — a piecewise-constant map whose partition is calibrated
-    to the input distribution. The fit happens once on the first call and is
-    cached, so the mechanism stays a frozen function reused across chunks.
+    to the input distribution. The fit happens once, on the first
+    ``tree_fit_rows`` rows of the first call, and is cached.
     """
 
     def __init__(
@@ -136,14 +135,16 @@ class TreeMechanism(Mechanism):
         max_depth = 2 + int(np.random.exponential(1.0 / scm_params.tree_depth_lambda))
         n_estimators = 1 + int(np.random.exponential(1.0 / scm_params.tree_n_estimators_lambda))
         self.model = _build_tree_regressor(tree_model, max_depth, n_estimators)
+        self.fit_rows = int(scm_params.tree_fit_rows)
         self._fitted = False
 
     def __call__(self, x):
         orig_shape = x.shape[:-1]
         X = x.reshape(-1, x.shape[-1]).nan_to_num(0.0).detach().cpu().numpy()
         if not self._fitted:
-            y_fake = np.random.randn(X.shape[0], self.out_dim)
-            self.model.fit(X, y_fake.ravel() if self.out_dim == 1 else y_fake)
+            n_fit = min(X.shape[0], self.fit_rows)
+            y_fake = np.random.randn(n_fit, self.out_dim)
+            self.model.fit(X[:n_fit], y_fake.ravel() if self.out_dim == 1 else y_fake)
             self._fitted = True
         y = np.asarray(self.model.predict(X), dtype=np.float32).reshape(-1, self.out_dim)
         return torch.from_numpy(y).reshape(*orig_shape, self.out_dim)
