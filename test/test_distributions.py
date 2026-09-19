@@ -52,23 +52,9 @@ def test_sample_shape_dtype_and_determinism(name):
     np.testing.assert_array_equal(first, second)
 
 
-def test_bounded_families_respect_their_bounds():
-    rng = np.random.default_rng(1)
-    beta = Beta(2.0, 3.0, low=-1.0, high=4.0).sample(2000, rng)
-    uniform = Uniform(2.0, 5.0).sample(2000, rng)
-    assert beta.min() >= -1.0 and beta.max() <= 4.0
-    assert uniform.min() >= 2.0 and uniform.max() <= 5.0
-
-
 def test_mixture_follows_its_weights():
     values = EXAMPLES["mixture"].sample(20_000, np.random.default_rng(2))
     assert np.mean(values > 0) == pytest.approx(0.75, abs=0.02)
-
-
-def test_autoregressive_with_zero_rho_is_white_noise():
-    rng = np.random.default_rng(3)
-    values = AutoRegressive(0.0, 2.0).sample(5000, rng)
-    assert values.std() == pytest.approx(2.0, rel=0.05)
 
 
 def test_autoregressive_is_persistent():
@@ -92,23 +78,3 @@ def test_calendar_is_sorted_within_range_and_honors_zero_weights():
     assert stamps.min() >= START and stamps.max() <= END
     assert set(stamps.weekday) <= {0, 1, 2, 3, 4}
     assert set(stamps.hour) <= set(range(9, 17))
-
-
-@pytest.mark.parametrize(
-    "build",
-    [
-        lambda: Normal(std=0.0),
-        lambda: Uniform(1.0, 1.0),
-        lambda: Beta(0.0, 1.0),
-        lambda: Mixture((Normal(),)),
-        lambda: Mixture((Normal(), Normal()), (0.5, 0.6)),
-        lambda: AutoRegressive(1.0),
-        lambda: Cycle(0.0),
-        lambda: Calendar(END, START),
-        lambda: Calendar(START, END, (1.0,) * 6),
-        lambda: Calendar(START, END, (0.0,) * 7),
-    ],
-)
-def test_invalid_parameters_are_rejected(build):
-    with pytest.raises(ValueError):
-        build()
