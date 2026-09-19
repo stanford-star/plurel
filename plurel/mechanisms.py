@@ -53,17 +53,6 @@ def _uniform(size: int) -> tuple[float, ...]:
     return (1.0 / size,) * size
 
 
-class Mechanism:
-    dim: int
-    parents: tuple[str, ...]
-
-    def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
-        raise NotImplementedError
-
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
-        raise NotImplementedError
-
-
 class Effect:
     parents: tuple[str, ...]
 
@@ -176,6 +165,17 @@ class Noise:
     def apply(self, values: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
         log_scale = sum((effect.evaluate(values) for effect in self.scale_effects), 0.0)
         return np.exp(np.clip(log_scale, -self.clip, self.clip)) * noise
+
+
+class Mechanism:
+    dim: int
+    parents: tuple[str, ...]
+
+    def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        raise NotImplementedError
+
+    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)
