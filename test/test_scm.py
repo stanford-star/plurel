@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from plurel.columns import Column
+from plurel.columns import DEFAULT_CALENDAR, Column
 from plurel.distributions import Normal, Uniform
 from plurel.mechanisms import Combine, LinearEffect, MatrixEffect, NearestEffect, Root, Softmax
 from plurel.scm import SCM
@@ -78,7 +78,7 @@ def test_sample_observes_columns_from_one_draw(scm):
     columns = {
         "amount": Column("y", marginal=Uniform(), missing=0.1),
         "segment": Column("segment", "categorical", categories=("a", "b", "c")),
-        "when": Column("z", "timestamp"),
+        "when": Column("z", marginal=DEFAULT_CALENDAR),
     }
     typed = SCM(MECHANISMS, columns)
     frame = typed.sample(N, seed=0)
