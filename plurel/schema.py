@@ -13,6 +13,8 @@ from plurel.scm import SCM, Interventions, generations
 Node = tuple[str, str]
 Links = dict[Node, np.ndarray]
 
+COMPLETE = ("count", "sum")
+
 
 def _sum(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
     out = np.zeros((n, values.shape[1]))
@@ -43,7 +45,6 @@ AGGREGATES: dict[str, Callable[..., np.ndarray]] = {
     "max": _extreme(np.maximum, -np.inf),
     "min": _extreme(np.minimum, np.inf),
 }
-COMPLETE = ("count", "sum")
 
 
 @dataclass(frozen=True)
