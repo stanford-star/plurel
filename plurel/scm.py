@@ -1,6 +1,6 @@
 from collections.abc import Mapping
+from graphlib import CycleError, TopologicalSorter
 
-import networkx as nx
 import numpy as np
 
 from plurel.mechanisms import Mechanism
@@ -19,16 +19,15 @@ def _intervention(value: float | np.ndarray, n: int, dim: int) -> np.ndarray:
 class SCM:
     def __init__(self, mechanisms: Mapping[str, Mechanism]) -> None:
         self.mechanisms = dict(mechanisms)
-        self.graph = nx.DiGraph()
-        self.graph.add_nodes_from(self.mechanisms)
         for child, mechanism in self.mechanisms.items():
-            for parent in mechanism.parents:
-                if parent not in self.mechanisms:
-                    raise ValueError(f"{child!r} refers to unknown parent {parent!r}")
-                self.graph.add_edge(parent, child)
-        if not nx.is_directed_acyclic_graph(self.graph):
-            raise ValueError("mechanisms must form a directed acyclic graph")
-        self.order = tuple(nx.topological_sort(self.graph))
+            unknown = set(mechanism.parents) - set(self.mechanisms)
+            if unknown:
+                raise ValueError(f"{child!r} refers to unknown parents {sorted(unknown)}")
+        parents = {name: mechanism.parents for name, mechanism in self.mechanisms.items()}
+        try:
+            self.order = tuple(TopologicalSorter(parents).static_order())
+        except CycleError as error:
+            raise ValueError("mechanisms must form a directed acyclic graph") from error
 
     def simulate(
         self, n: int, *, seed: Seed = None, interventions: Interventions | None = None
