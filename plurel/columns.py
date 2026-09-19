@@ -7,7 +7,7 @@ import pandas as pd
 from plurel.distributions import Calendar, Distribution
 from plurel.mechanisms import bin_levels
 
-Kind = Literal["numeric", "categorical", "key"]
+Kind = Literal["numeric", "categorical", "timestamp", "key"]
 Binning = Literal["normal", "empirical"] | tuple[float, ...]
 
 DEFAULT_CALENDAR = Calendar(pd.Timestamp("1990-01-01"), pd.Timestamp("2025-01-01"))
@@ -33,7 +33,7 @@ class Column:
     missing: float | str = 0.0
 
     def __post_init__(self) -> None:
-        if self.kind not in ("numeric", "categorical", "key"):
+        if self.kind not in ("numeric", "categorical", "timestamp", "key"):
             raise ValueError(f"unknown column kind {self.kind!r}")
         if self.kind == "key":
             options = (self.node, self.dims, self.categories, self.probabilities, self.marginal)
@@ -48,7 +48,7 @@ class Column:
             raise ValueError("a column observes a node")
         if not isinstance(self.missing, str) and not 0.0 <= self.missing < 1.0:
             raise ValueError("missing must be a rate in [0, 1) or the name of a two-class node")
-        if self.kind == "numeric":
+        if self.kind != "categorical":
             if self.categories is not None or self.probabilities is not None:
                 raise ValueError("categories and probabilities belong to categorical columns")
             return
@@ -89,10 +89,10 @@ class Column:
             observed = pd.Categorical.from_codes(self.codes(latent), list(self.categories))
         else:
             if latent.ndim == 2 and latent.shape[1] != 1:
-                raise ValueError(f"numeric column needs one dimension of {self.node!r}")
+                raise ValueError(f"{self.kind} column needs one dimension of {self.node!r}")
             flat = latent.reshape(len(latent))
             observed = rank_map(flat, self.marginal, rng) if self.marginal else flat
-            if isinstance(self.marginal, Calendar):
+            if self.kind == "timestamp":
                 observed = pd.to_datetime(observed, unit="s")
         series = pd.Series(observed)
         if isinstance(self.missing, str):

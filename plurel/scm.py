@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 
 from plurel.columns import Column
-from plurel.distributions import Calendar
 from plurel.mechanisms import Mechanism
 from plurel.random import Seed, generator
 
@@ -71,12 +70,11 @@ class SCM:
         keys = [name for name, column in self.columns.items() if column.kind == "key"]
         if len(keys) > 1:
             raise ValueError("a table has at most one key column")
-        if time_column is not None and not isinstance(
-            self.columns.get(time_column, Column("")).marginal, Calendar
+        if (
+            time_column is not None
+            and self.columns.get(time_column, Column("")).kind != "timestamp"
         ):
-            raise ValueError(
-                f"time column {time_column!r} must be a column with a Calendar marginal"
-            )
+            raise ValueError(f"time column {time_column!r} must be a timestamp column")
         self.pkey_column = keys[0] if keys else None
         self.time_column = time_column
 

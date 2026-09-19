@@ -3,9 +3,11 @@ import pandas as pd
 import pytest
 
 from plurel import (
+    DEFAULT_CALENDAR,
     SCM,
     Column,
     Combine,
+    Exponential,
     LinearEffect,
     LogNormal,
     MatrixEffect,
@@ -380,3 +382,26 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
         )
         with pytest.raises(ValueError, match="link"):
             broken.sample({"customers": 20, "orders": 10}, seed=0)
+
+
+def test_child_events_follow_their_parent_events():
+    customers = SCM(
+        {"signup": Root(noise=DEFAULT_CALENDAR)},
+        {"signup": Column("signup", "timestamp")},
+    )
+    orders = SCM(
+        {
+            "signup": Port("customers", "signup", fill=np.nan),
+            "when": Combine((LinearEffect("signup"),), noise=Exponential(30 * 24 * 3600.0)),
+        },
+        {"when": Column("when", "timestamp")},
+        time_column="when",
+    )
+    schema = Schema(
+        {"customers": customers, "orders": orders}, (FK("orders", "customer_id", "customers"),)
+    )
+    frames = schema.sample({"customers": 50, "orders": 500}, seed=0)
+    signup = frames["customers"]["signup"].to_numpy()[frames["orders"]["customer_id"].to_numpy()]
+    when = frames["orders"]["when"].to_numpy()
+    assert (when >= signup).all() and frames["orders"]["when"].dtype == "datetime64[ns]"
+    assert frames["customers"]["signup"].is_monotonic_increasing

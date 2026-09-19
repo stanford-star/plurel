@@ -30,7 +30,7 @@ def customers(key=True):
 def orders(key=True, time_column="when"):
     columns = {
         "order_id": Column(kind="key"),
-        "when": Column("when", marginal=DEFAULT_CALENDAR),
+        "when": Column("when", "timestamp", marginal=DEFAULT_CALENDAR),
         "amount": Column("amount"),
         "value": Column("value"),
     }
@@ -58,9 +58,9 @@ def schema():
 def test_tables_declare_their_keys_and_time():
     assert orders().pkey_column == "order_id" and orders().time_column == "when"
     assert orders(key=False, time_column=None).pkey_column is None
-    with pytest.raises(ValueError, match="Calendar"):
+    with pytest.raises(ValueError, match="timestamp"):
         orders(time_column="amount")
-    with pytest.raises(ValueError, match="Calendar"):
+    with pytest.raises(ValueError, match="timestamp"):
         orders(time_column="nothing")
     with pytest.raises(ValueError, match="one key"):
         SCM({"x": Root()}, {"a": Column(kind="key"), "b": Column(kind="key")})
