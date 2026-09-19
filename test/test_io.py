@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from plurel import DEFAULT_CALENDAR, SCM, Column, Combine, LinearEffect, Normal, Root, Softmax
-from plurel.io import database, read, write
+from plurel.io import create_database, read_database, write_database
 from plurel.links import HSBMLink
 from plurel.schema import FK, Port, Schema
 
@@ -69,7 +69,7 @@ def test_tables_declare_their_keys_and_time():
 def test_database_wraps_sampled_tables_with_relbench_metadata(schema):
     frames = schema.sample(ROWS, seed=0)
     assert list(frames["orders"]) == ["order_id", "when", "amount", "value", "customer_id"]
-    db = database(schema, frames)
+    db = create_database(schema, frames)
     assert set(db.table_dict) == set(ROWS)
     customer_table, order_table = db.table_dict["customers"], db.table_dict["orders"]
     assert customer_table.pkey_col == "customer_id" and customer_table.time_col is None
@@ -84,27 +84,27 @@ def test_database_wraps_sampled_tables_with_relbench_metadata(schema):
     assert db.max_timestamp == order_table.df["when"].max()
     pd.testing.assert_frame_equal(order_table.df, frames["orders"])
     events = Schema({"customers": customers(), "orders": orders(key=False)}, FKEYS)
-    event_table = database(events, events.sample(ROWS, seed=0)).table_dict["orders"]
+    event_table = create_database(events, events.sample(ROWS, seed=0)).table_dict["orders"]
     assert event_table.pkey_col is None and "order_id" not in event_table.df
     unkeyed = Schema({"customers": customers(key=False), "orders": orders()}, FKEYS)
     with pytest.raises(ValueError, match="primary key"):
-        database(unkeyed, unkeyed.sample(ROWS, seed=0))
+        create_database(unkeyed, unkeyed.sample(ROWS, seed=0))
     with pytest.raises(ValueError, match="collides"):
         Schema(
             {"customers": customers(), "orders": orders()}, (FK("orders", "order_id", "customers"),)
         )
     with pytest.raises(ValueError):
-        database(schema, {"customers": frames["customers"]})
+        create_database(schema, {"customers": frames["customers"]})
     with pytest.raises(ValueError, match="lacks"):
-        database(schema, {**frames, "orders": frames["orders"].drop(columns="order_id")})
+        create_database(schema, {**frames, "orders": frames["orders"].drop(columns="order_id")})
     with pytest.raises(ValueError, match="datetime"):
-        database(schema, {**frames, "orders": frames["orders"].assign(when=0.0)})
+        create_database(schema, {**frames, "orders": frames["orders"].assign(when=0.0)})
 
 
 def test_write_and_read_round_trip(schema, tmp_path):
-    db = database(schema, schema.sample(ROWS, seed=0))
+    db = create_database(schema, schema.sample(ROWS, seed=0))
     split = db.min_timestamp + (db.max_timestamp - db.min_timestamp) * 0.7
-    path = write(
+    path = write_database(
         db,
         tmp_path / "synthetic",
         name="synthetic",
@@ -113,7 +113,7 @@ def test_write_and_read_round_trip(schema, tmp_path):
     )
     assert (path / "manifest.yaml").exists()
     assert {p.name for p in (path / "db").iterdir()} == {"customers.parquet", "orders.parquet"}
-    loaded = read(path)
+    loaded = read_database(path)
     for name, table in db.table_dict.items():
         again = loaded.table_dict[name]
         assert (again.pkey_col, again.time_col) == (table.pkey_col, table.time_col)
@@ -122,10 +122,12 @@ def test_write_and_read_round_trip(schema, tmp_path):
     order_keys = loaded.table_dict["orders"].df["customer_id"]
     assert order_keys.isna().sum() == db.table_dict["orders"].df["customer_id"].isna().sum()
     with pytest.raises(FileExistsError):
-        write(db, path, name="synthetic", val_timestamp=split, test_timestamp=db.max_timestamp)
-    smaller = database(schema, schema.sample({"customers": 40, "orders": 100}, seed=1))
+        write_database(
+            db, path, name="synthetic", val_timestamp=split, test_timestamp=db.max_timestamp
+        )
+    smaller = create_database(schema, schema.sample({"customers": 40, "orders": 100}, seed=1))
     (path / "db" / "stale.parquet").touch()
-    write(
+    write_database(
         smaller,
         path,
         name="synthetic",
@@ -134,8 +136,8 @@ def test_write_and_read_round_trip(schema, tmp_path):
         overwrite=True,
     )
     assert {p.name for p in (path / "db").iterdir()} == {"customers.parquet", "orders.parquet"}
-    assert len(read(path).table_dict["orders"].df) == 100
+    assert len(read_database(path).table_dict["orders"].df) == 100
     with pytest.raises(ValueError, match="val_timestamp"):
-        write(
+        write_database(
             db, tmp_path / "other", name="x", val_timestamp=db.max_timestamp, test_timestamp=split
         )

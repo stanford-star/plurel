@@ -10,7 +10,7 @@ from relbench.manifest import DatasetManifest, TableSpec
 from plurel.schema import Schema
 
 
-def database(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> Database:
+def create_database(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> Database:
     if set(frames) != set(schema.tables):
         raise ValueError("one frame per table of the schema")
     if missing := {
@@ -33,7 +33,7 @@ def database(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> Database:
     return Database(tables)
 
 
-def write(
+def write_database(
     db: Database,
     path: str | Path,
     *,
@@ -45,6 +45,13 @@ def write(
 ) -> Path:
     if val_timestamp > test_timestamp:
         raise ValueError("val_timestamp must not be after test_timestamp")
+    for table_name, table in db.table_dict.items():
+        for column in table.df.columns[table.df.dtypes == "category"]:
+            if not pd.api.types.is_string_dtype(table.df[column].cat.categories):
+                raise ValueError(
+                    f"categorical column {column!r} of {table_name!r} needs string categories to"
+                    " survive parquet"
+                )
     path = Path(path)
     if (path / "manifest.yaml").exists():
         if not overwrite:
@@ -71,5 +78,5 @@ def write(
     return path
 
 
-def read(path: str | Path) -> Database:
+def read_database(path: str | Path) -> Database:
     return load_dataset(Path(path)).get_db(upto_test_timestamp=False)

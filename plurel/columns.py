@@ -103,7 +103,7 @@ class Column:
             flat = latent.reshape(len(latent))
             observed = rank_map(flat, self.marginal, rng) if self.marginal else flat
             if self.kind == "timestamp":
-                observed = pd.to_datetime(observed, unit="s")
+                observed = pd.to_datetime(observed, unit="s").as_unit("ns")
         series = pd.Series(observed)
         if isinstance(self.missing, str):
             indicator = latents[self.missing]
@@ -119,6 +119,8 @@ class Column:
             valid = (latent != 0).any(1) & ~np.isnan(latent).any(1)
             return np.where(valid, latent.argmax(1), -1)
         flat = latent.reshape(len(latent))
+        if not len(flat):
+            return np.empty(0, dtype=int)
         if isinstance(self.binning, tuple):
             codes = np.digitize(flat, self.binning)
         elif self.binning == "empirical":

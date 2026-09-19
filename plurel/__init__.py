@@ -17,7 +17,7 @@ from plurel.distributions import (
     Trend,
     Uniform,
 )
-from plurel.io import database, read, write
+from plurel.io import create_database, read_database, write_database
 from plurel.links import LINKS, HSBMLink, Link, RandomLink, TreeLink
 from plurel.mechanisms import (
     EFFECTS,
@@ -95,10 +95,10 @@ __all__ = [
     "Uniform",
     "apply_transform",
     "bin_levels",
-    "database",
+    "create_database",
     "generator",
     "nested_logits",
     "rank_map",
-    "read",
-    "write",
+    "read_database",
+    "write_database",
 ]
