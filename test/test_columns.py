@@ -6,7 +6,7 @@ from plurel.columns import DEFAULT_CALENDAR, Column, rank_map
 from plurel.distributions import Calendar, Uniform
 
 N = 2000
-LEVELS = ("low", "mid", "high")
+CATEGORIES = ("low", "mid", "high")
 PROBABILITIES = (0.2, 0.5, 0.3)
 
 
@@ -19,17 +19,17 @@ def test_column_validation():
     for kwargs in (
         {"kind": "text"},
         {"missing": 1.0},
-        {"levels": LEVELS},
+        {"categories": CATEGORIES},
         {"kind": "categorical"},
-        {"kind": "categorical", "levels": ("a", "a")},
-        {"kind": "categorical", "levels": LEVELS, "probabilities": (0.5, 0.5)},
-        {"kind": "categorical", "levels": LEVELS, "edges": (0.0,)},
-        {"kind": "categorical", "levels": LEVELS, "binning": "kmeans"},
-        {"kind": "categorical", "levels": LEVELS, "marginal": Uniform()},
+        {"kind": "categorical", "categories": ("a", "a")},
+        {"kind": "categorical", "categories": CATEGORIES, "probabilities": (0.5, 0.5)},
+        {"kind": "categorical", "categories": CATEGORIES, "edges": (0.0,)},
+        {"kind": "categorical", "categories": CATEGORIES, "binning": "kmeans"},
+        {"kind": "categorical", "categories": CATEGORIES, "marginal": Uniform()},
     ):
         with pytest.raises(ValueError):
             Column("x", **kwargs)
-    assert Column("x", "categorical", levels=LEVELS).level_probabilities == (1 / 3,) * 3
+    assert Column("x", "categorical", categories=CATEGORIES).category_probabilities == (1 / 3,) * 3
 
 
 def test_numeric_columns_pass_through_or_rank_map_onto_the_marginal(latent):
@@ -48,24 +48,24 @@ def test_numeric_columns_pass_through_or_rank_map_onto_the_marginal(latent):
 
 def test_categorical_columns_bin_a_latent_or_read_a_one_hot_block(latent):
     rng = np.random.default_rng(0)
-    normal = Column("x", "categorical", levels=LEVELS, probabilities=PROBABILITIES)
+    normal = Column("x", "categorical", categories=CATEGORIES, probabilities=PROBABILITIES)
     shares = normal.observe(latent, rng).value_counts(normalize=True)
-    assert all(abs(shares[level] - p) < 0.04 for level, p in zip(LEVELS, PROBABILITIES))
+    assert all(abs(shares[level] - p) < 0.04 for level, p in zip(CATEGORIES, PROBABILITIES))
     empirical = Column(
-        "x", "categorical", levels=(0, 1, 2), probabilities=PROBABILITIES, binning="empirical"
+        "x", "categorical", categories=(0, 1, 2), probabilities=PROBABILITIES, binning="empirical"
     )
     counts = empirical.observe(latent, rng).value_counts()
     assert counts.index.dtype == np.int64 and abs(counts[0] - 0.2 * N) <= 1
-    fixed = Column("x", "categorical", levels=LEVELS, edges=(-10.0, 10.0))
+    fixed = Column("x", "categorical", categories=CATEGORIES, edges=(-10.0, 10.0))
     assert set(fixed.observe(latent, rng)) == {"mid"}
     one_hot = np.eye(3)[np.arange(N) % 3]
     np.testing.assert_array_equal(
-        Column("h", "categorical", levels=LEVELS).observe(one_hot, rng),
-        np.asarray(LEVELS)[np.arange(N) % 3],
+        Column("h", "categorical", categories=CATEGORIES).observe(one_hot, rng),
+        np.asarray(CATEGORIES)[np.arange(N) % 3],
     )
     block = np.concatenate([np.zeros((N, 1)), one_hot], axis=1)
-    sliced = Column("h", "categorical", levels=LEVELS, dims=(1, 2, 3)).observe(block, rng)
-    np.testing.assert_array_equal(sliced, np.asarray(LEVELS)[np.arange(N) % 3])
+    sliced = Column("h", "categorical", categories=CATEGORIES, dims=(1, 2, 3)).observe(block, rng)
+    np.testing.assert_array_equal(sliced, np.asarray(CATEGORIES)[np.arange(N) % 3])
 
 
 def test_timestamp_columns_follow_the_calendar_in_latent_order(latent):

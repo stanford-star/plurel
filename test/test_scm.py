@@ -77,7 +77,7 @@ def test_sample_observes_columns_from_one_draw(scm):
     assert all(np.array_equal(values[k], v) for k, v in scm.simulate(N, seed=0).items())
     columns = {
         "amount": Column("y", marginal=Uniform(), missing=0.1),
-        "segment": Column("segment", "categorical", levels=("a", "b", "c")),
+        "segment": Column("segment", "categorical", categories=("a", "b", "c")),
         "when": Column("z", "timestamp"),
     }
     typed = SCM(MECHANISMS, columns)

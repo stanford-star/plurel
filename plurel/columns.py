@@ -23,7 +23,7 @@ class Column:
     node: str
     kind: Kind = "numeric"
     dims: int | tuple[int, ...] | None = None
-    levels: tuple[object, ...] | None = None
+    categories: tuple[object, ...] | None = None
     probabilities: tuple[float, ...] | None = None
     binning: Binning = "normal"
     edges: tuple[float, ...] | None = None
@@ -36,33 +36,39 @@ class Column:
         if not 0.0 <= self.missing < 1.0:
             raise ValueError("missing must be in [0, 1)")
         if self.kind != "categorical":
-            if (self.levels, self.probabilities, self.edges) != (None, None, None):
-                raise ValueError("levels, probabilities and edges belong to categorical columns")
+            if (self.categories, self.probabilities, self.edges) != (None, None, None):
+                raise ValueError(
+                    "categories, probabilities and edges belong to categorical columns"
+                )
             return
-        if self.levels is None or len(set(self.levels)) != len(self.levels) or len(self.levels) < 2:
-            raise ValueError("categorical columns need at least two distinct levels")
-        probabilities = self.level_probabilities
-        if len(probabilities) != len(self.levels):
-            raise ValueError("one probability per level")
+        if (
+            self.categories is None
+            or len(set(self.categories)) != len(self.categories)
+            or len(self.categories) < 2
+        ):
+            raise ValueError("categorical columns need at least two distinct categories")
+        probabilities = self.category_probabilities
+        if len(probabilities) != len(self.categories):
+            raise ValueError("one probability per category")
         if min(probabilities) <= 0 or not np.isclose(sum(probabilities), 1.0):
             raise ValueError("probabilities must be positive and sum to one")
-        if self.edges is not None and len(self.edges) != len(self.levels) - 1:
-            raise ValueError("edges are one fewer than the levels")
+        if self.edges is not None and len(self.edges) != len(self.categories) - 1:
+            raise ValueError("edges are one fewer than the categories")
         if self.binning not in ("normal", "empirical"):
             raise ValueError(f"unknown binning {self.binning!r}")
         if self.marginal is not None:
             raise ValueError("categorical columns have no marginal")
 
     @property
-    def level_probabilities(self) -> tuple[float, ...]:
-        if self.levels is None:
+    def category_probabilities(self) -> tuple[float, ...]:
+        if self.categories is None:
             return ()
-        return self.probabilities or (1.0 / len(self.levels),) * len(self.levels)
+        return self.probabilities or (1.0 / len(self.categories),) * len(self.categories)
 
     def observe(self, values: np.ndarray, rng: np.random.Generator) -> pd.Series:
         values = values if self.dims is None else values[:, self.dims]
         if self.kind == "categorical":
-            observed = np.asarray(self.levels)[self.codes(values)]
+            observed = np.asarray(self.categories)[self.codes(values)]
         else:
             if values.ndim == 2 and values.shape[1] != 1:
                 raise ValueError(f"{self.kind} column needs one dimension of {self.node!r}")
@@ -81,6 +87,6 @@ class Column:
         if self.edges is not None:
             return np.digitize(latent, self.edges)
         if self.binning == "empirical":
-            cuts = np.cumsum(self.level_probabilities)[:-1]
+            cuts = np.cumsum(self.category_probabilities)[:-1]
             return np.digitize(latent, np.quantile(latent, cuts))
-        return bin_levels(latent, self.level_probabilities)
+        return bin_levels(latent, self.category_probabilities)
