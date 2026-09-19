@@ -32,8 +32,11 @@ class SCM:
             raise ValueError("mechanisms must form a directed acyclic graph") from error
         self.columns = dict(columns)
         for name, column in self.columns.items():
-            if column.node not in self.mechanisms:
-                raise ValueError(f"column {name!r} observes unknown node {column.node!r}")
+            nodes = (
+                {column.node, column.missing} if isinstance(column.missing, str) else {column.node}
+            )
+            if unknown := nodes - set(self.mechanisms):
+                raise ValueError(f"column {name!r} refers to unknown nodes {sorted(unknown)}")
 
     def simulate(
         self, n: int, *, seed: Seed = None, interventions: Interventions | None = None
@@ -66,7 +69,5 @@ class SCM:
     ) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
         rng = generator(seed)
         latents = self.simulate(n, seed=rng, interventions=interventions)
-        observed = {
-            name: column.observe(latents[column.node], rng) for name, column in self.columns.items()
-        }
+        observed = {name: column.observe(latents, rng) for name, column in self.columns.items()}
         return pd.DataFrame(observed, index=range(n)), latents

@@ -18,6 +18,7 @@ MECHANISMS = {
     "segment": Softmax((MatrixEffect("h", np.eye(3)),)),
     "cluster": Combine((NearestEffect("h", np.eye(3)),), noise=None),
     "embedding": Combine((MatrixEffect("segment", TABLE),), noise=None),
+    "hidden": Softmax((MatrixEffect("y", np.array([[0.0, 2.0]])),), biases=(0.0, -1.0)),
 }
 COLUMNS = {name: Column(name) for name in ("y", "xz", "x", "z")}
 
@@ -87,5 +88,11 @@ def test_sample_observes_columns_from_one_draw(scm):
     assert set(frame["segment"]) == {"a", "b", "c"} and 0.05 < frame["amount"].isna().mean() < 0.15
     same = typed.sample(N, seed=0, interventions={"x": 0.0})
     pd.testing.assert_series_equal(same["when"], frame["when"])
+    mnar = SCM(MECHANISMS, {"y": Column("y", missing="hidden")}).sample_with_latents(N, seed=0)
+    frame, latents = mnar
+    assert frame["y"].isna().to_numpy().tolist() == (latents["hidden"][:, 1] == 1.0).tolist()
+    assert latents["y"][frame["y"].isna()].mean() > latents["y"][frame["y"].notna()].mean()
     with pytest.raises(ValueError):
         SCM(MECHANISMS, {"c": Column("missing")})
+    with pytest.raises(ValueError):
+        SCM(MECHANISMS, {"c": Column("y", missing="nobody")})

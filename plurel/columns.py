@@ -27,13 +27,13 @@ class Column:
     probabilities: tuple[float, ...] | None = None
     binning: Binning = "normal"
     marginal: Distribution | None = None
-    missing: float = 0.0
+    missing: float | str = 0.0
 
     def __post_init__(self) -> None:
         if self.kind not in ("numeric", "categorical"):
             raise ValueError(f"unknown column kind {self.kind!r}")
-        if not 0.0 <= self.missing < 1.0:
-            raise ValueError("missing must be in [0, 1)")
+        if not isinstance(self.missing, str) and not 0.0 <= self.missing < 1.0:
+            raise ValueError("missing must be a rate in [0, 1) or the name of a two-class node")
         if self.kind == "numeric":
             if self.categories is not None or self.probabilities is not None:
                 raise ValueError("categories and probabilities belong to categorical columns")
@@ -65,8 +65,8 @@ class Column:
             return ()
         return self.probabilities or (1.0 / len(self.categories),) * len(self.categories)
 
-    def observe(self, latent: np.ndarray, rng: np.random.Generator) -> pd.Series:
-        latent = latent if self.dims is None else latent[:, self.dims]
+    def observe(self, latents: dict[str, np.ndarray], rng: np.random.Generator) -> pd.Series:
+        latent = latents[self.node] if self.dims is None else latents[self.node][:, self.dims]
         if self.kind == "categorical":
             observed = pd.Categorical.from_codes(self.codes(latent), list(self.categories))
         else:
@@ -77,6 +77,11 @@ class Column:
             if isinstance(self.marginal, Calendar):
                 observed = pd.to_datetime(observed, unit="s")
         series = pd.Series(observed)
+        if isinstance(self.missing, str):
+            indicator = latents[self.missing]
+            if indicator.shape[1] != 2:
+                raise ValueError(f"missingness node {self.missing!r} must have two classes")
+            return series.mask(indicator[:, 1] == 1.0)
         return series.mask(rng.random(len(series)) < self.missing) if self.missing else series
 
     def codes(self, latent: np.ndarray) -> np.ndarray:
