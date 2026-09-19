@@ -52,6 +52,7 @@ from plurel.mechanisms import (
     bin_levels,
     nested_logits,
 )
+from plurel.prior import FAMILIES, Choices, Range, TablePrior
 from plurel.random import Seed, generator
 from plurel.schema import AGGREGATES, FK, Port, Schema
 from plurel.scm import SCM, Interventions
@@ -61,6 +62,7 @@ __all__ = [
     "DEFAULT_CALENDAR",
     "DISTRIBUTIONS",
     "EFFECTS",
+    "FAMILIES",
     "LAYOUTS",
     "LINKS",
     "MECHANISMS",
@@ -72,6 +74,7 @@ __all__ = [
     "BarabasiAlbert",
     "Beta",
     "Calendar",
+    "Choices",
     "Column",
     "Combine",
     "Cycle",
@@ -103,10 +106,12 @@ __all__ = [
     "RandomCauchy",
     "RandomLink",
     "RandomTree",
+    "Range",
     "ReverseRandomTree",
     "Root",
     "Seed",
     "Softmax",
+    "TablePrior",
     "TimeSeries",
     "TreeEffect",
     "TreeLink",
