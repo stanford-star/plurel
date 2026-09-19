@@ -27,43 +27,44 @@ EXAMPLES = {
 
 
 @pytest.fixture
-def parents():
+def values():
     rng = np.random.default_rng(0)
     return {name: rng.standard_normal((N, 1)) for name in ("x", "y", "s")}
 
 
-def test_every_registered_mechanism_meets_the_contract(parents):
+def test_every_registered_mechanism_meets_the_contract(values):
     assert set(EXAMPLES) == set(MECHANISMS)
     for mechanism in EXAMPLES.values():
         assert isinstance(mechanism, Mechanism)
-        noise = mechanism.sample_noise(N, np.random.default_rng(1))
+        exogenous = mechanism.sample_noise(N, np.random.default_rng(1))
         again = mechanism.sample_noise(N, np.random.default_rng(1))
-        np.testing.assert_array_equal(noise, again)
-        assert mechanism.evaluate(parents, noise).shape == (N, mechanism.dim)
+        np.testing.assert_array_equal(exogenous, again)
+        assert mechanism.evaluate(values, exogenous).shape == (N, mechanism.dim)
 
 
-def test_every_reduction_reduces_the_effects_terms(parents):
-    terms = np.stack([effect.evaluate(parents) for effect in TERMS])
-    zeros = np.zeros((N, 1))
+def test_every_reduction_reduces_the_transformed_parents(values):
+    terms = np.stack([effect.apply(values[effect.parent]) for effect in TERMS])
+    rng = np.random.default_rng(0)
     for op, reduce in REDUCTIONS.items():
-        np.testing.assert_allclose(
-            Combine(TERMS, op, noise=Normal(std=0.0)).evaluate(parents, zeros), reduce(terms)
-        )
+        mechanism = Combine(TERMS, op, noise=None)
+        exogenous = mechanism.sample_noise(N, rng)
+        assert exogenous.shape == (N, 1) and not exogenous.any()
+        np.testing.assert_allclose(mechanism.evaluate(values, exogenous), reduce(terms))
 
 
-def test_lookup_effects_share_the_level_binning(parents):
-    levels = bin_levels(parents["s"], PROBABILITIES)
-    lookup = LookupEffect("s", (10.0, 20.0, 30.0), PROBABILITIES).evaluate(parents)
+def test_lookup_effects_share_the_level_binning(values):
+    levels = bin_levels(values["s"], PROBABILITIES)
+    lookup = LookupEffect("s", (10.0, 20.0, 30.0), PROBABILITIES).apply(values["s"])
     np.testing.assert_array_equal(lookup, np.asarray([10.0, 20.0, 30.0])[levels])
     assert set(np.unique(levels)) == {0, 1, 2}
 
 
-def test_interactions_are_product_nodes(parents):
+def test_interactions_are_product_nodes(values):
     zeros = np.zeros((N, 1))
-    product = Combine((LinearEffect("x", 1.0), LinearEffect("y", 1.0)), op="product")
-    interaction = product.evaluate(parents, zeros)
-    np.testing.assert_allclose(interaction, parents["x"] * parents["y"])
+    product = Combine((LinearEffect("x"), LinearEffect("y")), op="product")
+    interaction = product.evaluate(values, zeros)
+    np.testing.assert_allclose(interaction, values["x"] * values["y"])
     target = Combine((LinearEffect("x", 2.0), LinearEffect("h", -0.5)))
-    values = target.evaluate({**parents, "h": interaction}, zeros)
-    np.testing.assert_allclose(values, 2.0 * parents["x"] - 0.5 * parents["x"] * parents["y"])
+    out = target.evaluate({**values, "h": interaction}, zeros)
+    np.testing.assert_allclose(out, 2.0 * values["x"] - 0.5 * values["x"] * values["y"])
     assert target.parents == ("x", "h")
