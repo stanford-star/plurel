@@ -20,23 +20,23 @@ def _check_sizes(n_child: int, n_parent: int) -> None:
         raise ValueError("no parent rows to link to")
 
 
-def _check_hierarchy(hierarchy: tuple[int, ...]) -> None:
-    if not hierarchy or min(hierarchy) < 1:
-        raise ValueError("a hierarchy needs at least one cluster per level")
+def _check_counts(counts: tuple[int, ...]) -> None:
+    if not counts or min(counts) < 1:
+        raise ValueError("at least one cluster per level")
 
 
-def clusters(n: int, hierarchy: tuple[int, ...], shares: np.ndarray | None = None) -> np.ndarray:
-    _check_hierarchy(hierarchy)
-    shares = np.ones(int(np.prod(hierarchy))) if shares is None else np.asarray(shares, dtype=float)
-    if len(shares) != np.prod(hierarchy) or shares.min() <= 0:
+def clusters(n: int, counts: tuple[int, ...], shares: np.ndarray | None = None) -> np.ndarray:
+    _check_counts(counts)
+    shares = np.ones(int(np.prod(counts))) if shares is None else np.asarray(shares, dtype=float)
+    if len(shares) != np.prod(counts) or shares.min() <= 0:
         raise ValueError("one positive share per base cluster")
     k, cumulative = len(shares), np.cumsum(shares) / shares.sum()
     bounds = (
         np.round(cumulative * (n - k)) + np.arange(1, k + 1) if n >= k else np.round(cumulative * n)
     )
     base = np.searchsorted(bounds, np.arange(n), side="right")
-    strides = np.cumprod((1, *hierarchy[:0:-1]))[::-1]
-    return (base[:, None] // strides[None, :]) % np.asarray(hierarchy)[None, :]
+    strides = np.cumprod((1, *counts[:0:-1]))[::-1]
+    return (base[:, None] // strides[None, :]) % np.asarray(counts)[None, :]
 
 
 @dataclass(frozen=True)
@@ -57,8 +57,8 @@ class HSBMLink:
     inactive: float = 0.0
 
     def __post_init__(self) -> None:
-        _check_hierarchy(self.parent_clusters)
-        _check_hierarchy(self.child_clusters)
+        _check_counts(self.parent_clusters)
+        _check_counts(self.child_clusters)
         if len(self.parent_clusters) != len(self.child_clusters):
             raise ValueError("one cluster count per level on both sides")
         if self.within <= 0 or not 0 < self.between[0] <= self.between[1]:
@@ -72,10 +72,10 @@ class HSBMLink:
         affinity[index % parent, index % child] = self.within
         return affinity
 
-    def shares(self, hierarchy: tuple[int, ...], rng: np.random.Generator) -> np.ndarray | None:
+    def shares(self, counts: tuple[int, ...], rng: np.random.Generator) -> np.ndarray | None:
         if self.cluster_weights is None:
             return None
-        return self.cluster_weights.sample(int(np.prod(hierarchy)), rng)
+        return self.cluster_weights.sample(int(np.prod(counts)), rng)
 
     def sample(self, n_child: int, n_parent: int, rng: np.random.Generator) -> np.ndarray:
         _check_sizes(n_child, n_parent)
