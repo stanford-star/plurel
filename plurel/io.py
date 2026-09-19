@@ -13,24 +13,28 @@ from plurel.schema import Schema
 def database(
     schema: Schema,
     frames: Mapping[str, pd.DataFrame],
+    pkeys: Mapping[str, str],
     times: Mapping[str, str] | None = None,
-    pkey: str = "id",
 ) -> Database:
-    times = dict(times or {})
+    pkeys, times = dict(pkeys), dict(times or {})
     if set(frames) != set(schema.tables):
         raise ValueError("one frame per table of the schema")
-    if unknown := set(times) - set(schema.tables):
-        raise ValueError(f"time columns for unknown tables {sorted(unknown)}")
+    if unknown := (set(pkeys) | set(times)) - set(schema.tables):
+        raise ValueError(f"keys or time columns for unknown tables {sorted(unknown)}")
+    if missing := {fk.parent for fk in schema.fkeys} - set(pkeys):
+        raise ValueError(
+            f"tables referenced by a foreign key need a primary key: {sorted(missing)}"
+        )
     tables = {}
     for name, frame in frames.items():
+        pkey, time = pkeys.get(name), times.get(name)
         if pkey in frame:
             raise ValueError(f"table {name!r} already has a column {pkey!r}")
-        time = times.get(name)
         if time is not None and not pd.api.types.is_datetime64_any_dtype(frame.get(time)):
             raise ValueError(f"time column {time!r} of {name!r} must be a datetime column")
-        df = pd.concat(
-            [pd.Series(np.arange(len(frame)), name=pkey), frame.reset_index(drop=True)], axis=1
-        )
+        df = frame.reset_index(drop=True)
+        if pkey is not None:
+            df = pd.concat([pd.Series(np.arange(len(frame)), name=pkey), df], axis=1)
         fkeys = {fk.column: fk.parent for fk in schema.fkeys if fk.table == name}
         tables[name] = Table(df, fkeys, pkey_col=pkey, time_col=time)
     return Database(tables)
