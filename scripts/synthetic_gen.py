@@ -29,10 +29,8 @@ def generate_plurel_db(
         config=Config(cache_dir=cache_dir),
     )
 
-    # generate and cache db in relbench-3.0.0 format (manifest.yaml + db/*.parquet).
-    # To preprocess for training, use the relational-transformer repo:
-    # https://github.com/rishabh-ranjan/relational-transformer
-    #   pixi run preprocess --dataset <cache_dir> --out-dir <pre_dir>
+    # generate and cache db in relbench format (manifest.yaml + db/*.parquet).
+    # See examples/relational_transformer/ for preprocessing and pretraining.
     dataset.get_db()
 
 
