@@ -56,7 +56,7 @@ def write_database(
     if (path / "manifest.yaml").exists():
         if not overwrite:
             raise FileExistsError(f"{path} already holds a dataset; pass overwrite=True")
-        shutil.rmtree(path / "db")
+        shutil.rmtree(path / "db", ignore_errors=True)
     (path / "db").mkdir(parents=True, exist_ok=True)
     for table_name, table in db.table_dict.items():
         table.df.to_parquet(path / "db" / f"{table_name}.parquet", index=False)
