@@ -167,12 +167,12 @@ class Noise:
         return np.exp(np.clip(log_scale, -self.clip, self.clip)) * noise
 
 
+@dataclass(frozen=True)
 class Mechanism:
-    dim: int
-    parents: tuple[str, ...]
+    noise: Noise | None = field(default_factory=Noise, kw_only=True)
 
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
-        raise NotImplementedError
+        return self.noise.sample(n, rng, self.dim) if self.noise else np.zeros((n, 0))
 
     def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
         raise NotImplementedError
@@ -180,15 +180,11 @@ class Mechanism:
 
 @dataclass(frozen=True)
 class Root(Mechanism):
-    noise: Noise = field(default_factory=Noise)
     dim: int = 1
 
     @property
     def parents(self) -> tuple[str, ...]:
         return ()
-
-    def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
-        return self.noise.sample(n, rng, self.dim)
 
     def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
         return noise
@@ -197,7 +193,6 @@ class Root(Mechanism):
 @dataclass(frozen=True)
 class Combine(Mechanism):
     effects: tuple[Effect, ...] = ()
-    noise: Noise = field(default_factory=Noise)
     op: str = "sum"
 
     def __post_init__(self) -> None:
@@ -224,9 +219,6 @@ class Combine(Mechanism):
     def interaction_pairs(self) -> tuple[tuple[str, str], ...]:
         pairs = [pair for effect in self.effects for pair in combinations(effect.parents, 2)]
         return tuple(dict.fromkeys(pairs))
-
-    def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
-        return self.noise.sample(n, rng)
 
     def contributions(
         self, parents: dict[str, np.ndarray]

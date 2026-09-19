@@ -27,8 +27,8 @@ TERMS = (
     TransformedProductEffect(("x", "y"), 0.25, "step"),
 )
 EXAMPLES = {
-    "root": Root(Noise(Mixture((Normal(-2.0), Normal(2.0)))), dim=3),
-    "combine": Combine(TERMS, Noise(Normal(std=0.5), (LinearEffect("y", 0.3),))),
+    "root": Root(dim=3, noise=Noise(Mixture((Normal(-2.0), Normal(2.0))))),
+    "combine": Combine(TERMS, noise=Noise(Normal(std=0.5), (LinearEffect("y", 0.3),))),
 }
 
 
@@ -49,7 +49,7 @@ def test_every_registered_mechanism_meets_the_contract(parents):
 
 
 def test_combine_sums_its_contributions(parents):
-    mechanism = Combine(TERMS, Noise(Normal(std=0.0)))
+    mechanism = Combine(TERMS, noise=Noise(Normal(std=0.0)))
     contributions = mechanism.contributions(parents)
     assert set(contributions) == {"x", "s", ("x", "y"), ("s", "y")}
     expected = sum(term.evaluate(parents) for term in TERMS)
@@ -58,11 +58,11 @@ def test_combine_sums_its_contributions(parents):
 
 
 def test_every_reduction_reduces_the_same_terms(parents):
-    terms = Combine(TERMS, Noise(Normal(std=0.0))).terms(parents, N)
+    terms = Combine(TERMS, noise=Noise(Normal(std=0.0))).terms(parents, N)
     zeros = np.zeros((N, 1))
     for op, reduce in REDUCTIONS.items():
         np.testing.assert_allclose(
-            Combine(TERMS, Noise(Normal(std=0.0)), op).evaluate(parents, zeros), reduce(terms)
+            Combine(TERMS, op, noise=Noise(Normal(std=0.0))).evaluate(parents, zeros), reduce(terms)
         )
 
 
