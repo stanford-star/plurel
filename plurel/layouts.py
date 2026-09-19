@@ -175,9 +175,12 @@ class WattsStrogatz:
 
 @dataclass(frozen=True)
 class RandomCauchy:
+    offset: float = 0.0
+
     def sample(self, n: int, rng: np.random.Generator) -> Parents:
         _check_size(n)
-        shift = rng.standard_cauchy() + rng.standard_cauchy(n)[:, None] + rng.standard_cauchy(n)
+        shift = self.offset + rng.standard_cauchy()
+        shift = shift + rng.standard_cauchy(n)[:, None] + rng.standard_cauchy(n)
         probability = 1.0 / (1.0 + np.exp(-np.clip(shift, -500.0, 500.0)))
         return _parents(n, _connected(n, _pairs(rng.random((n, n)) < probability), rng))
 

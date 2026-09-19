@@ -77,6 +77,13 @@ def test_density_hubs_rings_and_layers():
         for parent in own:
             degree[parent] += 1
     assert degree.max() > 5 * degree.mean()
+    dense_cauchy = sum(
+        edges(RandomCauchy(8.0).sample(30, np.random.default_rng(i))) for i in range(20)
+    )
+    sparse_cauchy = sum(
+        edges(RandomCauchy(-8.0).sample(30, np.random.default_rng(i))) for i in range(20)
+    )
+    assert dense_cauchy > 3 * sparse_cauchy
     ring = WattsStrogatz(4, rewire=0.0).sample(30, rng)
     assert edges(ring) == 60
     layered = Layered(3, dropout=0.5).sample(30, rng)
