@@ -19,16 +19,15 @@ Synthetic Data unlocks Scaling Laws for Relational Foundation Models
 
 ## Overview
 
-PluRel is a framework for synthesizing diverse multi-tabular relational databases using Structural Causal Models (SCMs). It is the reference implementation for the [PluRel paper](https://arxiv.org/abs/2602.04029), with architecture and training code building on [Relational Transformer](https://github.com/snap-stanford/relational-transformer) ([ICLR 2026](https://arxiv.org/abs/2510.06377)).
+PluRel is an open-source library for synthesizing diverse relational and tabular data using Structural Causal Models (SCMs). It is the reference implementation for the [PluRel paper](https://arxiv.org/abs/2602.04029).
 
 This repository provides:
 
-- Scalable generation of synthetic relational data (from scratch or SQL schemas), written directly in the `relbench` format: a self-describing dataset directory with a `manifest.yaml` (relational metadata) next to plain `db/<table>.parquet` files, loadable with [relbench](https://github.com/snap-stanford/relbench)'s `load_dataset`.
-
-Preprocessing (the Rust-based rustler sampler), pretraining, evaluation, and inference live in the [relational-transformer](https://github.com/rishabh-ranjan/relational-transformer) repo, which consumes the `relbench` format, which PluRel outputs.
+- Scalable generation of synthetic multi-table relational databases (from scratch or from SQL schemas), with configurable table layouts, SCM mechanisms, column types, time series, and post-processing.
+- Output written directly in the `relbench` format: a self-describing dataset directory with a `manifest.yaml` (relational metadata) next to plain `db/<table>.parquet` files, loadable with [relbench](https://github.com/snap-stanford/relbench)'s `load_dataset` or any parquet reader.
 
 > [!NOTE]
-> The paper-exact code — including the vendored rustler sampler and `rt/` training code used for all paper experiments (and matching the [stanford-star/rt-plurel](https://huggingface.co/stanford-star/rt-plurel) checkpoints) — is preserved at the [`v1.0.0`](https://github.com/stanford-star/plurel/tree/v1.0.0) tag.
+> Pretraining models on PluRel data (preprocessing, checkpoints, inference with [Relational Transformer](https://github.com/rishabh-ranjan/relational-transformer)) is covered in [`examples/relational_transformer/`](examples/relational_transformer/).
 
 ## Framework Design
 
@@ -70,7 +69,7 @@ $ pixi run pre-commit install
 
 ## Synthesize Relational Data from Scratch
 
-- The `SyntheticDataset` class can be used to create [relbench](https://github.com/snap-stanford/relbench) compatible dataset objects. With a `cache_dir` set, `get_db()` writes the dataset in `relbench` format (`manifest.yaml` + `db/*.parquet`), ready for `relbench.load.load_dataset` and [relational-transformer](https://github.com/rishabh-ranjan/relational-transformer) preprocessing/training.
+- The `SyntheticDataset` class can be used to create [relbench](https://github.com/snap-stanford/relbench) compatible dataset objects. With a `cache_dir` set, `get_db()` writes the dataset in `relbench` format (`manifest.yaml` + `db/*.parquet`), ready for `relbench.load.load_dataset`.
 - It only requires a `seed` and a `Config` object that contains `database`, `scm` and `dag` level params for sampling. See example below.
 
 ```py
@@ -120,25 +119,10 @@ $ pixi run python scripts/synthetic_gen.py \
 | `--num_dbs` | Number of databases to generate. |
 | `--num_proc` | Number of parallel processes (default: number of CPU cores). |
 
-> [!NOTE]
-> See [`examples/generation/`](examples/generation/) for a notebook that synthesizes from a SQL schema.
+## Examples
 
-
-## Preprocessing, Pretraining, and Inference
-
-All model-side code — the Rust-based rustler context sampler, preprocessing, pretraining, evaluation, and inference (including on your own database) — lives in the [relational-transformer](https://github.com/rishabh-ranjan/relational-transformer) repo. PluRel's `relbench`-format output plugs in directly:
-
-```bash
-# in the relational-transformer repo: preprocess a generated database
-pixi run preprocess --dataset ~/.cache/relbench/plurel-0 --out-dir ~/scratch/pre
-```
-
-Preprocessed data is hosted on the Hugging Face Hub and downloaded automatically on demand — every `pre_dir` argument there accepts a local path or a Hub repo spec:
-
-- [stanford-star/plurel-preprocessed](https://huggingface.co/datasets/stanford-star/plurel-preprocessed) — all 2000 PluRel synthetic databases, preprocessed.
-- [stanford-star/relbench-preprocessed](https://huggingface.co/datasets/stanford-star/relbench-preprocessed) — preprocessed relbench databases.
-
-Synthetic pretrained checkpoints are on the Hub at [stanford-star/rt-plurel](https://huggingface.co/stanford-star/rt-plurel/tree/main); see the [relational-transformer docs](https://github.com/rishabh-ranjan/relational-transformer/tree/main/docs) for training and inference with them.
+- [`examples/generation/`](examples/generation/) — notebook that synthesizes a database from a SQL schema.
+- [`examples/relational_transformer/`](examples/relational_transformer/) — pretraining Relational Transformer on PluRel data: preprocessing, hosted preprocessed datasets, and checkpoints.
 
 ## Citation
 
@@ -153,12 +137,4 @@ year={2026}
 }
 ```
 
-If you use the architecture, training loop or sampler code, please also cite the Relational Transformer paper:
-```bibtex
-@inproceedings{ranjan2026relationaltransformer,
-    title={{Relational Transformer:} Toward Zero-Shot Foundation Models for Relational Data}, 
-    author={Rishabh Ranjan and Valter Hudovernik and Mark Znidar and Charilaos Kanatsoulis and Roshan Upendra and Mahmoud Mohammadi and Joe Meyer and Tom Palczewski and Carlos Guestrin and Jure Leskovec},
-    booktitle={The Fourteenth International Conference on Learning Representations},
-    year={2026}
-}
-```
+If you use the pretrained checkpoints or the Relational Transformer code, please also cite the [Relational Transformer paper](https://arxiv.org/abs/2510.06377) (see [`examples/relational_transformer/`](examples/relational_transformer/)).
