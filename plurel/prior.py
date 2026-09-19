@@ -34,7 +34,7 @@ def _matrix(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator)
 
 
 def _mlp(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
-    hidden = prior.mlp_hidden.draw(rng)
+    hidden = prior.mlp_hidden_width.draw(rng)
     weights = (
         rng.normal(0.0, 1.0 / np.sqrt(d_in), (d_in, hidden)),
         rng.normal(0.0, 1.0 / np.sqrt(hidden), (hidden, d_out)),
@@ -54,10 +54,10 @@ def _tree(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -
 
 
 def _fourier(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
-    frequencies = rng.normal(size=(d_in, prior.fourier_frequencies)) * rng.uniform(0.5, 3.0)
-    phases = rng.uniform(0.0, 2.0 * np.pi, prior.fourier_frequencies)
+    frequencies = rng.normal(size=(d_in, prior.fourier_frequency_count)) * rng.uniform(0.5, 3.0)
+    phases = rng.uniform(0.0, 2.0 * np.pi, prior.fourier_frequency_count)
     weights = rng.normal(
-        0.0, 1.0 / np.sqrt(prior.fourier_frequencies), (prior.fourier_frequencies, d_out)
+        0.0, 1.0 / np.sqrt(prior.fourier_frequency_count), (prior.fourier_frequency_count, d_out)
     )
     return FourierEffect(parent, frequencies, phases, weights)
 
@@ -168,20 +168,20 @@ class TablePrior:
         node_layouts: DAG generator for the node graph.
         node_width: Latent dimensions of a numeric node.
         node_categorical_share: Probability that a node is categorical, a Softmax.
-        node_classes: Classes of a categorical node.
+        node_class_count: Classes of a categorical node.
         effect_families: Effect family per edge; linear only when parent and node widths agree.
         combine_ops: Reduction over the effects of a node with several parents.
-        combine_noise: Standard deviation of the Gaussian noise of a Combine node.
+        combine_noise_std: Standard deviation of the Gaussian noise of a Combine node.
         root_noise: Exogenous distribution of a source node.
-        mlp_hidden: Hidden width of an MLP effect.
+        mlp_hidden_width: Hidden width of an MLP effect.
         tree_count: Oblivious trees in a tree effect.
         tree_depth: Depth of each oblivious tree.
-        fourier_frequencies: Random Fourier features in a Fourier effect.
+        fourier_frequency_count: Random Fourier features in a Fourier effect.
         column_count: Observed columns besides the key.
         column_marginals: Marginal a numeric column is rank-mapped onto; None keeps the latent.
         column_binned_share: Probability that a numeric column is binned into categories instead.
-        column_bins: Categories of a binned column.
-        column_missing: Missing rate of a column that has missingness.
+        column_bin_count: Categories of a binned column.
+        column_missing_rate: Missing rate of a column that has missingness.
         column_missing_share: Probability that a column has missingness.
         time_probability: Probability that the table gets a calendar time column.
         time_calendar: Calendar the time column is drawn from.
@@ -193,24 +193,24 @@ class TablePrior:
     )
     node_width: Range = LogIntegersRange(1, 4)
     node_categorical_share: float = 0.3
-    node_classes: Range = IntegersRange(2, 8)
+    node_class_count: Range = IntegersRange(2, 8)
     effect_families: Choices = Choices(FAMILIES)
     combine_ops: Choices = Choices(("sum", "product", "max", "logsumexp"), (6.0, 1.0, 1.0, 1.0))
-    combine_noise: Range = LogRange(0.01, 0.5)
+    combine_noise_std: Range = LogRange(0.01, 0.5)
     root_noise: Choices = Choices(
         (Normal(), Uniform(-1.7, 1.7), Mixture((Normal(-1.5, 0.5), Normal(1.5, 0.5))))
     )
-    mlp_hidden: Range = LogIntegersRange(2, 16)
+    mlp_hidden_width: Range = LogIntegersRange(2, 16)
     tree_count: Range = LogIntegersRange(1, 8)
     tree_depth: Range = IntegersRange(1, 4)
-    fourier_frequencies: int = 16
+    fourier_frequency_count: int = 16
     column_count: Range = IntegersRange(3, 12)
     column_marginals: Choices = Choices(
         (None, Uniform(), LogNormal(), Pareto(2.0), Exponential()), (3.0, 1.0, 1.0, 1.0, 1.0)
     )
     column_binned_share: float = 0.2
-    column_bins: Range = IntegersRange(2, 8)
-    column_missing: Range = Range(0.01, 0.1)
+    column_bin_count: Range = IntegersRange(2, 8)
+    column_missing_rate: Range = Range(0.01, 0.1)
     column_missing_share: float = 0.3
     time_probability: float = 0.5
     time_calendar: Calendar = DEFAULT_CALENDAR
@@ -232,7 +232,7 @@ class TablePrior:
         parents = self.node_layouts.draw(rng).sample(n, rng)
         categorical = rng.random(n) < self.node_categorical_share
         dims = [
-            self.node_classes.draw(rng) if categorical[i] else self.node_width.draw(rng)
+            self.node_class_count.draw(rng) if categorical[i] else self.node_width.draw(rng)
             for i in range(n)
         ]
         mechanisms = {
@@ -264,7 +264,7 @@ class TablePrior:
         if not effects:
             return Root(dim=dims[i], noise=self.root_noise.draw(rng))
         op = self.combine_ops.draw(rng) if len(effects) > 1 else "sum"
-        return Combine(effects, op, noise=Normal(std=self.combine_noise.draw(rng)))
+        return Combine(effects, op, noise=Normal(std=self.combine_noise_std.draw(rng)))
 
     def effect(
         self, parent: str, d_in: int, d_out: int, block: bool, rng: np.random.Generator
@@ -275,13 +275,15 @@ class TablePrior:
 
     def column(self, i: int, dim: int, categorical: bool, rng: np.random.Generator) -> Column:
         node = f"n{i}"
-        missing = self.column_missing.draw(rng) if rng.random() < self.column_missing_share else 0.0
+        missing = (
+            self.column_missing_rate.draw(rng) if rng.random() < self.column_missing_share else 0.0
+        )
         if categorical:
             categories = tuple(f"c{k}" for k in range(dim))
             return Column(node, "categorical", categories=categories, missing=missing)
         slot = int(rng.integers(dim))
         if rng.random() < self.column_binned_share:
-            k = self.column_bins.draw(rng)
+            k = self.column_bin_count.draw(rng)
             probabilities = tuple(float(p) for p in rng.dirichlet(np.ones(k)))
             categories = tuple(f"c{j}" for j in range(k))
             return Column(
