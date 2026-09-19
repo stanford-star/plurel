@@ -7,13 +7,17 @@ from plurel.mechanisms import (
     MECHANISMS,
     REDUCTIONS,
     Combine,
+    FourierEffect,
     LinearEffect,
     LookupEffect,
     MatrixEffect,
     Mechanism,
+    MLPEffect,
     NearestEffect,
+    QuadraticEffect,
     Root,
     Softmax,
+    TreeEffect,
     bin_levels,
     nested_logits,
 )
@@ -30,11 +34,27 @@ SCORES = (
     MatrixEffect("x", np.array([[1.0, -1.0, 0.0]])),
     MatrixEffect("y", np.array([[0.0, 0.0, 2.0]])),
 )
+PARAMS = np.random.default_rng(0)
+MLP = MLPEffect("h", (PARAMS.standard_normal((3, 4)), PARAMS.standard_normal((4, 2))))
+TREE = TreeEffect(
+    "h", np.array([[0, 2], [1, 1]]), np.zeros((2, 2)), PARAMS.standard_normal((2, 4, 2))
+)
+FOURIER = FourierEffect(
+    "h",
+    PARAMS.standard_normal((3, 5)),
+    PARAMS.uniform(0.0, 2.0 * np.pi, 5),
+    PARAMS.standard_normal((5, 2)),
+)
+QUADRATIC = QuadraticEffect("h", PARAMS.standard_normal((2, 4, 4)))
 EFFECT_EXAMPLES = {
     "linear": TERMS[0],
     "lookup": TERMS[1],
     "matrix": SCORES[0],
     "nearest": NearestEffect("h", CENTERS),
+    "mlp": MLP,
+    "tree": TREE,
+    "fourier": FOURIER,
+    "quadratic": QUADRATIC,
 }
 EXAMPLES = {
     "root": Root(dim=3, noise=Mixture((Normal(-2.0), Normal(2.0)))),
@@ -93,6 +113,9 @@ def test_block_effects_set_the_width_and_broadcast(values):
     np.testing.assert_allclose(mixed.evaluate(values, np.zeros((N, 2))), expected)
     assert Combine((block, LinearEffect("x")), op="concat").dim == 3
     assert Combine((LinearEffect("h", dim=3),)).dim == 3
+    node = Combine((MLP, TREE), op="logsumexp")
+    assert node.dim == 2
+    assert node.evaluate(values, node.sample_noise(N, np.random.default_rng(0))).shape == (N, 2)
 
 
 def test_lookup_effects_share_the_level_binning(values):
@@ -143,3 +166,33 @@ def test_nearest_effect_one_hot_encodes_the_closest_center(values):
     np.testing.assert_array_equal(one_hot.argmax(1), values["h"].argmax(1))
     table = np.arange(9.0).reshape(3, 3)
     np.testing.assert_array_equal(MatrixEffect("c", table).apply(one_hot), table[one_hot.argmax(1)])
+
+
+def test_mlp_effect_places_activations_between_layers(values):
+    h = values["h"]
+    w1, w2 = MLP.weights
+    np.testing.assert_allclose(MLP.apply(h), h @ w1 @ w2)
+    hidden = MLPEffect("h", (w1, w2), activations=("identity", "tanh", "identity"))
+    np.testing.assert_allclose(hidden.apply(h), np.tanh(h @ w1) @ w2)
+    first = MLPEffect("h", (w1,), activations=("tanh", "identity"))
+    np.testing.assert_allclose(first.apply(h), np.tanh(h) @ w1)
+    with pytest.raises(ValueError):
+        MLPEffect("h", (w1,), activations=("tanh",))
+
+
+def test_tree_effect_averages_oblivious_tree_leaves(values):
+    h = values["h"]
+    expected = np.zeros((N, 2))
+    for tree, (dims, points) in enumerate(zip(TREE.split_dims, TREE.split_points)):
+        index = sum((h[:, d] > p).astype(int) << k for k, (d, p) in enumerate(zip(dims, points)))
+        expected += TREE.leaves[tree, index]
+    np.testing.assert_allclose(TREE.apply(h), expected / 2)
+
+
+def test_fourier_and_quadratic_effects_match_their_formulas(values):
+    h = values["h"]
+    features = np.cos(h @ FOURIER.frequencies + FOURIER.phases)
+    np.testing.assert_allclose(FOURIER.apply(h), features @ FOURIER.weights)
+    ones = np.concatenate([h, np.ones((N, 1))], axis=1)
+    expected = np.stack([np.einsum("ni,ij,nj->n", ones, a, ones) for a in QUADRATIC.tensor], axis=1)
+    np.testing.assert_allclose(QUADRATIC.apply(h), expected)
