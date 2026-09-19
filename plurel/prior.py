@@ -56,11 +56,12 @@ class Range:
             raise ValueError("low must not exceed high, and a log range must be positive")
 
     def draw(self, rng: np.random.Generator) -> float | int:
+        high = self.high + 1 if self.integer else self.high
         if self.log:
-            value = float(np.exp(rng.uniform(np.log(self.low), np.log(self.high))))
+            value = float(np.exp(rng.uniform(np.log(self.low), np.log(high))))
         else:
-            value = float(rng.uniform(self.low, self.high))
-        return int(np.clip(round(value), self.low, self.high)) if self.integer else value
+            value = float(rng.uniform(self.low, high))
+        return min(int(value), int(self.high)) if self.integer else value
 
 
 @dataclass(frozen=True)

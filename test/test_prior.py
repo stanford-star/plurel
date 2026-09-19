@@ -11,8 +11,12 @@ def test_choices_and_ranges_draw_within_their_declarations():
     draws = [weighted.draw(rng) for _ in range(2000)]
     assert "a" not in draws and 0.6 < draws.count("c") / 2000 < 0.9
     assert Choices((7,)).draw(rng) == 7
-    log_ints = [Range(1, 32, log=True, integer=True).draw(rng) for _ in range(2000)]
+    log_ints = [Range(1, 32, log=True, integer=True).draw(rng) for _ in range(4000)]
     assert min(log_ints) == 1 and max(log_ints) == 32 and np.median(log_ints) < 8
+    counts = np.bincount([Range(2, 4, integer=True).draw(rng) for _ in range(6000)], minlength=5)[
+        2:
+    ]
+    assert (abs(counts / 6000 - 1 / 3) < 0.03).all()
     floats = [Range(-1.0, 1.0).draw(rng) for _ in range(2000)]
     assert -1.0 <= min(floats) and max(floats) < 1.0 and abs(np.mean(floats)) < 0.1
     for bad in (
