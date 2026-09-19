@@ -32,10 +32,27 @@ def test_hsbm_links_within_blocks_with_skewed_and_inactive_parents():
     skewed = HSBMLink(attractiveness=Pareto(1.5), inactive=0.5).sample(4000, 400, rng)
     degrees = np.bincount(skewed, minlength=400)
     assert (degrees == 0).sum() >= 200 and degrees.max() > 5 * degrees[degrees > 0].mean()
-    expected = [[0, 0], [0, 0], [0, 1], [0, 1], [1, 0], [1, 0], [1, 1]]
-    np.testing.assert_array_equal(clusters(7, (2, 2)), expected)
     with pytest.raises(ValueError):
         HSBMLink((2,), (2, 2))
+
+
+def test_cluster_shares_set_unequal_sizes():
+    equal = [[0, 0], [0, 0], [0, 1], [0, 1], [1, 0], [1, 1], [1, 1]]
+    np.testing.assert_array_equal(clusters(7, (2, 2)), equal)
+    skewed = [[0, 0], [0, 1], [0, 1], [1, 0], [1, 1], [1, 1], [1, 1]]
+    np.testing.assert_array_equal(clusters(7, (2, 2), shares=(1, 1, 1, 4)), skewed)
+    for shares in ((1, 1, 1), (1, 0, 1, 1)):
+        with pytest.raises(ValueError):
+            clusters(7, (2, 2), shares=shares)
+    link = HSBMLink((4,), (4,), between=(1e-6, 2e-6), cluster_weights=Pareto(1.0))
+    parents = link.sample(4000, 400, np.random.default_rng(0))
+    draws = np.random.default_rng(0)
+    parent_labels = clusters(400, (4,), link.shares((4,), draws))[:, 0]
+    child_labels = clusters(4000, (4,), link.shares((4,), draws))[:, 0]
+    sizes = np.bincount(parent_labels, minlength=4)
+    assert sizes.min() >= 1 and sizes.max() > 3 * sizes.min()
+    assert (parent_labels[parents] == child_labels).mean() > 0.95
+    assert np.bincount(clusters(3, (2, 2))[:, 0], minlength=2).tolist() == [2, 1]
 
 
 def test_forest_links_point_to_earlier_rows_or_nowhere():

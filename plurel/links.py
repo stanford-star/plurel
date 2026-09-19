@@ -13,8 +13,15 @@ class Link(Protocol):
     def sample(self, n_child: int, n_parent: int, rng: np.random.Generator) -> np.ndarray: ...
 
 
-def clusters(n: int, hierarchy: tuple[int, ...]) -> np.ndarray:
-    base = np.arange(n) // int(np.ceil(n / np.prod(hierarchy)))
+def clusters(n: int, hierarchy: tuple[int, ...], shares: np.ndarray | None = None) -> np.ndarray:
+    shares = np.ones(int(np.prod(hierarchy))) if shares is None else np.asarray(shares, dtype=float)
+    if len(shares) != np.prod(hierarchy) or shares.min() <= 0:
+        raise ValueError("one positive share per base cluster")
+    k, cumulative = len(shares), np.cumsum(shares) / shares.sum()
+    bounds = (
+        np.round(cumulative * (n - k)) + np.arange(1, k + 1) if n >= k else np.round(cumulative * n)
+    )
+    base = np.searchsorted(bounds, np.arange(n), side="right")
     strides = np.cumprod((1, *hierarchy[:0:-1]))[::-1]
     return (base[:, None] // strides[None, :]) % np.asarray(hierarchy)[None, :]
 
@@ -31,6 +38,7 @@ class HSBMLink:
     child_hierarchy: tuple[int, ...] = (1,)
     within: float = 0.9
     between: tuple[float, float] = (0.001, 0.002)
+    cluster_weights: Distribution | None = None
     attractiveness: Distribution | None = None
     inactive: float = 0.0
 
@@ -46,9 +54,18 @@ class HSBMLink:
         affinity[index % parent, index % child] = self.within
         return affinity
 
+    def shares(self, hierarchy: tuple[int, ...], rng: np.random.Generator) -> np.ndarray | None:
+        if self.cluster_weights is None:
+            return None
+        return self.cluster_weights.sample(int(np.prod(hierarchy)), rng)
+
     def sample(self, n_child: int, n_parent: int, rng: np.random.Generator) -> np.ndarray:
-        parent_clusters = clusters(n_parent, self.parent_hierarchy)
-        child_clusters = clusters(n_child, self.child_hierarchy)
+        parent_clusters = clusters(
+            n_parent, self.parent_hierarchy, self.shares(self.parent_hierarchy, rng)
+        )
+        child_clusters = clusters(
+            n_child, self.child_hierarchy, self.shares(self.child_hierarchy, rng)
+        )
         levels = [
             np.log(self.affinity(parent, child, rng))
             for parent, child in zip(self.parent_hierarchy, self.child_hierarchy)
