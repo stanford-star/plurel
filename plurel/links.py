@@ -33,7 +33,8 @@ def clusters(n: int, counts: tuple[int, ...], shares: np.ndarray | None = None) 
     k = len(shares)
     if n < k:
         raise ValueError("fewer rows than base clusters")
-    bounds = np.round(np.cumsum(shares) / shares.sum() * (n - k)) + np.arange(1, k + 1)
+    cumulative = np.cumsum(shares)
+    bounds = np.round(cumulative / cumulative[-1] * (n - k)) + np.arange(1, k + 1)
     base = np.searchsorted(bounds, np.arange(n), side="right")
     strides = np.cumprod((1, *counts[:0:-1]))[::-1]
     return (base[:, None] // strides[None, :]) % np.asarray(counts)[None, :]
@@ -104,6 +105,8 @@ class HSBMLink:
         if n_inactive >= n_parent:
             raise ValueError("inactive share leaves no active parent")
         log_weight[rng.permutation(n_parent)[:n_inactive]] = -np.inf
+        if not np.isfinite(log_weight).any():
+            raise ValueError("no active parent with positive weight")
         parents = np.empty(n_child, dtype=np.int64)
         chunk = max(1, min(n_child, CHUNK_BYTES // (8 * n_parent)))
         for start in range(0, n_child, chunk):

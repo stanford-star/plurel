@@ -109,6 +109,29 @@ def test_links_reject_unexpected_sizes_shares_and_parameters():
             link.sample(n_child, n_parent, rng)
 
 
+def test_cluster_bounds_always_cover_every_row():
+    rng = np.random.default_rng(0)
+    for _ in range(200):
+        shares = rng.pareto(0.3, 16) + 1e-9
+        labels = clusters(1000, (4, 4), shares)
+        base = labels[:, 0] * 4 + labels[:, 1]
+        assert (np.diff(base) >= 0).all() and np.bincount(base, minlength=16).min() >= 1
+
+
+def test_hsbm_raises_when_exclusions_leave_no_linkable_parent():
+    link = HSBMLink(attractiveness=Weights(1.0, 0.0), inactive=0.5)
+    outcomes = set()
+    for seed in range(10):
+        try:
+            parents = link.sample(100, 2, np.random.default_rng(seed))
+        except ValueError:
+            outcomes.add("raised")
+        else:
+            outcomes.add("linked")
+            assert not parents.any()
+    assert outcomes == {"raised", "linked"}
+
+
 def test_hsbm_draws_do_not_depend_on_chunking(monkeypatch):
     link = HSBMLink((2, 2), (3, 2), attractiveness=Pareto(2.0), inactive=0.2)
     whole = link.sample(500, 300, np.random.default_rng(3))
