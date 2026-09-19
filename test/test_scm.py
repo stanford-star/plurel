@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from plurel.columns import DEFAULT_CALENDAR, Column
-from plurel.distributions import Normal, Uniform
+from plurel.distributions import Exponential, Normal, Uniform
 from plurel.mechanisms import Combine, LinearEffect, MatrixEffect, NearestEffect, Root, Softmax
 from plurel.scm import SCM
 
@@ -83,7 +83,7 @@ def test_sample_observes_columns_from_one_draw(scm):
     columns = {
         "amount": Column("y", marginal=Uniform(), missing=0.1),
         "segment": Column("segment", "categorical", categories=("a", "b", "c")),
-        "when": Column("z", marginal=DEFAULT_CALENDAR),
+        "when": Column("z", "timestamp", marginal=DEFAULT_CALENDAR),
     }
     typed = SCM(MECHANISMS, columns)
     frame = typed.sample(N, seed=0)
@@ -99,3 +99,28 @@ def test_sample_observes_columns_from_one_draw(scm):
         SCM(MECHANISMS, {"c": Column("missing")})
     with pytest.raises(ValueError):
         SCM(MECHANISMS, {"c": Column("y", missing="nobody")})
+
+
+def test_declared_time_order_is_enforced_on_the_observed_table():
+    def table(delay, marginal=None):
+        return SCM(
+            {
+                "placed": Root(noise=DEFAULT_CALENDAR),
+                "shipped": Combine((LinearEffect("placed"),), noise=delay),
+            },
+            {
+                "placed": Column("placed", "timestamp", marginal=marginal),
+                "shipped": Column("shipped", "timestamp", marginal=marginal, after="placed"),
+            },
+            time_column="placed",
+        )
+
+    frame = table(Exponential(3600.0)).sample(N, seed=0)
+    assert (frame["shipped"] >= frame["placed"]).all()
+    with pytest.raises(ValueError, match="precedes"):
+        table(Normal(std=3600.0)).sample(N, seed=0)
+    with pytest.raises(ValueError, match="precedes"):
+        table(Exponential(3600.0), marginal=DEFAULT_CALENDAR).sample(N, seed=0)
+    for after in ("nothing", "t"):
+        with pytest.raises(ValueError, match="another timestamp"):
+            SCM({"t": Root()}, {"t": Column("t", "timestamp", after=after)})

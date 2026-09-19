@@ -16,12 +16,12 @@ def latent():
 
 
 def observe(column, latent, seed=0):
-    return column.observe({column.node: latent}, np.random.default_rng(seed))
+    return column.observe({column.node: latent}, np.random.default_rng(seed), len(latent))
 
 
 def test_column_validation():
     for kwargs in (
-        {"kind": "timestamp"},
+        {"kind": "text"},
         {"missing": 1.0},
         {"missing": -0.1},
         {"categories": CATEGORIES},
@@ -32,6 +32,7 @@ def test_column_validation():
         {"kind": "categorical", "categories": CATEGORIES, "binning": (1.0, 0.0)},
         {"kind": "categorical", "categories": CATEGORIES, "binning": "kmeans"},
         {"kind": "categorical", "categories": CATEGORIES, "marginal": Uniform()},
+        {"after": "t"},
     ):
         with pytest.raises(ValueError):
             Column("x", **kwargs)
@@ -74,13 +75,19 @@ def test_categorical_columns_bin_a_latent_or_read_a_one_hot_node(latent):
 
 
 def test_calendar_marginals_give_timestamps_in_latent_order(latent):
-    stamps = observe(Column("t", marginal=DEFAULT_CALENDAR), latent)
+    stamps = observe(Column("t", "timestamp", marginal=DEFAULT_CALENDAR), latent)
     assert stamps.dtype == "datetime64[ns]"
     assert stamps.min() >= DEFAULT_CALENDAR.start and stamps.max() <= DEFAULT_CALENDAR.end
     assert (np.diff(stamps.to_numpy()[np.argsort(latent.ravel())]) >= np.timedelta64(0, "ns")).all()
     calendar = Calendar(pd.Timestamp("2020-01-01"), pd.Timestamp("2020-02-01"))
-    month = observe(Column("t", marginal=calendar), latent)
+    month = observe(Column("t", "timestamp", marginal=calendar), latent)
     assert calendar.start <= month.min() and month.max() <= calendar.end
+    seconds = Calendar(pd.Timestamp("2021-01-01"), pd.Timestamp("2021-02-01")).sample(
+        N, np.random.default_rng(0)
+    )
+    plain = observe(Column("t", "timestamp"), seconds[:, None])
+    assert plain.dtype == "datetime64[ns]" and plain.is_monotonic_increasing
+    assert plain.iloc[0] == pd.Timestamp(seconds[0], unit="s")
 
 
 def test_missingness_is_a_rate_or_an_indicator_node(latent):
@@ -91,10 +98,20 @@ def test_missingness_is_a_rate_or_an_indicator_node(latent):
     assert masked.dtype == "category" and masked.dropna().isin([0, 1, 2]).all()
     rng = np.random.default_rng(0)
     indicator = np.eye(2)[(latent.ravel() > 1.0).astype(int)]
-    mnar = Column("x", missing="hidden").observe({"x": latent, "hidden": indicator}, rng)
+    mnar = Column("x", missing="hidden").observe({"x": latent, "hidden": indicator}, rng, N)
     assert mnar.isna().to_numpy().tolist() == (latent.ravel() > 1.0).tolist()
     with pytest.raises(ValueError):
-        Column("x", missing="hidden").observe({"x": latent, "hidden": np.eye(3)[[0] * N]}, rng)
+        Column("x", missing="hidden").observe({"x": latent, "hidden": np.eye(3)[[0] * N]}, rng, N)
+
+
+def test_key_columns_are_row_identities():
+    key = Column(kind="key")
+    np.testing.assert_array_equal(key.observe({}, np.random.default_rng(0), 5), np.arange(5))
+    for kwargs in ({"node": "x"}, {"missing": 0.1}, {"marginal": Uniform()}):
+        with pytest.raises(ValueError):
+            Column(kind="key", **kwargs)
+    with pytest.raises(ValueError):
+        Column()
 
 
 def test_nan_latents_and_empty_one_hot_rows_observe_as_missing(latent):

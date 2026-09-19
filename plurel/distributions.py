@@ -216,6 +216,8 @@ class Calendar:
             raise ValueError("oversampling must be at least one")
 
     def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        if n == 0:
+            return np.empty(0)
         span = (self.end - self.start).total_seconds()
         candidates = n * self.oversampling
         offsets = rng.uniform(0.0, span, candidates)

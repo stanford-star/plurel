@@ -7,7 +7,7 @@ import pandas as pd
 from plurel.distributions import Calendar, Distribution
 from plurel.mechanisms import bin_levels
 
-Kind = Literal["numeric", "categorical"]
+Kind = Literal["numeric", "categorical", "timestamp", "key"]
 Binning = Literal["normal", "empirical"] | tuple[float, ...]
 
 DEFAULT_CALENDAR = Calendar(pd.Timestamp("1990-01-01"), pd.Timestamp("2025-01-01"))
@@ -23,7 +23,7 @@ def rank_map(latent: np.ndarray, marginal: Distribution, rng: np.random.Generato
 
 @dataclass(frozen=True)
 class Column:
-    node: str
+    node: str | None = None
     kind: Kind = "numeric"
     dims: int | tuple[int, ...] | None = None
     categories: tuple[object, ...] | None = None
@@ -31,13 +31,34 @@ class Column:
     binning: Binning = "normal"
     marginal: Distribution | None = None
     missing: float | str = 0.0
+    after: str | None = None
 
     def __post_init__(self) -> None:
-        if self.kind not in ("numeric", "categorical"):
+        if self.kind not in ("numeric", "categorical", "timestamp", "key"):
             raise ValueError(f"unknown column kind {self.kind!r}")
+        if self.kind == "key":
+            options = (
+                self.node,
+                self.dims,
+                self.categories,
+                self.probabilities,
+                self.marginal,
+                self.after,
+            )
+            if (
+                any(option is not None for option in options)
+                or self.missing
+                or self.binning != "normal"
+            ):
+                raise ValueError("a key column has no node and no options")
+            return
+        if self.node is None:
+            raise ValueError("a column observes a node")
         if not isinstance(self.missing, str) and not 0.0 <= self.missing < 1.0:
             raise ValueError("missing must be a rate in [0, 1) or the name of a two-class node")
-        if self.kind == "numeric":
+        if self.after is not None and self.kind != "timestamp":
+            raise ValueError("only a timestamp column comes after another")
+        if self.kind != "categorical":
             if self.categories is not None or self.probabilities is not None:
                 raise ValueError("categories and probabilities belong to categorical columns")
             return
@@ -68,17 +89,21 @@ class Column:
             return ()
         return self.probabilities or (1.0 / len(self.categories),) * len(self.categories)
 
-    def observe(self, latents: dict[str, np.ndarray], rng: np.random.Generator) -> pd.Series:
+    def observe(
+        self, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
+    ) -> pd.Series:
+        if self.kind == "key":
+            return pd.Series(np.arange(n))
         latent = latents[self.node] if self.dims is None else latents[self.node][:, self.dims]
         if self.kind == "categorical":
             observed = pd.Categorical.from_codes(self.codes(latent), list(self.categories))
         else:
             if latent.ndim == 2 and latent.shape[1] != 1:
-                raise ValueError(f"numeric column needs one dimension of {self.node!r}")
+                raise ValueError(f"{self.kind} column needs one dimension of {self.node!r}")
             flat = latent.reshape(len(latent))
             observed = rank_map(flat, self.marginal, rng) if self.marginal else flat
-            if isinstance(self.marginal, Calendar):
-                observed = pd.to_datetime(observed, unit="s")
+            if self.kind == "timestamp":
+                observed = pd.to_datetime(observed, unit="s").as_unit("ns")
         series = pd.Series(observed)
         if isinstance(self.missing, str):
             indicator = latents[self.missing]
@@ -94,6 +119,8 @@ class Column:
             valid = (latent != 0).any(1) & ~np.isnan(latent).any(1)
             return np.where(valid, latent.argmax(1), -1)
         flat = latent.reshape(len(latent))
+        if not len(flat):
+            return np.empty(0, dtype=int)
         if isinstance(self.binning, tuple):
             codes = np.digitize(flat, self.binning)
         elif self.binning == "empirical":

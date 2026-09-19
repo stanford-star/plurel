@@ -44,7 +44,12 @@ def generations[T: Hashable](parents: Mapping[T, tuple[T, ...]]) -> tuple[tuple[
 
 
 class SCM:
-    def __init__(self, mechanisms: Mapping[str, Mechanism], columns: Mapping[str, Column]) -> None:
+    def __init__(
+        self,
+        mechanisms: Mapping[str, Mechanism],
+        columns: Mapping[str, Column],
+        time_column: str | None = None,
+    ) -> None:
         self.mechanisms = dict(mechanisms)
         for child, mechanism in self.mechanisms.items():
             unknown = set(mechanism.parents) - set(self.mechanisms)
@@ -55,11 +60,26 @@ class SCM:
         self.order = tuple(name for generation in self.generations for name in generation)
         self.columns = dict(columns)
         for name, column in self.columns.items():
+            if column.kind == "key":
+                continue
             nodes = (
                 {column.node, column.missing} if isinstance(column.missing, str) else {column.node}
             )
             if unknown := nodes - set(self.mechanisms):
                 raise ValueError(f"column {name!r} refers to unknown nodes {sorted(unknown)}")
+        kinds = {name: column.kind for name, column in self.columns.items()}
+        for name, column in self.columns.items():
+            if column.after is not None and (
+                column.after == name or kinds.get(column.after) != "timestamp"
+            ):
+                raise ValueError(f"column {name!r} must come after another timestamp column")
+        keys = [name for name, kind in kinds.items() if kind == "key"]
+        if len(keys) > 1:
+            raise ValueError("a table has at most one key column")
+        if time_column is not None and kinds.get(time_column) != "timestamp":
+            raise ValueError(f"time column {time_column!r} must be a timestamp column")
+        self.pkey_column = keys[0] if keys else None
+        self.time_column = time_column
 
     def evaluate(
         self,
@@ -92,8 +112,12 @@ class SCM:
     def observe(
         self, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
     ) -> pd.DataFrame:
-        observed = {name: column.observe(latents, rng) for name, column in self.columns.items()}
-        return pd.DataFrame(observed, index=range(n))
+        observed = {name: column.observe(latents, rng, n) for name, column in self.columns.items()}
+        frame = pd.DataFrame(observed, index=range(n))
+        for name, column in self.columns.items():
+            if column.after is not None and (frame[name] < frame[column.after]).any():
+                raise ValueError(f"column {name!r} precedes {column.after!r} on some rows")
+        return frame
 
     def sample(
         self, n: int, *, seed: Seed = None, interventions: Interventions | None = None
