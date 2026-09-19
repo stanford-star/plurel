@@ -1,7 +1,38 @@
-"""PluRel: synthetic relational and tabular data from structural causal models.
+from plurel.distributions import (
+    DISTRIBUTIONS,
+    AutoRegressive,
+    Beta,
+    Calendar,
+    Cycle,
+    Distribution,
+    Exponential,
+    LogNormal,
+    Mixture,
+    Normal,
+    Pareto,
+    Poisson,
+    TimeSeries,
+    Trend,
+    Uniform,
+)
+from plurel.random import Seed, generator
 
-The v2 core is being rebuilt on this branch. Modules land bottom-up:
-distributions, mechanisms, columns, scm, causal, links, layouts, schema, prior, io.
-"""
-
-__all__: list[str] = []
+__all__ = [
+    "DISTRIBUTIONS",
+    "AutoRegressive",
+    "Beta",
+    "Calendar",
+    "Cycle",
+    "Distribution",
+    "Exponential",
+    "LogNormal",
+    "Mixture",
+    "Normal",
+    "Pareto",
+    "Poisson",
+    "Seed",
+    "TimeSeries",
+    "Trend",
+    "Uniform",
+    "generator",
+]

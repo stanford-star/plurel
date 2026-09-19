@@ -91,3 +91,4 @@ quote-style = "double"
 
 [tool.pytest.ini_options]
 testpaths = ["test"]
+addopts = "--durations=10 --maxfail=1 -n 8 --dist loadgroup"
