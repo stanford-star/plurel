@@ -30,10 +30,10 @@ def clusters(n: int, counts: tuple[int, ...], shares: np.ndarray | None = None) 
     shares = np.ones(int(np.prod(counts))) if shares is None else np.asarray(shares, dtype=float)
     if len(shares) != np.prod(counts) or not (np.isfinite(shares) & (shares > 0)).all():
         raise ValueError("one positive finite share per base cluster")
-    k, cumulative = len(shares), np.cumsum(shares) / shares.sum()
-    bounds = (
-        np.round(cumulative * (n - k)) + np.arange(1, k + 1) if n >= k else np.round(cumulative * n)
-    )
+    k = len(shares)
+    if n < k:
+        raise ValueError("fewer rows than base clusters")
+    bounds = np.round(np.cumsum(shares) / shares.sum() * (n - k)) + np.arange(1, k + 1)
     base = np.searchsorted(bounds, np.arange(n), side="right")
     strides = np.cumprod((1, *counts[:0:-1]))[::-1]
     return (base[:, None] // strides[None, :]) % np.asarray(counts)[None, :]
@@ -79,6 +79,8 @@ class HSBMLink:
 
     def sample(self, n_child: int, n_parent: int, rng: np.random.Generator) -> np.ndarray:
         _check_sizes(n_child, n_parent)
+        if n_child == 0:
+            return np.empty(0, dtype=np.int64)
         parent_clusters = clusters(
             n_parent, self.parent_clusters, self.shares(self.parent_clusters, rng)
         )
@@ -92,13 +94,18 @@ class HSBMLink:
         log_weight = np.zeros(n_parent)
         if self.attractiveness is not None:
             weight = self.attractiveness.sample(n_parent, rng)
-            if not np.isfinite(weight).all():
-                raise ValueError("attractiveness must draw finite weights")
-            log_weight += np.log(np.maximum(weight, np.finfo(float).tiny))
-        inactive = rng.permutation(n_parent)[: min(round(n_parent * self.inactive), n_parent - 1)]
-        log_weight[inactive] = -np.inf
+            if not (np.isfinite(weight).all() and weight.min() >= 0 and weight.max() > 0):
+                raise ValueError(
+                    "attractiveness must draw finite non-negative weights, some positive"
+                )
+            with np.errstate(divide="ignore"):
+                log_weight += np.log(weight)
+        n_inactive = round(n_parent * self.inactive)
+        if n_inactive >= n_parent:
+            raise ValueError("inactive share leaves no active parent")
+        log_weight[rng.permutation(n_parent)[:n_inactive]] = -np.inf
         parents = np.empty(n_child, dtype=np.int64)
-        chunk = max(1, min(n_child, CHUNK_BYTES // (8 * max(n_parent, 1))))
+        chunk = max(1, min(n_child, CHUNK_BYTES // (8 * n_parent)))
         for start in range(0, n_child, chunk):
             stop = min(start + chunk, n_child)
             log_p = log_weight[:, None] + sum(
