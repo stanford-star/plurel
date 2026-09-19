@@ -142,7 +142,7 @@ class Range:
         return self.low + (self.high - self.low) * self.unit(rng)
 
     def warp(self, rng: np.random.Generator) -> "Range":
-        location, concentration = META_LOCATION.draw(rng), META_CONCENTRATION.draw(rng)
+        location, concentration = _open_unit(rng), META_CONCENTRATION.draw(rng)
         shape = (location * concentration, (1.0 - location) * concentration)
         return replace(self, shape=shape)
 
@@ -171,8 +171,11 @@ class LogIntegersRange(LogRange):
         return min(int(np.exp(np.log(self.low) + span * self.unit(rng))), int(self.high))
 
 
-META_LOCATION = Range(0.0, 1.0)
 META_CONCENTRATION = LogRange(0.1, 10_000.0)
+
+
+def _open_unit(rng: np.random.Generator) -> float:
+    return float(rng.integers(1, 2**53) / 2**53)
 
 
 @dataclass(frozen=True)
