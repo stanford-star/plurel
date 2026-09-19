@@ -330,6 +330,7 @@ class SchemaPrior:
         activity_row_count: Rows of a table nothing references.
         link_level_count: Cluster levels of an HSBM link.
         link_cluster_count: Clusters per level on each side of an HSBM link.
+        link_cluster_weights: Relative cluster sizes of an HSBM link; None for equal sizes.
         link_popularity: Per-parent popularity of an HSBM link; None for uniform.
         link_inactive_share: Share of parents an HSBM link leaves without children.
         link_random_share: Probability that a key uses a uniform link instead of an HSBM link.
@@ -353,6 +354,7 @@ class SchemaPrior:
     activity_row_count: Range = LogIntegersRange(10_000, 30_000)
     link_level_count: Range = IntegersRange(1, 3)
     link_cluster_count: Range = IntegersRange(1, 3)
+    link_cluster_weights: Choices = Choices((None, Pareto(1.5)))
     link_popularity: Choices = Choices((None, Pareto(2.5)))
     link_inactive_share: Range = Range(0.0, 0.7)
     link_random_share: float = 0.2
@@ -415,6 +417,7 @@ class SchemaPrior:
         return HSBMLink(
             tuple(self.link_cluster_count.draw(rng) for _ in range(levels)),
             tuple(self.link_cluster_count.draw(rng) for _ in range(levels)),
+            cluster_weights=self.link_cluster_weights.draw(rng),
             popularity=self.link_popularity.draw(rng),
             inactive=self.link_inactive_share.draw(rng),
         )
@@ -466,7 +469,7 @@ class SchemaPrior:
         for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
             how = self.aggregates.draw(rng)
             name = f"{fk.table}_{source}_{how}"
-            fill = None if how in ("count", "sum") else 0.0
+            fill = None if how in ("count", "sum") else np.nan
             mechanisms[name] = Port(fk.table, source, via=fk.column, aggregate=how, fill=fill)
             columns[name] = Column(name)
         tables[fk.parent] = SCM(mechanisms, columns, time_column=parent.time_column)

@@ -129,6 +129,10 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
             if name.endswith("_time"):
                 seen.add("follow")
                 assert port.fill is None and fk.nullable == 0.0
+            if port.aggregate in ("mean", "max", "min"):
+                keys = frames[fk.table][fk.column].dropna().astype(int)
+                childless = ~np.isin(np.arange(rows[table]), keys)
+                assert frames[table][name].isna().to_numpy().tolist() == childless.tolist()
                 child_time = frames[fk.table][schema.tables[fk.table].time_column]
                 parent_time = frames[fk.parent][schema.tables[fk.parent].time_column]
                 keys = frames[fk.table][fk.column].to_numpy(dtype=int)
