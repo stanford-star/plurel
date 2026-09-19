@@ -57,18 +57,6 @@ class Mechanism:
     dim: int
     parents: tuple[str, ...]
 
-    @property
-    def mean_parents(self) -> tuple[str, ...]:
-        return self.parents
-
-    @property
-    def noise_parents(self) -> tuple[str, ...]:
-        return ()
-
-    @property
-    def interaction_pairs(self) -> tuple[tuple[str, str], ...]:
-        return ()
-
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
         raise NotImplementedError
 

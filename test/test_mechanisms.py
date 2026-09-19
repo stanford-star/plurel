@@ -88,4 +88,3 @@ def test_structure_is_exposed_for_the_oracle():
     assert mechanism.mean_parents == ("x", "s", "y")
     assert mechanism.noise_parents == ("y",)
     assert mechanism.interaction_pairs == (("x", "y"), ("s", "y"))
-    assert Root().parents == () and Root().interaction_pairs == ()
