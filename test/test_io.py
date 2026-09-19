@@ -8,38 +8,42 @@ from plurel.links import HSBMLink
 from plurel.schema import FK, Port, Schema
 
 ROWS = {"customers": 40, "orders": 300}
-CUSTOMER_COLUMNS = {
-    "segment": Column("segment", "categorical", categories=("a", "b", "c")),
-    "spend": Column("spend"),
-}
-ORDER_COLUMNS = {
-    "when": Column("when", marginal=DEFAULT_CALENDAR),
-    "amount": Column("amount"),
-    "value": Column("value"),
-}
 
 
-def customers(pkey="customer_id"):
+def customers(key=True):
+    columns = {
+        "customer_id": Column(kind="key"),
+        "segment": Column("segment", "categorical", categories=("a", "b", "c")),
+        "spend": Column("spend"),
+    }
+    if not key:
+        del columns["customer_id"]
     return SCM(
         {
             "segment": Softmax(biases=(0.0, 0.0, 0.0)),
             "spend": Port("orders", "amount", aggregate="sum"),
         },
-        CUSTOMER_COLUMNS,
-        pkey_column=pkey,
+        columns,
     )
 
 
-def orders(pkey="order_id", time="when"):
+def orders(key=True, time_column="when"):
+    columns = {
+        "order_id": Column(kind="key"),
+        "when": Column("when", marginal=DEFAULT_CALENDAR),
+        "amount": Column("amount"),
+        "value": Column("value"),
+    }
+    if not key:
+        del columns["order_id"]
     return SCM(
         {
             "when": Root(),
             "value": Port("customers", "spend", fill=np.nan),
             "amount": Combine((LinearEffect("when"),), noise=Normal(std=0.5)),
         },
-        ORDER_COLUMNS,
-        pkey_column=pkey,
-        time_column=time,
+        columns,
+        time_column=time_column,
     )
 
 
@@ -52,17 +56,19 @@ def schema():
 
 
 def test_tables_declare_their_keys_and_time():
+    assert orders().pkey_column == "order_id" and orders().time_column == "when"
+    assert orders(key=False, time_column=None).pkey_column is None
     with pytest.raises(ValueError, match="Calendar"):
-        orders(time="amount")
+        orders(time_column="amount")
     with pytest.raises(ValueError, match="Calendar"):
-        orders(time="nothing")
-    with pytest.raises(ValueError, match="collides"):
-        orders(pkey="amount")
-    assert orders(pkey=None, time=None).pkey_column is None
+        orders(time_column="nothing")
+    with pytest.raises(ValueError, match="one key"):
+        SCM({"x": Root()}, {"a": Column(kind="key"), "b": Column(kind="key")})
 
 
-def test_database_adds_primary_keys_and_relbench_metadata(schema):
+def test_database_wraps_sampled_tables_with_relbench_metadata(schema):
     frames = schema.sample(ROWS, seed=0)
+    assert list(frames["orders"]) == ["order_id", "when", "amount", "value", "customer_id"]
     db = database(schema, frames)
     assert set(db.table_dict) == set(ROWS)
     customer_table, order_table = db.table_dict["customers"], db.table_dict["orders"]
@@ -76,16 +82,17 @@ def test_database_adds_primary_keys_and_relbench_metadata(schema):
     assert order_table.df["customer_id"].isna().any()
     assert db.min_timestamp == order_table.df["when"].min()
     assert db.max_timestamp == order_table.df["when"].max()
-    pd.testing.assert_frame_equal(order_table.df.drop(columns="order_id"), frames["orders"])
-    events = Schema({"customers": customers(), "orders": orders(pkey=None)}, FKEYS)
+    pd.testing.assert_frame_equal(order_table.df, frames["orders"])
+    events = Schema({"customers": customers(), "orders": orders(key=False)}, FKEYS)
     event_table = database(events, events.sample(ROWS, seed=0)).table_dict["orders"]
     assert event_table.pkey_col is None and "order_id" not in event_table.df
-    unkeyed = Schema({"customers": customers(pkey=None), "orders": orders()}, FKEYS)
+    unkeyed = Schema({"customers": customers(key=False), "orders": orders()}, FKEYS)
     with pytest.raises(ValueError, match="primary key"):
         database(unkeyed, unkeyed.sample(ROWS, seed=0))
-    clashing = Schema({"customers": customers(), "orders": orders(pkey="customer_id")}, FKEYS)
-    with pytest.raises(ValueError, match="already"):
-        database(clashing, clashing.sample(ROWS, seed=0))
+    with pytest.raises(ValueError, match="collides"):
+        Schema(
+            {"customers": customers(), "orders": orders()}, (FK("orders", "order_id", "customers"),)
+        )
     with pytest.raises(ValueError):
         database(schema, {"customers": frames["customers"]})
 

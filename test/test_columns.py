@@ -16,7 +16,7 @@ def latent():
 
 
 def observe(column, latent, seed=0):
-    return column.observe({column.node: latent}, np.random.default_rng(seed))
+    return column.observe({column.node: latent}, np.random.default_rng(seed), len(latent))
 
 
 def test_column_validation():
@@ -91,10 +91,20 @@ def test_missingness_is_a_rate_or_an_indicator_node(latent):
     assert masked.dtype == "category" and masked.dropna().isin([0, 1, 2]).all()
     rng = np.random.default_rng(0)
     indicator = np.eye(2)[(latent.ravel() > 1.0).astype(int)]
-    mnar = Column("x", missing="hidden").observe({"x": latent, "hidden": indicator}, rng)
+    mnar = Column("x", missing="hidden").observe({"x": latent, "hidden": indicator}, rng, N)
     assert mnar.isna().to_numpy().tolist() == (latent.ravel() > 1.0).tolist()
     with pytest.raises(ValueError):
-        Column("x", missing="hidden").observe({"x": latent, "hidden": np.eye(3)[[0] * N]}, rng)
+        Column("x", missing="hidden").observe({"x": latent, "hidden": np.eye(3)[[0] * N]}, rng, N)
+
+
+def test_key_columns_are_row_identities():
+    key = Column(kind="key")
+    np.testing.assert_array_equal(key.observe({}, np.random.default_rng(0), 5), np.arange(5))
+    for kwargs in ({"node": "x"}, {"missing": 0.1}, {"marginal": Uniform()}):
+        with pytest.raises(ValueError):
+            Column(kind="key", **kwargs)
+    with pytest.raises(ValueError):
+        Column()
 
 
 def test_nan_latents_and_empty_one_hot_rows_observe_as_missing(latent):

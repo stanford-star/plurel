@@ -1,7 +1,6 @@
 from collections.abc import Mapping
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from relbench.base import Database, Table
 from relbench.load import load_dataset
@@ -22,13 +21,9 @@ def database(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> Database:
     tables = {}
     for name, frame in frames.items():
         scm = schema.tables[name]
-        if scm.pkey_column in frame:
-            raise ValueError(f"table {name!r} already has a column {scm.pkey_column!r}")
-        df = frame.reset_index(drop=True)
-        if scm.pkey_column is not None:
-            df = pd.concat([pd.Series(np.arange(len(frame)), name=scm.pkey_column), df], axis=1)
         fkeys = {fk.column: fk.parent for fk in schema.fkeys if fk.table == name}
-        tables[name] = Table(df, fkeys, pkey_col=scm.pkey_column, time_col=scm.time_column)
+        table = Table(frame.reset_index(drop=True), fkeys, scm.pkey_column, scm.time_column)
+        tables[name] = table
     return Database(tables)
 
 

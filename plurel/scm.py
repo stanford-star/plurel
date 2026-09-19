@@ -49,7 +49,6 @@ class SCM:
         self,
         mechanisms: Mapping[str, Mechanism],
         columns: Mapping[str, Column],
-        pkey_column: str | None = None,
         time_column: str | None = None,
     ) -> None:
         self.mechanisms = dict(mechanisms)
@@ -62,20 +61,23 @@ class SCM:
         self.order = tuple(name for generation in self.generations for name in generation)
         self.columns = dict(columns)
         for name, column in self.columns.items():
+            if column.kind == "key":
+                continue
             nodes = (
                 {column.node, column.missing} if isinstance(column.missing, str) else {column.node}
             )
             if unknown := nodes - set(self.mechanisms):
                 raise ValueError(f"column {name!r} refers to unknown nodes {sorted(unknown)}")
-        if pkey_column is not None and pkey_column in self.columns:
-            raise ValueError(f"primary key {pkey_column!r} collides with a column")
+        keys = [name for name, column in self.columns.items() if column.kind == "key"]
+        if len(keys) > 1:
+            raise ValueError("a table has at most one key column")
         if time_column is not None and not isinstance(
             self.columns.get(time_column, Column("")).marginal, Calendar
         ):
             raise ValueError(
                 f"time column {time_column!r} must be a column with a Calendar marginal"
             )
-        self.pkey_column = pkey_column
+        self.pkey_column = keys[0] if keys else None
         self.time_column = time_column
 
     def evaluate(
@@ -109,7 +111,7 @@ class SCM:
     def observe(
         self, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
     ) -> pd.DataFrame:
-        observed = {name: column.observe(latents, rng) for name, column in self.columns.items()}
+        observed = {name: column.observe(latents, rng, n) for name, column in self.columns.items()}
         return pd.DataFrame(observed, index=range(n))
 
     def sample(

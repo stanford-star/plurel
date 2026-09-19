@@ -7,7 +7,7 @@ import pandas as pd
 from plurel.distributions import Calendar, Distribution
 from plurel.mechanisms import bin_levels
 
-Kind = Literal["numeric", "categorical"]
+Kind = Literal["numeric", "categorical", "key"]
 Binning = Literal["normal", "empirical"] | tuple[float, ...]
 
 DEFAULT_CALENDAR = Calendar(pd.Timestamp("1990-01-01"), pd.Timestamp("2025-01-01"))
@@ -23,7 +23,7 @@ def rank_map(latent: np.ndarray, marginal: Distribution, rng: np.random.Generato
 
 @dataclass(frozen=True)
 class Column:
-    node: str
+    node: str | None = None
     kind: Kind = "numeric"
     dims: int | tuple[int, ...] | None = None
     categories: tuple[object, ...] | None = None
@@ -33,8 +33,19 @@ class Column:
     missing: float | str = 0.0
 
     def __post_init__(self) -> None:
-        if self.kind not in ("numeric", "categorical"):
+        if self.kind not in ("numeric", "categorical", "key"):
             raise ValueError(f"unknown column kind {self.kind!r}")
+        if self.kind == "key":
+            options = (self.node, self.dims, self.categories, self.probabilities, self.marginal)
+            if (
+                any(option is not None for option in options)
+                or self.missing
+                or self.binning != "normal"
+            ):
+                raise ValueError("a key column has no node and no options")
+            return
+        if self.node is None:
+            raise ValueError("a column observes a node")
         if not isinstance(self.missing, str) and not 0.0 <= self.missing < 1.0:
             raise ValueError("missing must be a rate in [0, 1) or the name of a two-class node")
         if self.kind == "numeric":
@@ -68,7 +79,11 @@ class Column:
             return ()
         return self.probabilities or (1.0 / len(self.categories),) * len(self.categories)
 
-    def observe(self, latents: dict[str, np.ndarray], rng: np.random.Generator) -> pd.Series:
+    def observe(
+        self, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
+    ) -> pd.Series:
+        if self.kind == "key":
+            return pd.Series(np.arange(n))
         latent = latents[self.node] if self.dims is None else latents[self.node][:, self.dims]
         if self.kind == "categorical":
             observed = pd.Categorical.from_codes(self.codes(latent), list(self.categories))
