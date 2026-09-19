@@ -51,10 +51,10 @@ def test_every_registered_mechanism_meets_the_contract(parents):
     assert set(EXAMPLES) == set(MECHANISMS)
     for mechanism in EXAMPLES.values():
         assert isinstance(mechanism, Mechanism)
-        noise = mechanism.sample_noise(N, np.random.default_rng(1))
+        exogenous = mechanism.sample_noise(N, np.random.default_rng(1))
         again = mechanism.sample_noise(N, np.random.default_rng(1))
-        np.testing.assert_array_equal(noise, again)
-        assert mechanism.evaluate(parents, noise).shape == (N, mechanism.dim)
+        np.testing.assert_array_equal(exogenous, again)
+        assert mechanism.evaluate(parents, exogenous).shape == (N, mechanism.dim)
 
 
 def test_every_reduction_reduces_the_effects_terms(parents):

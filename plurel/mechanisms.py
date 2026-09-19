@@ -98,7 +98,7 @@ class Mechanism:
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, 0))
 
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
+    def evaluate(self, parents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
         raise NotImplementedError
 
 
@@ -106,8 +106,8 @@ class Mechanism:
 class Root(Mechanism):
     dim: int = 1
 
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
-        return noise
+    def evaluate(self, parents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
+        return exogenous
 
 
 @dataclass(frozen=True)
@@ -123,9 +123,9 @@ class Combine(Mechanism):
     def parents(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(effect.parent for effect in self.effects))
 
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
-        terms = [effect.evaluate(parents) for effect in self.effects] or [np.zeros_like(noise)]
-        return REDUCTIONS[self.op](np.stack(terms)) + noise
+    def evaluate(self, parents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
+        terms = [effect.evaluate(parents) for effect in self.effects] or [np.zeros_like(exogenous)]
+        return REDUCTIONS[self.op](np.stack(terms)) + exogenous
 
 
 @dataclass(frozen=True)
@@ -159,8 +159,8 @@ class ArgmaxScores(Mechanism):
         ]
         return np.concatenate(columns, axis=1)
 
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
-        scores = self.score_matrix(parents, len(noise)) + noise
+    def evaluate(self, parents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
+        scores = self.score_matrix(parents, len(exogenous)) + exogenous
         return scores.argmax(1)[:, None].astype(float)
 
 
@@ -185,7 +185,7 @@ class NestedLevels(Mechanism):
     def parents(self) -> tuple[str, ...]:
         return (self.parent,)
 
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
+    def evaluate(self, parents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
         parent = parents[self.parent].ravel()
         codes = (
             parent.astype(int)
@@ -200,7 +200,7 @@ class NestedLevels(Mechanism):
             mask = codes == code
             index = np.asarray(subset)
             cuts = np.cumsum(probabilities[index] / probabilities[index].sum())[:-1]
-            out[mask] = index[np.searchsorted(cuts, noise.ravel()[mask], side="right")]
+            out[mask] = index[np.searchsorted(cuts, exogenous.ravel()[mask], side="right")]
         return out[:, None]
 
 
@@ -214,7 +214,7 @@ class Nearest(Mechanism):
     def parents(self) -> tuple[str, ...]:
         return (self.parent,)
 
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
+    def evaluate(self, parents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
         distances = ((parents[self.parent][:, None, :] - self.centers[None]) ** 2).sum(-1)
         return distances.argmin(1)[:, None].astype(float)
 
@@ -240,9 +240,9 @@ class Softmax(Mechanism):
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return _draw(self.noise, n, rng, self.classes)
 
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
+    def evaluate(self, parents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
         logits = self.scale * parents[self.parent] + np.asarray(self.biases or 0.0)
-        return (logits + noise).argmax(1)[:, None].astype(float)
+        return (logits + exogenous).argmax(1)[:, None].astype(float)
 
 
 @dataclass(frozen=True)
@@ -259,7 +259,7 @@ class Embed(Mechanism):
     def parents(self) -> tuple[str, ...]:
         return (self.parent,)
 
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
+    def evaluate(self, parents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
         return self.table[parents[self.parent].ravel().astype(int)]
 
 
