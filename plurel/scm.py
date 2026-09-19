@@ -67,6 +67,12 @@ class SCM:
             )
             if unknown := nodes - set(self.mechanisms):
                 raise ValueError(f"column {name!r} refers to unknown nodes {sorted(unknown)}")
+        for name, column in self.columns.items():
+            if (
+                column.after is not None
+                and self.columns.get(column.after, Column("")).kind != "timestamp"
+            ):
+                raise ValueError(f"column {name!r} comes after an unknown timestamp column")
         keys = [name for name, column in self.columns.items() if column.kind == "key"]
         if len(keys) > 1:
             raise ValueError("a table has at most one key column")
@@ -110,7 +116,11 @@ class SCM:
         self, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
     ) -> pd.DataFrame:
         observed = {name: column.observe(latents, rng, n) for name, column in self.columns.items()}
-        return pd.DataFrame(observed, index=range(n))
+        frame = pd.DataFrame(observed, index=range(n))
+        for name, column in self.columns.items():
+            if column.after is not None and (frame[name] < frame[column.after]).any():
+                raise ValueError(f"column {name!r} precedes {column.after!r} on some rows")
+        return frame
 
     def sample(
         self, n: int, *, seed: Seed = None, interventions: Interventions | None = None

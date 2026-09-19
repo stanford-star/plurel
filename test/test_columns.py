@@ -32,6 +32,7 @@ def test_column_validation():
         {"kind": "categorical", "categories": CATEGORIES, "binning": (1.0, 0.0)},
         {"kind": "categorical", "categories": CATEGORIES, "binning": "kmeans"},
         {"kind": "categorical", "categories": CATEGORIES, "marginal": Uniform()},
+        {"after": "t"},
     ):
         with pytest.raises(ValueError):
             Column("x", **kwargs)
