@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from plurel.distributions import Pareto
+import plurel.links
+from plurel.distributions import Normal, Pareto
 from plurel.links import LINKS, ForestLink, HSBMLink, Link, RandomLink, clusters
 
 EXAMPLES = {
@@ -62,3 +63,38 @@ def test_forest_links_point_to_earlier_rows_or_nowhere():
     assert (parents[linked] < linked).all()
     with pytest.raises(ValueError):
         ForestLink().sample(10, 20, np.random.default_rng(0))
+
+
+def test_links_handle_empty_and_tiny_tables_and_reject_bad_parameters():
+    rng = np.random.default_rng(0)
+    for name, link in EXAMPLES.items():
+        empty = link.sample(0, 0, rng)
+        assert empty.shape == (0,) and empty.dtype == np.int64
+        if name != "forest":
+            assert not link.sample(50, 1, rng).any()
+            with pytest.raises(ValueError):
+                link.sample(50, 0, rng)
+        with pytest.raises(ValueError):
+            link.sample(-1, 10, rng)
+    assert (ForestLink(roots=1.0).sample(20, 20, rng) == -1).all()
+    for kwargs in (
+        {"parent_hierarchy": ()},
+        {"parent_hierarchy": (0,), "child_hierarchy": (1,)},
+        {"within": 0.0},
+        {"between": (0.0, 0.1)},
+        {"between": (0.2, 0.1)},
+        {"inactive": 1.0},
+    ):
+        with pytest.raises(ValueError):
+            HSBMLink(**kwargs)
+    with pytest.raises(ValueError):
+        HSBMLink((2,), (2,), cluster_weights=Normal()).sample(100, 100, rng)
+    with pytest.raises(ValueError):
+        ForestLink(roots=0.0)
+
+
+def test_hsbm_draws_do_not_depend_on_chunking(monkeypatch):
+    link = HSBMLink((2, 2), (3, 2), attractiveness=Pareto(2.0), inactive=0.2)
+    whole = link.sample(500, 300, np.random.default_rng(3))
+    monkeypatch.setattr(plurel.links, "CHUNK_BYTES", 8 * 300 * 7)
+    np.testing.assert_array_equal(link.sample(500, 300, np.random.default_rng(3)), whole)
