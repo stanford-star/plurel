@@ -58,7 +58,7 @@ def test_combine_sums_its_contributions(parents):
 
 
 def test_every_reduction_reduces_the_same_terms(parents):
-    terms = Combine(TERMS, noise=Noise(Normal(std=0.0))).terms(parents, N)
+    terms = np.stack(list(Combine(TERMS).contributions(parents).values()))
     zeros = np.zeros((N, 1))
     for op, reduce in REDUCTIONS.items():
         np.testing.assert_allclose(
@@ -76,7 +76,7 @@ def test_lookup_effects_share_the_level_binning(parents):
 def test_noise_is_heteroscedastic_and_takes_any_distribution(parents):
     rng = np.random.default_rng(2)
     noise = Noise(Beta(2.0, 2.0, low=-1.0, high=1.0), (LinearEffect("y", 1.0),))
-    draw = noise.sample(N, rng)
+    draw = noise.sample(N, rng, 1)
     assert draw.min() >= -1.0 and draw.max() <= 1.0
     scaled = noise.apply(parents, np.ones((N, 1)))
     np.testing.assert_allclose(scaled, np.exp(np.clip(parents["y"], -3.0, 3.0)))

@@ -159,7 +159,7 @@ class Noise:
     def parents(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(effect.parent for effect in self.scale_effects))
 
-    def sample(self, n: int, rng: np.random.Generator, dim: int = 1) -> np.ndarray:
+    def sample(self, n: int, rng: np.random.Generator, dim: int) -> np.ndarray:
         return np.stack([self.distribution.sample(n, rng) for _ in range(dim)], axis=1)
 
     def apply(self, values: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
@@ -170,6 +170,8 @@ class Noise:
 @dataclass(frozen=True)
 class Mechanism:
     noise: Noise | None = field(default_factory=Noise, kw_only=True)
+    dim = 1
+    parents = ()
 
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return self.noise.sample(n, rng, self.dim) if self.noise else np.zeros((n, 0))
@@ -181,10 +183,6 @@ class Mechanism:
 @dataclass(frozen=True)
 class Root(Mechanism):
     dim: int = 1
-
-    @property
-    def parents(self) -> tuple[str, ...]:
-        return ()
 
     def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
         return noise
@@ -198,10 +196,6 @@ class Combine(Mechanism):
     def __post_init__(self) -> None:
         if self.op not in REDUCTIONS:
             raise ValueError(f"op must be one of {tuple(REDUCTIONS)}")
-
-    @property
-    def dim(self) -> int:
-        return 1
 
     @property
     def parents(self) -> tuple[str, ...]:
@@ -228,13 +222,9 @@ class Combine(Mechanism):
             out[effect.key] = out.get(effect.key, 0.0) + effect.evaluate(parents)
         return out
 
-    def terms(self, parents: dict[str, np.ndarray], n: int) -> np.ndarray:
-        values = list(self.contributions(parents).values())
-        return np.stack(values) if values else np.zeros((1, n, 1))
-
     def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
-        mean = REDUCTIONS[self.op](self.terms(parents, len(noise)))
-        return mean + self.noise.apply(parents, noise)
+        terms = list(self.contributions(parents).values()) or [np.zeros_like(noise)]
+        return REDUCTIONS[self.op](np.stack(terms)) + self.noise.apply(parents, noise)
 
 
 MECHANISMS: dict[str, type] = {
