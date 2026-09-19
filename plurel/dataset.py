@@ -1,7 +1,11 @@
+from pathlib import Path
+
 import networkx as nx
 import numpy as np
 import pandas as pd
 from relbench.base import Database, Dataset, Table
+from relbench.load import load_dataset
+from relbench.manifest import DatasetManifest, TableSpec
 
 from plurel.config import Config
 from plurel.schema import RandomSchemaGraphBuilder, SQLSchemaGraphBuilder
@@ -71,7 +75,7 @@ class SyntheticDataset(Dataset):
         self.config = config
         set_random_seed(self.seed)
         self.initialize_timestamps()
-        super().__init__(cache_dir=self.config.cache_dir)
+        self.cache_dir = self.config.cache_dir
 
     def initialize_timestamps(self):
         start_timestamp = self.config.database_params.min_timestamp
@@ -87,6 +91,51 @@ class SyntheticDataset(Dataset):
         test_start_idx = int(len(timestamps) * self.config.test_split)
         self.val_timestamp = timestamps[val_start_idx]
         self.test_timestamp = timestamps[test_start_idx]
+
+    def get_db(self, upto_test_timestamp=True) -> Database:
+        """Build the database, or load it from ``cache_dir`` if already generated.
+
+        With a ``cache_dir`` the dataset is written directly in relbench-3.0.0
+        format: a self-describing dir with manifest.yaml next to
+        db/<table>.parquet, loadable with ``relbench.load.load_dataset``.
+        """
+        if self.cache_dir is None:
+            return super().get_db(upto_test_timestamp)
+
+        cache_dir = Path(self.cache_dir).expanduser()
+        if (cache_dir / "manifest.yaml").exists():
+            return load_dataset(cache_dir).get_db(upto_test_timestamp)
+
+        db = super().get_db(upto_test_timestamp)
+        db_dir = cache_dir / "db"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        for table_name, table in db.table_dict.items():
+            table.df.to_parquet(db_dir / f"{table_name}.parquet", index=False)
+        self.write_manifest(db)
+        return db
+
+    def write_manifest(self, db: Database, name: str | None = None):
+        cache_dir = Path(self.cache_dir).expanduser()
+        manifest_path = cache_dir / "manifest.yaml"
+        if manifest_path.exists():
+            return manifest_path
+
+        manifest = DatasetManifest(
+            name=name or cache_dir.name,
+            val_timestamp=str(self.val_timestamp),
+            test_timestamp=str(self.test_timestamp),
+            description=f"PluRel synthetic relational database (seed {self.seed}).",
+            tables={
+                table_name: TableSpec(
+                    pkey=table.pkey_col,
+                    time_col=table.time_col,
+                    fkeys=dict(table.fkey_col_to_pkey_table),
+                )
+                for table_name, table in db.table_dict.items()
+            },
+        )
+        manifest.save(manifest_path)
+        return manifest_path
 
     def _get_random_dag_table_relationships(self, num_tables: int):
         """
