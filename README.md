@@ -31,13 +31,11 @@ PluRel is an open-source library for synthesizing diverse relational and tabular
 
 ## Installation
 
-To use PluRel as a library:
+To use PluRel as a library (requires Python 3.12+):
 
 ```bash
 pip install plurel
 ```
-
-Requires Python 3.12+.
 
 ## Setup
 
