@@ -2,7 +2,15 @@ import numpy as np
 import pytest
 
 from plurel.mechanisms import EFFECTS, Root, Softmax
-from plurel.prior import FAMILIES, Choices, Integers, LogIntegers, LogRange, Range, TablePrior
+from plurel.prior import (
+    FAMILIES,
+    Choices,
+    IntegersRange,
+    LogIntegersRange,
+    LogRange,
+    Range,
+    TablePrior,
+)
 
 
 def test_choices_and_ranges_draw_within_their_declarations():
@@ -11,9 +19,9 @@ def test_choices_and_ranges_draw_within_their_declarations():
     draws = [weighted.draw(rng) for _ in range(2000)]
     assert "a" not in draws and 0.6 < draws.count("c") / 2000 < 0.9
     assert Choices((7,)).draw(rng) == 7
-    log_ints = [LogIntegers(1, 32).draw(rng) for _ in range(4000)]
+    log_ints = [LogIntegersRange(1, 32).draw(rng) for _ in range(4000)]
     assert min(log_ints) == 1 and max(log_ints) == 32 and np.median(log_ints) < 8
-    counts = np.bincount([Integers(2, 4).draw(rng) for _ in range(6000)], minlength=5)[2:]
+    counts = np.bincount([IntegersRange(2, 4).draw(rng) for _ in range(6000)], minlength=5)[2:]
     assert (abs(counts / 6000 - 1 / 3) < 0.03).all()
     floats = [Range(-1.0, 1.0).draw(rng) for _ in range(2000)]
     assert -1.0 <= min(floats) and max(floats) < 1.0 and abs(np.mean(floats)) < 0.1
@@ -25,7 +33,7 @@ def test_choices_and_ranges_draw_within_their_declarations():
         lambda: Choices((1, 2), (0.0, 0.0)),
         lambda: Range(2.0, 1.0),
         lambda: LogRange(0.0, 1.0),
-        lambda: LogIntegers(0, 4),
+        lambda: LogIntegersRange(0, 4),
     ):
         with pytest.raises(ValueError):
             bad()
@@ -58,7 +66,7 @@ def test_table_prior_knobs_are_respected():
         assert all(c.kind != "categorical" for c in scm.columns.values())
         assert all(c.missing == 0.0 for c in scm.columns.values())
         assert not scm.sample(50, seed=seed).isna().any().any()
-    single = TablePrior(nodes=Integers(1, 1), columns=Integers(1, 1))
+    single = TablePrior(nodes=IntegersRange(1, 1), columns=IntegersRange(1, 1))
     scm = single.realize(0)
     assert len(scm.mechanisms) <= 2 and isinstance(scm.mechanisms["n0"], Root | Softmax)
     assert scm.sample(5, seed=0).shape[0] == 5

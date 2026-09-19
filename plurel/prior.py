@@ -125,13 +125,13 @@ class LogRange(Range):
 
 
 @dataclass(frozen=True)
-class Integers(Range):
+class IntegersRange(Range):
     def draw(self, rng: np.random.Generator) -> int:
         return int(rng.integers(self.low, self.high + 1))
 
 
 @dataclass(frozen=True)
-class LogIntegers(LogRange):
+class LogIntegersRange(LogRange):
     def draw(self, rng: np.random.Generator) -> int:
         return min(
             int(np.exp(rng.uniform(np.log(self.low), np.log(self.high + 1)))), int(self.high)
@@ -140,24 +140,24 @@ class LogIntegers(LogRange):
 
 @dataclass(frozen=True)
 class TablePrior:
-    nodes: Range = LogIntegers(3, 16)
+    nodes: Range = LogIntegersRange(3, 16)
     layouts: Choices = Choices(
         (RandomCauchy(), RandomCauchy(2.0), BarabasiAlbert(2), Layered(3, 0.2))
     )
-    width: Range = LogIntegers(1, 4)
+    width: Range = LogIntegersRange(1, 4)
     categorical: float = 0.3
-    classes: Range = Integers(2, 8)
+    classes: Range = IntegersRange(2, 8)
     families: Choices = Choices(FAMILIES)
     ops: Choices = Choices(("sum", "product", "max", "logsumexp"), (6.0, 1.0, 1.0, 1.0))
     noise: Range = LogRange(0.01, 0.5)
     root_noise: Choices = Choices(
         (Normal(), Uniform(-1.7, 1.7), Mixture((Normal(-1.5, 0.5), Normal(1.5, 0.5))))
     )
-    hidden: Range = LogIntegers(2, 16)
-    trees: Range = LogIntegers(1, 8)
-    depth: Range = Integers(1, 4)
+    hidden: Range = LogIntegersRange(2, 16)
+    trees: Range = LogIntegersRange(1, 8)
+    depth: Range = IntegersRange(1, 4)
     frequencies: int = 16
-    columns: Range = Integers(3, 12)
+    columns: Range = IntegersRange(3, 12)
     marginals: Choices = Choices(
         (None, Uniform(), LogNormal(), Pareto(2.0), Exponential()), (3.0, 1.0, 1.0, 1.0, 1.0)
     )
