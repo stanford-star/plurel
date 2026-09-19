@@ -372,15 +372,15 @@ class SchemaPrior:
         parents = self.table_layouts.draw(rng).sample(n, rng)
         priors = [self.table_prior.warp(rng) for _ in range(n)]
         tables = {f"t{i}": priors[i].build(rng) for i in range(n)}
-        fkeys = []
+        fkeys, following = [], set()
         for i, references in enumerate(parents):
             for p in references:
                 fk = self.fkey(f"t{i}", f"t{p}", rng)
                 fkeys.append(fk)
                 self.gather(tables, fk, priors[i], rng)
                 self.aggregate(tables, fk, rng)
-                if not fk.nullable:
-                    self.follow(tables, fk, rng)
+                if not fk.nullable and fk.table not in following and self.follow(tables, fk, rng):
+                    following.add(fk.table)
         for i in range(n):
             if rng.random() < self.self_reference_probability:
                 fk = FK(
@@ -425,14 +425,14 @@ class SchemaPrior:
         sources = [
             name
             for name, m in parent.mechanisms.items()
-            if not isinstance(m, Port) and name != "time"
+            if not isinstance(m, Port) and name not in parent.timestamp_nodes
         ]
         if fk.table == fk.parent:
             sources = [name for name in sources if not parent.mechanisms[name].parents]
         consumers = [
             name
             for name, m in child.mechanisms.items()
-            if not isinstance(m, Port) and name != "time"
+            if not isinstance(m, Port) and name not in child.timestamp_nodes
         ]
         mechanisms = dict(child.mechanisms)
         for _ in range(min(self.gather_count.draw(rng), len(sources), len(consumers))):
@@ -453,7 +453,7 @@ class SchemaPrior:
         sources = [
             name
             for name, m in child.mechanisms.items()
-            if m.dim == 1 and not isinstance(m, Port) and name != "time"
+            if m.dim == 1 and not isinstance(m, Port) and name not in child.timestamp_nodes
         ]
         mechanisms, columns = dict(parent.mechanisms), dict(parent.columns)
         for _ in range(min(self.aggregate_count.draw(rng), len(sources))):
@@ -464,15 +464,18 @@ class SchemaPrior:
             columns[name] = Column(name)
         tables[fk.parent] = SCM(mechanisms, columns, time_column=parent.time_column)
 
-    def follow(self, tables: dict[str, SCM], fk: FK, rng: np.random.Generator) -> None:
+    def follow(self, tables: dict[str, SCM], fk: FK, rng: np.random.Generator) -> bool:
         child, parent = tables[fk.table], tables[fk.parent]
-        own = isinstance(child.mechanisms.get(child.time_column), Root)
-        if not own or parent.time_column is None or rng.random() >= self.time_follow_probability:
-            return
+        if child.time_column is None or parent.time_column is None:
+            return False
+        if rng.random() >= self.time_follow_probability:
+            return False
+        source = parent.columns[parent.time_column].node
+        target = child.columns[child.time_column].node
+        port = f"{fk.column}_{source}"
         mechanisms = dict(child.mechanisms)
-        port = f"{fk.column}_time"
-        mechanisms[port] = Port(fk.parent, "time", via=fk.column, fill=0.0)
-        mechanisms["time"] = Combine(
-            (LinearEffect(port),), noise=Exponential(self.time_delay.draw(rng))
-        )
+        mechanisms[port] = Port(fk.parent, source, via=fk.column)
+        delay = Exponential(self.time_delay.draw(rng))
+        mechanisms[target] = Combine((LinearEffect(port),), noise=delay)
         tables[fk.table] = SCM(mechanisms, child.columns, time_column=child.time_column)
+        return True
