@@ -4,7 +4,7 @@ from statistics import NormalDist
 
 import numpy as np
 
-from plurel.distributions import Distribution, Normal
+from plurel.distributions import Distribution, Gumbel, Normal, Uniform
 
 Function = str | Callable[[np.ndarray], np.ndarray]
 
@@ -128,7 +128,147 @@ class Combine(Mechanism):
         return REDUCTIONS[self.op](np.stack(terms)) + noise
 
 
+@dataclass(frozen=True)
+class ArgmaxScores(Mechanism):
+    class_scores: tuple[tuple[Effect, ...], ...]
+    biases: tuple[float, ...] | None = None
+    noise: Distribution = field(default_factory=Gumbel, kw_only=True)
+
+    def __post_init__(self) -> None:
+        if len(self.class_scores) < 2:
+            raise ValueError("at least two classes")
+        if self.biases is not None and len(self.biases) != len(self.class_scores):
+            raise ValueError("one bias per class")
+
+    @property
+    def n_classes(self) -> int:
+        return len(self.class_scores)
+
+    @property
+    def parents(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(e.parent for scores in self.class_scores for e in scores))
+
+    def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        return _draw(self.noise, n, rng, self.n_classes)
+
+    def score_matrix(self, parents: dict[str, np.ndarray], n: int) -> np.ndarray:
+        biases = self.biases or (0.0,) * self.n_classes
+        columns = [
+            sum((effect.evaluate(parents) for effect in scores), np.full((n, 1), bias))
+            for scores, bias in zip(self.class_scores, biases)
+        ]
+        return np.concatenate(columns, axis=1)
+
+    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
+        scores = self.score_matrix(parents, len(noise)) + noise
+        return scores.argmax(1)[:, None].astype(float)
+
+
+@dataclass(frozen=True)
+class NestedLevels(Mechanism):
+    parent: str
+    parent_probabilities: tuple[float, ...] | None
+    allowed: tuple[tuple[int, ...], ...]
+    probabilities: tuple[float, ...]
+    noise: Distribution = field(default=Uniform(), init=False)
+
+    def __post_init__(self) -> None:
+        _check_probabilities(self.parent_probabilities, len(self.allowed))
+        _check_probabilities(self.probabilities, len(self.probabilities))
+        if not self.allowed or min(map(len, self.allowed)) == 0:
+            raise ValueError("every parent level allows at least one child level")
+        codes = [code for subset in self.allowed for code in subset]
+        if min(codes) < 0 or max(codes) >= len(self.probabilities):
+            raise ValueError("allowed codes index the child's probabilities")
+
+    @property
+    def parents(self) -> tuple[str, ...]:
+        return (self.parent,)
+
+    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
+        parent = parents[self.parent].ravel()
+        codes = (
+            parent.astype(int)
+            if self.parent_probabilities is None
+            else bin_levels(parent, self.parent_probabilities)
+        )
+        if codes.min() < 0 or codes.max() >= len(self.allowed):
+            raise ValueError("parent codes must index the allowed subsets")
+        probabilities = np.asarray(self.probabilities)
+        out = np.empty(len(parent))
+        for code, subset in enumerate(self.allowed):
+            mask = codes == code
+            index = np.asarray(subset)
+            cuts = np.cumsum(probabilities[index] / probabilities[index].sum())[:-1]
+            out[mask] = index[np.searchsorted(cuts, noise.ravel()[mask], side="right")]
+        return out[:, None]
+
+
+@dataclass(frozen=True)
+class Nearest(Mechanism):
+    parent: str
+    centers: np.ndarray
+    noise: None = field(default=None, init=False)
+
+    @property
+    def parents(self) -> tuple[str, ...]:
+        return (self.parent,)
+
+    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
+        distances = ((parents[self.parent][:, None, :] - self.centers[None]) ** 2).sum(-1)
+        return distances.argmin(1)[:, None].astype(float)
+
+
+@dataclass(frozen=True)
+class Softmax(Mechanism):
+    parent: str
+    classes: int
+    scale: float = 1.0
+    biases: tuple[float, ...] | None = None
+    noise: Distribution = field(default_factory=Gumbel, kw_only=True)
+
+    def __post_init__(self) -> None:
+        if self.classes < 2:
+            raise ValueError("at least two classes")
+        if self.biases is not None and len(self.biases) != self.classes:
+            raise ValueError("one bias per class")
+
+    @property
+    def parents(self) -> tuple[str, ...]:
+        return (self.parent,)
+
+    def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        return _draw(self.noise, n, rng, self.classes)
+
+    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
+        logits = self.scale * parents[self.parent] + np.asarray(self.biases or 0.0)
+        return (logits + noise).argmax(1)[:, None].astype(float)
+
+
+@dataclass(frozen=True)
+class Embed(Mechanism):
+    parent: str
+    table: np.ndarray
+    noise: None = field(default=None, init=False)
+
+    @property
+    def dim(self) -> int:
+        return self.table.shape[1]
+
+    @property
+    def parents(self) -> tuple[str, ...]:
+        return (self.parent,)
+
+    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
+        return self.table[parents[self.parent].ravel().astype(int)]
+
+
 MECHANISMS: dict[str, type] = {
     "root": Root,
     "combine": Combine,
+    "argmax_scores": ArgmaxScores,
+    "nested_levels": NestedLevels,
+    "nearest": Nearest,
+    "softmax": Softmax,
+    "embed": Embed,
 }
