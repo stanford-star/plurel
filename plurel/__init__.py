@@ -52,7 +52,15 @@ from plurel.mechanisms import (
     bin_levels,
     nested_logits,
 )
-from plurel.prior import FAMILIES, Choices, Range, TablePrior
+from plurel.prior import (
+    FAMILIES,
+    Choices,
+    Integers,
+    LogIntegers,
+    LogRange,
+    Range,
+    TablePrior,
+)
 from plurel.random import Seed, generator
 from plurel.schema import AGGREGATES, FK, Port, Schema
 from plurel.scm import SCM, Interventions
@@ -86,12 +94,15 @@ __all__ = [
     "FourierEffect",
     "Gumbel",
     "HSBMLink",
+    "Integers",
     "Interventions",
     "Layered",
     "Layout",
     "LinearEffect",
     "Link",
+    "LogIntegers",
     "LogNormal",
+    "LogRange",
     "LookupEffect",
     "MatrixEffect",
     "Mechanism",

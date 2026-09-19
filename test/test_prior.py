@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from plurel.mechanisms import EFFECTS, Root, Softmax
-from plurel.prior import FAMILIES, Choices, Range, TablePrior
+from plurel.prior import FAMILIES, Choices, Integers, LogIntegers, LogRange, Range, TablePrior
 
 
 def test_choices_and_ranges_draw_within_their_declarations():
@@ -11,20 +11,21 @@ def test_choices_and_ranges_draw_within_their_declarations():
     draws = [weighted.draw(rng) for _ in range(2000)]
     assert "a" not in draws and 0.6 < draws.count("c") / 2000 < 0.9
     assert Choices((7,)).draw(rng) == 7
-    log_ints = [Range(1, 32, log=True, integer=True).draw(rng) for _ in range(4000)]
+    log_ints = [LogIntegers(1, 32).draw(rng) for _ in range(4000)]
     assert min(log_ints) == 1 and max(log_ints) == 32 and np.median(log_ints) < 8
-    counts = np.bincount([Range(2, 4, integer=True).draw(rng) for _ in range(6000)], minlength=5)[
-        2:
-    ]
+    counts = np.bincount([Integers(2, 4).draw(rng) for _ in range(6000)], minlength=5)[2:]
     assert (abs(counts / 6000 - 1 / 3) < 0.03).all()
     floats = [Range(-1.0, 1.0).draw(rng) for _ in range(2000)]
     assert -1.0 <= min(floats) and max(floats) < 1.0 and abs(np.mean(floats)) < 0.1
+    logs = [LogRange(0.01, 100.0).draw(rng) for _ in range(2000)]
+    assert 0.01 <= min(logs) and max(logs) < 100.0 and 0.5 < np.median(logs) < 2.0
     for bad in (
         lambda: Choices(()),
         lambda: Choices((1, 2), (1.0,)),
         lambda: Choices((1, 2), (0.0, 0.0)),
         lambda: Range(2.0, 1.0),
-        lambda: Range(0.0, 1.0, log=True),
+        lambda: LogRange(0.0, 1.0),
+        lambda: LogIntegers(0, 4),
     ):
         with pytest.raises(ValueError):
             bad()
@@ -44,9 +45,7 @@ def test_table_prior_realizes_valid_diverse_tables():
             assert 1 <= mechanism.dim <= 8
             families.update(type(effect) for effect in getattr(mechanism, "effects", ()))
         kinds.update(column.kind for column in scm.columns.values())
-    assert families == {EFFECTS[name] for name in FAMILIES} - {EFFECTS["lookup"]} | {
-        EFFECTS["linear"]
-    }
+    assert families == {EFFECTS[name] for name in FAMILIES}
     assert kinds == {"key", "numeric", "categorical", "timestamp"}
 
 
@@ -55,12 +54,11 @@ def test_table_prior_knobs_are_respected():
     for seed in range(10):
         scm = plain.realize(seed)
         assert not any(isinstance(m, Softmax) for m in scm.mechanisms.values())
-        assert scm.time_column is None and all(
-            c.kind != "categorical" for c in scm.columns.values()
-        )
+        assert scm.time_column is None
+        assert all(c.kind != "categorical" for c in scm.columns.values())
         assert all(c.missing == 0.0 for c in scm.columns.values())
         assert not scm.sample(50, seed=seed).isna().any().any()
-    single = TablePrior(nodes=Range(1, 1, integer=True), columns=Range(1, 1, integer=True))
+    single = TablePrior(nodes=Integers(1, 1), columns=Integers(1, 1))
     scm = single.realize(0)
     assert len(scm.mechanisms) <= 2 and isinstance(scm.mechanisms["n0"], Root | Softmax)
     assert scm.sample(5, seed=0).shape[0] == 5

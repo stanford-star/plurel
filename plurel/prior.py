@@ -48,42 +48,60 @@ class Choices:
 class Range:
     low: float
     high: float
-    log: bool = False
-    integer: bool = False
 
     def __post_init__(self) -> None:
-        if self.low > self.high or (self.log and self.low <= 0):
-            raise ValueError("low must not exceed high, and a log range must be positive")
+        if self.low > self.high:
+            raise ValueError("low must not exceed high")
 
-    def draw(self, rng: np.random.Generator) -> float | int:
-        high = self.high + 1 if self.integer else self.high
-        if self.log:
-            value = float(np.exp(rng.uniform(np.log(self.low), np.log(high))))
-        else:
-            value = float(rng.uniform(self.low, high))
-        return min(int(value), int(self.high)) if self.integer else value
+    def draw(self, rng: np.random.Generator) -> float:
+        return float(rng.uniform(self.low, self.high))
+
+
+@dataclass(frozen=True)
+class LogRange(Range):
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.low <= 0:
+            raise ValueError("a log range must be positive")
+
+    def draw(self, rng: np.random.Generator) -> float:
+        return float(np.exp(rng.uniform(np.log(self.low), np.log(self.high))))
+
+
+@dataclass(frozen=True)
+class Integers(Range):
+    def draw(self, rng: np.random.Generator) -> int:
+        return int(rng.integers(self.low, self.high + 1))
+
+
+@dataclass(frozen=True)
+class LogIntegers(LogRange):
+    def draw(self, rng: np.random.Generator) -> int:
+        return min(
+            int(np.exp(rng.uniform(np.log(self.low), np.log(self.high + 1)))), int(self.high)
+        )
 
 
 @dataclass(frozen=True)
 class TablePrior:
-    nodes: Range = Range(3, 16, log=True, integer=True)
+    nodes: Range = LogIntegers(3, 16)
     layouts: Choices = Choices(
         (RandomCauchy(), RandomCauchy(2.0), BarabasiAlbert(2), Layered(3, 0.2))
     )
-    width: Range = Range(1, 4, log=True, integer=True)
+    width: Range = LogIntegers(1, 4)
     categorical: float = 0.3
-    classes: Range = Range(2, 8, integer=True)
+    classes: Range = Integers(2, 8)
     families: Choices = Choices(FAMILIES)
     ops: Choices = Choices(("sum", "product", "max", "logsumexp"), (6.0, 1.0, 1.0, 1.0))
-    noise: Range = Range(0.01, 0.5, log=True)
+    noise: Range = LogRange(0.01, 0.5)
     root_noise: Choices = Choices(
         (Normal(), Uniform(-1.7, 1.7), Mixture((Normal(-1.5, 0.5), Normal(1.5, 0.5))))
     )
-    hidden: Range = Range(2, 16, log=True, integer=True)
-    trees: Range = Range(1, 8, log=True, integer=True)
-    depth: Range = Range(1, 4, integer=True)
+    hidden: Range = LogIntegers(2, 16)
+    trees: Range = LogIntegers(1, 8)
+    depth: Range = Integers(1, 4)
     frequencies: int = 16
-    columns: Range = Range(3, 12, integer=True)
+    columns: Range = Integers(3, 12)
     marginals: Choices = Choices(
         (None, Uniform(), LogNormal(), Pareto(2.0), Exponential()), (3.0, 1.0, 1.0, 1.0, 1.0)
     )
