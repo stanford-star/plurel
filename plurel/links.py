@@ -62,7 +62,7 @@ class HSBMLink:
     within: float | Distribution = 0.9
     between: Distribution = Uniform(0.001, 0.002)
     cluster_weights: Distribution | None = None
-    attractiveness: Distribution | None = None
+    popularity: Distribution | None = None
     inactive: float = 0.0
 
     def __post_init__(self) -> None:
@@ -93,12 +93,10 @@ class HSBMLink:
 
     def log_weights(self, n_parent: int, rng: np.random.Generator) -> np.ndarray:
         log_weight = np.zeros(n_parent)
-        if self.attractiveness is not None:
-            weight = self.attractiveness.sample(n_parent, rng)
+        if self.popularity is not None:
+            weight = self.popularity.sample(n_parent, rng)
             if not (np.isfinite(weight).all() and weight.min() >= 0 and weight.max() > 0):
-                raise ValueError(
-                    "attractiveness must draw finite non-negative weights, some positive"
-                )
+                raise ValueError("popularity must draw finite non-negative weights, some positive")
             with np.errstate(divide="ignore"):
                 log_weight += np.log(weight)
         n_inactive = round(n_parent * self.inactive)

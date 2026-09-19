@@ -7,7 +7,7 @@ from plurel.links import LINKS, HSBMLink, Link, RandomLink, TreeLink, clusters
 
 EXAMPLES = {
     "random": RandomLink(),
-    "hsbm": HSBMLink((2, 3), (2, 2), attractiveness=Pareto(2.5), inactive=0.3),
+    "hsbm": HSBMLink((2, 3), (2, 2), popularity=Pareto(2.5), inactive=0.3),
     "tree": TreeLink(roots=0.2),
 }
 
@@ -40,10 +40,10 @@ def test_hsbm_links_within_blocks_with_skewed_and_inactive_parents():
     parents = HSBMLink((2,), (2,)).sample(4000, 400, rng)
     same_block = clusters(400, (2,))[parents, 0] == clusters(4000, (2,))[:, 0]
     assert same_block.mean() > 0.95
-    skewed = HSBMLink(attractiveness=Pareto(1.5), inactive=0.5).sample(4000, 400, rng)
+    skewed = HSBMLink(popularity=Pareto(1.5), inactive=0.5).sample(4000, 400, rng)
     degrees = np.bincount(skewed, minlength=400)
     assert (degrees == 0).sum() >= 200 and degrees.max() > 5 * degrees[degrees > 0].mean()
-    excluded = HSBMLink(attractiveness=Weights(0.0, 1.0)).sample(2000, 10, rng)
+    excluded = HSBMLink(popularity=Weights(0.0, 1.0)).sample(2000, 10, rng)
     assert not (excluded % 2 == 0).any()
 
 
@@ -101,9 +101,9 @@ def test_links_reject_unexpected_sizes_shares_and_parameters():
         (HSBMLink((1,), (4,)), 3, 100),
         (HSBMLink((2,), (2,), inactive=0.9), 100, 3),
         (HSBMLink(cluster_weights=Weights(np.nan)), 100, 10),
-        (HSBMLink(attractiveness=Weights(np.inf)), 100, 10),
-        (HSBMLink(attractiveness=Weights(0.0)), 100, 10),
-        (HSBMLink(attractiveness=Weights(-1.0, 1.0)), 100, 10),
+        (HSBMLink(popularity=Weights(np.inf)), 100, 10),
+        (HSBMLink(popularity=Weights(0.0)), 100, 10),
+        (HSBMLink(popularity=Weights(-1.0, 1.0)), 100, 10),
     ):
         with pytest.raises(ValueError):
             link.sample(n_child, n_parent, rng)
@@ -119,7 +119,7 @@ def test_cluster_bounds_always_cover_every_row():
 
 
 def test_hsbm_raises_when_exclusions_leave_no_linkable_parent():
-    link = HSBMLink(attractiveness=Weights(1.0, 0.0), inactive=0.5)
+    link = HSBMLink(popularity=Weights(1.0, 0.0), inactive=0.5)
     outcomes = set()
     for seed in range(10):
         try:
@@ -133,7 +133,7 @@ def test_hsbm_raises_when_exclusions_leave_no_linkable_parent():
 
 
 def test_hsbm_draws_do_not_depend_on_chunking(monkeypatch):
-    link = HSBMLink((2, 2), (3, 2), attractiveness=Pareto(2.0), inactive=0.2)
+    link = HSBMLink((2, 2), (3, 2), popularity=Pareto(2.0), inactive=0.2)
     whole = link.sample(500, 300, np.random.default_rng(3))
     monkeypatch.setattr(plurel.links, "CHUNK_BYTES", 8 * 300 * 7)
     np.testing.assert_array_equal(link.sample(500, 300, np.random.default_rng(3)), whole)
@@ -145,7 +145,7 @@ def test_hsbm_matches_the_closed_form_distribution():
         (2, 2),
         within=Uniform(0.4, 0.9),
         between=Pareto(1.0, 0.01),
-        attractiveness=Pareto(2.0),
+        popularity=Pareto(2.0),
     )
     n_child, n_parent = 30_000, 6
     parents = link.sample(n_child, n_parent, np.random.default_rng(7))
@@ -176,7 +176,7 @@ def test_links_hold_their_invariants_under_random_configurations():
             tuple(int(c) for c in rng.integers(1, 4, depth)),
             within=float(rng.uniform(0.3, 1.0)),
             cluster_weights=Pareto(1.5) if rng.random() < 0.5 else None,
-            attractiveness=Pareto(2.0) if rng.random() < 0.5 else None,
+            popularity=Pareto(2.0) if rng.random() < 0.5 else None,
             inactive=float(rng.uniform(0.0, 0.6)),
         )
         n_parent = int(rng.integers(np.prod(link.parent_clusters), 200))
