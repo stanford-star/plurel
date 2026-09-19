@@ -1,6 +1,5 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from graphlib import CycleError, TopologicalSorter
 
 import numpy as np
 import pandas as pd
@@ -8,7 +7,7 @@ import pandas as pd
 from plurel.links import Link, RandomLink
 from plurel.mechanisms import Mechanism
 from plurel.random import Seed, generator
-from plurel.scm import SCM, Interventions, checked, intervention
+from plurel.scm import SCM, Interventions, checked, generations
 
 Node = tuple[str, str]
 
@@ -103,16 +102,14 @@ class Schema:
             for name, mechanism in scm.mechanisms.items()
             if isinstance(mechanism, Port)
         }
-        parents: dict[Node, list[Node]] = {}
+        parents: dict[Node, tuple[Node, ...]] = {}
         for table, scm in self.tables.items():
             for name, mechanism in scm.mechanisms.items():
-                parents[table, name] = [(table, parent) for parent in mechanism.parents]
-                if isinstance(mechanism, Port):
-                    parents[table, name].append((mechanism.table, mechanism.node))
-        try:
-            self.order = tuple(TopologicalSorter(parents).static_order())
-        except CycleError as error:
-            raise ValueError("nodes must form a directed acyclic graph across tables") from error
+                local = tuple((table, parent) for parent in mechanism.parents)
+                source = ((mechanism.table, mechanism.node),) if isinstance(mechanism, Port) else ()
+                parents[table, name] = local + source
+        self.generations = generations(parents)
+        self.order = tuple(node for generation in self.generations for node in generation)
 
     def _fkey(self, table: str, name: str, port: Port) -> FK:
         if port.table not in self.tables or port.node not in self.tables[port.table].mechanisms:
@@ -131,6 +128,64 @@ class Schema:
         if port.dim != (1 if port.aggregate == "count" else source):
             raise ValueError(f"port {name!r} declares dim {port.dim}, source has {source}")
         return matches[0]
+
+    def links(self, rows: Mapping[str, int], rng: np.random.Generator) -> dict[FK, np.ndarray]:
+        links = {}
+        for fk, stream in zip(self.fkeys, rng.spawn(len(self.fkeys))):
+            index = fk.link.sample(rows[fk.table], rows[fk.parent], stream)
+            if fk.nullable:
+                index[stream.random(len(index)) < fk.nullable] = -1
+            links[fk] = index
+        return links
+
+    def evaluate(
+        self,
+        node: Node,
+        rows: Mapping[str, int],
+        latents: dict[str, dict[str, np.ndarray]],
+        links: dict[FK, np.ndarray],
+        stream: np.random.Generator,
+        interventions: Mapping[str, Interventions],
+    ) -> np.ndarray:
+        table, name = node
+        if node in self.ports and name not in interventions.get(table, {}):
+            port, fk = self.ports[node]
+            source = latents[port.table][port.node]
+            return checked(name, port, port.resolve(source, links[fk], rows[table]), rows[table])
+        scm = self.tables[table]
+        return scm.evaluate(name, rows[table], latents[table], stream, interventions.get(table, {}))
+
+    def propagate(
+        self,
+        rows: Mapping[str, int],
+        links: dict[FK, np.ndarray],
+        rng: np.random.Generator,
+        interventions: Mapping[str, Interventions],
+    ) -> dict[str, dict[str, np.ndarray]]:
+        streams = dict(zip(self.order, rng.spawn(len(self.order))))
+        latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
+        for generation in self.generations:
+            for node in generation:
+                latents[node[0]][node[1]] = self.evaluate(
+                    node, rows, latents, links, streams[node], interventions
+                )
+        return latents
+
+    def observe(
+        self,
+        rows: Mapping[str, int],
+        latents: dict[str, dict[str, np.ndarray]],
+        links: dict[FK, np.ndarray],
+        rng: np.random.Generator,
+    ) -> dict[str, pd.DataFrame]:
+        frames = {}
+        for (table, scm), stream in zip(self.tables.items(), rng.spawn(len(self.tables))):
+            frame = scm.observe(latents[table], stream, rows[table])
+            for fk in self.fkeys:
+                if fk.table == table:
+                    frame[fk.column] = pd.Series(links[fk], dtype="Int64").mask(links[fk] < 0)
+            frames[table] = frame
+        return frames
 
     def sample(
         self,
@@ -153,36 +208,7 @@ class Schema:
         interventions = dict(interventions or {})
         if unknown := set(interventions) - set(self.tables):
             raise ValueError(f"interventions on unknown tables {sorted(unknown)}")
-        rng = generator(seed)
-        links = {}
-        for fk in self.fkeys:
-            index = fk.link.sample(rows[fk.table], rows[fk.parent], rng)
-            if fk.nullable:
-                index[rng.random(len(index)) < fk.nullable] = -1
-            links[fk] = index
-        exogenous = {
-            node: self.tables[node[0]].mechanisms[node[1]].sample_noise(rows[node[0]], rng)
-            for node in self.order
-        }
-        latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
-        for table, name in self.order:
-            mechanism = self.tables[table].mechanisms[name]
-            n = rows[table]
-            if name in interventions.get(table, {}):
-                latents[table][name] = intervention(interventions[table][name], n, mechanism.dim)
-            elif (table, name) in self.ports:
-                port, fk = self.ports[table, name]
-                source = latents[port.table][port.node]
-                latents[table][name] = checked(name, port, port.resolve(source, links[fk], n), n)
-            else:
-                parents = {parent: latents[table][parent] for parent in mechanism.parents}
-                latent = mechanism.evaluate(parents, exogenous[table, name])
-                latents[table][name] = checked(name, mechanism, latent, n)
-        frames = {}
-        for table, scm in self.tables.items():
-            frame = scm.observe(latents[table], rng, rows[table])
-            for fk in self.fkeys:
-                if fk.table == table:
-                    frame[fk.column] = pd.Series(links[fk], dtype="Int64").mask(links[fk] < 0)
-            frames[table] = frame
-        return frames, latents
+        linking, noise, observation = generator(seed).spawn(3)
+        links = self.links(rows, linking)
+        latents = self.propagate(rows, links, noise, interventions)
+        return self.observe(rows, latents, links, observation), latents

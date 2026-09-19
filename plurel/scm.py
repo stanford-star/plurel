@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from graphlib import CycleError, TopologicalSorter
 
 import numpy as np
@@ -24,6 +24,20 @@ def checked(name: str, mechanism: Mechanism, latent: np.ndarray, n: int) -> np.n
     return latent
 
 
+def generations[T: Hashable](parents: Mapping[T, tuple[T, ...]]) -> tuple[tuple[T, ...], ...]:
+    sorter = TopologicalSorter(parents)
+    try:
+        sorter.prepare()
+    except CycleError as error:
+        raise ValueError("nodes must form a directed acyclic graph") from error
+    levels = []
+    while sorter.is_active():
+        ready = tuple(sorter.get_ready())
+        levels.append(ready)
+        sorter.done(*ready)
+    return tuple(levels)
+
+
 class SCM:
     def __init__(self, mechanisms: Mapping[str, Mechanism], columns: Mapping[str, Column]) -> None:
         self.mechanisms = dict(mechanisms)
@@ -32,10 +46,8 @@ class SCM:
             if unknown:
                 raise ValueError(f"{child!r} refers to unknown parents {sorted(unknown)}")
         parents = {name: mechanism.parents for name, mechanism in self.mechanisms.items()}
-        try:
-            self.order = tuple(TopologicalSorter(parents).static_order())
-        except CycleError as error:
-            raise ValueError("mechanisms must form a directed acyclic graph") from error
+        self.generations = generations(parents)
+        self.order = tuple(name for generation in self.generations for name in generation)
         self.columns = dict(columns)
         for name, column in self.columns.items():
             nodes = (
@@ -44,24 +56,32 @@ class SCM:
             if unknown := nodes - set(self.mechanisms):
                 raise ValueError(f"column {name!r} refers to unknown nodes {sorted(unknown)}")
 
+    def evaluate(
+        self,
+        name: str,
+        n: int,
+        latents: dict[str, np.ndarray],
+        stream: np.random.Generator,
+        interventions: Interventions,
+    ) -> np.ndarray:
+        mechanism = self.mechanisms[name]
+        if name in interventions:
+            return intervention(interventions[name], n, mechanism.dim)
+        parents = {parent: latents[parent] for parent in mechanism.parents}
+        exogenous = mechanism.sample_noise(n, stream)
+        return checked(name, mechanism, mechanism.evaluate(parents, exogenous), n)
+
     def simulate(
         self, n: int, *, seed: Seed = None, interventions: Interventions | None = None
     ) -> dict[str, np.ndarray]:
-        unknown = set(interventions or ()) - set(self.mechanisms)
-        if unknown:
+        interventions = dict(interventions or {})
+        if unknown := set(interventions) - set(self.mechanisms):
             raise ValueError(f"interventions on unknown nodes {sorted(unknown)}")
-        rng = generator(seed)
-        exogenous = {name: self.mechanisms[name].sample_noise(n, rng) for name in self.order}
+        streams = dict(zip(self.order, generator(seed).spawn(len(self.order))))
         latents: dict[str, np.ndarray] = {}
-        for name in self.order:
-            mechanism = self.mechanisms[name]
-            if interventions and name in interventions:
-                latents[name] = intervention(interventions[name], n, mechanism.dim)
-                continue
-            parents = {parent: latents[parent] for parent in mechanism.parents}
-            latents[name] = checked(
-                name, mechanism, mechanism.evaluate(parents, exogenous[name]), n
-            )
+        for generation in self.generations:
+            for name in generation:
+                latents[name] = self.evaluate(name, n, latents, streams[name], interventions)
         return latents
 
     def observe(
@@ -78,6 +98,6 @@ class SCM:
     def sample_with_latents(
         self, n: int, *, seed: Seed = None, interventions: Interventions | None = None
     ) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
-        rng = generator(seed)
-        latents = self.simulate(n, seed=rng, interventions=interventions)
-        return self.observe(latents, rng, n), latents
+        root = generator(seed)
+        latents = self.simulate(n, seed=root, interventions=interventions)
+        return self.observe(latents, root.spawn(1)[0], n), latents
