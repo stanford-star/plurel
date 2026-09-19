@@ -72,7 +72,7 @@ def test_every_registered_effect_declares_its_width(values):
     assert set(EFFECT_EXAMPLES) == set(EFFECTS)
     for effect in EFFECT_EXAMPLES.values():
         x = values[effect.parent]
-        assert effect.apply(x).shape == (N, effect.dim or x.shape[1])
+        assert effect.apply(x).shape == (N, effect.dim)
 
 
 def test_every_reduction_reduces_the_transformed_parents(values):
@@ -92,7 +92,7 @@ def test_block_effects_set_the_width_and_broadcast(values):
     expected = np.repeat(values["h"].sum(1, keepdims=True) + values["x"], 2, axis=1)
     np.testing.assert_allclose(mixed.evaluate(values, np.zeros((N, 2))), expected)
     assert Combine((block, LinearEffect("x")), op="concat").dim == 3
-    assert Combine((LinearEffect("h"),), dim=3).dim == 3
+    assert Combine((LinearEffect("h", dim=3),)).dim == 3
 
 
 def test_lookup_effects_share_the_level_binning(values):
@@ -120,7 +120,7 @@ def test_softmax_is_a_gumbel_argmax_over_the_combined_scores(values):
     scores = np.concatenate([values["x"], -values["x"], 2.0 * values["y"]], axis=1)
     assert (one_hot.sum(1) == 1).all()
     np.testing.assert_array_equal(one_hot.argmax(1), scores.argmax(1))
-    marginal = Softmax(biases=tuple(np.log(PROBABILITIES)), dim=3)
+    marginal = Softmax(biases=tuple(np.log(PROBABILITIES)))
     draws = marginal.evaluate({}, marginal.sample_noise(20_000, np.random.default_rng(0)))
     np.testing.assert_allclose(draws.mean(0), PROBABILITIES, atol=0.02)
 
@@ -128,7 +128,7 @@ def test_softmax_is_a_gumbel_argmax_over_the_combined_scores(values):
 def test_nested_levels_are_a_softmax_over_masked_logits():
     allowed = ((0, 1), (2,), (3, 4))
     rng = np.random.default_rng(0)
-    country = Softmax(dim=3)
+    country = Softmax(biases=(0.0,) * 3)
     city = Softmax((MatrixEffect("country", nested_logits(allowed, (0.2,) * 5)),))
     countries = country.evaluate({}, country.sample_noise(N, rng))
     cities = city.evaluate({"country": countries}, city.sample_noise(N, rng))

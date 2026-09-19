@@ -72,7 +72,7 @@ def _draw(distribution: Distribution, n: int, rng: np.random.Generator, dim: int
 @dataclass(frozen=True)
 class Effect:
     parent: str
-    dim = None
+    dim = 1
 
     def apply(self, x: np.ndarray) -> np.ndarray:
         raise NotImplementedError
@@ -82,6 +82,7 @@ class Effect:
 class LinearEffect(Effect):
     weight: float = 1.0
     transform: Function = "linear"
+    dim: int = 1
 
     def apply(self, x: np.ndarray) -> np.ndarray:
         return self.weight * apply_transform(self.transform, x)
@@ -91,7 +92,6 @@ class LinearEffect(Effect):
 class LookupEffect(Effect):
     values: tuple[float, ...]
     probabilities: tuple[float, ...] | None = None
-    dim = 1
 
     def __post_init__(self) -> None:
         if len(self.values) < 2:
@@ -153,16 +153,15 @@ class Root(Mechanism):
 class Combine(Mechanism):
     effects: tuple[Effect, ...] = ()
     op: str = "sum"
-    dim: int | None = None
 
     def __post_init__(self) -> None:
         if self.op not in REDUCTIONS:
             raise ValueError(f"op must be one of {tuple(REDUCTIONS)}")
-        if self.dim is None:
-            dims = [effect.dim or 1 for effect in self.effects]
-            object.__setattr__(
-                self, "dim", sum(dims) if self.op == "concat" else max(dims, default=1)
-            )
+
+    @property
+    def dim(self) -> int:
+        dims = [effect.dim for effect in self.effects]
+        return sum(dims) if self.op == "concat" else max(dims, default=1)
 
     @property
     def parents(self) -> tuple[str, ...]:
@@ -184,6 +183,10 @@ class Softmax(Combine):
             raise ValueError("at least two classes")
         if self.biases is not None and len(self.biases) != self.dim:
             raise ValueError("one bias per class")
+
+    @property
+    def dim(self) -> int:
+        return super().dim if self.effects else len(self.biases or ())
 
     def evaluate(self, values: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
         scores = super().evaluate(values, exogenous) + np.asarray(self.biases or 0.0)
