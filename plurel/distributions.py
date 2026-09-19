@@ -106,6 +106,19 @@ class Poisson:
 
 
 @dataclass(frozen=True)
+class Gumbel:
+    loc: float = 0.0
+    scale: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.scale <= 0:
+            raise ValueError("scale must be positive")
+
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        return rng.gumbel(self.loc, self.scale, n)
+
+
+@dataclass(frozen=True)
 class Mixture:
     components: tuple[Distribution, ...]
     weights: tuple[float, ...] | None = None
@@ -221,6 +234,7 @@ DISTRIBUTIONS: dict[str, type] = {
     "exponential": Exponential,
     "pareto": Pareto,
     "poisson": Poisson,
+    "gumbel": Gumbel,
     "mixture": Mixture,
     "time_series": TimeSeries,
     "calendar": Calendar,
