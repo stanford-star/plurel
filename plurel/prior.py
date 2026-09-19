@@ -159,27 +159,31 @@ META_CONCENTRATION = LogRange(0.1, 10_000.0)
 
 @dataclass(frozen=True)
 class TablePrior:
-    """Random single-table SCM. Ranges and choices are warped once per table, then drawn per use.
+    """Random single-table SCM prior.
 
-    node_count             nodes in the table's DAG
-    node_layouts           DAG generator for the node graph
-    node_width             latent dimensions of a numeric node
-    node_categorical_share probability that a node is categorical, a Softmax
-    node_classes           classes of a categorical node
-    effect_families        effect family per edge; linear only when parent and node widths agree
-    combine_ops            reduction over the effects of a node with several parents
-    combine_noise          standard deviation of the Gaussian noise of a Combine node
-    root_noise             exogenous distribution of a source node
-    mlp_hidden             hidden width of an MLP effect
-    tree_count, tree_depth oblivious trees in a tree effect, and their depth
-    fourier_frequencies    random Fourier features in a Fourier effect
-    column_count           observed columns besides the key
-    column_marginals       marginal a numeric column is rank-mapped onto, None keeps the latent
-    column_binned_share    probability that a numeric column is binned into categories instead
-    column_missing         missing rate of a column that has missingness
-    column_missing_share   probability that a column has missingness
-    time_probability       probability that the table gets a calendar time column
-    time_calendar          calendar the time column is drawn from
+    Ranges and choices are warped once per table, then drawn per use.
+
+    Attributes:
+        node_count: Nodes in the table's DAG.
+        node_layouts: DAG generator for the node graph.
+        node_width: Latent dimensions of a numeric node.
+        node_categorical_share: Probability that a node is categorical, a Softmax.
+        node_classes: Classes of a categorical node.
+        effect_families: Effect family per edge; linear only when parent and node widths agree.
+        combine_ops: Reduction over the effects of a node with several parents.
+        combine_noise: Standard deviation of the Gaussian noise of a Combine node.
+        root_noise: Exogenous distribution of a source node.
+        mlp_hidden: Hidden width of an MLP effect.
+        tree_count: Oblivious trees in a tree effect.
+        tree_depth: Depth of each oblivious tree.
+        fourier_frequencies: Random Fourier features in a Fourier effect.
+        column_count: Observed columns besides the key.
+        column_marginals: Marginal a numeric column is rank-mapped onto; None keeps the latent.
+        column_binned_share: Probability that a numeric column is binned into categories instead.
+        column_missing: Missing rate of a column that has missingness.
+        column_missing_share: Probability that a column has missingness.
+        time_probability: Probability that the table gets a calendar time column.
+        time_calendar: Calendar the time column is drawn from.
     """
 
     node_count: Range = LogIntegersRange(3, 16)
