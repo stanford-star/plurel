@@ -121,3 +121,21 @@ def test_write_and_read_round_trip(schema, tmp_path):
         pd.testing.assert_frame_equal(again.df, table.df, check_categorical=False)
     order_keys = loaded.table_dict["orders"].df["customer_id"]
     assert order_keys.isna().sum() == db.table_dict["orders"].df["customer_id"].isna().sum()
+    with pytest.raises(FileExistsError):
+        write(db, path, name="synthetic", val_timestamp=split, test_timestamp=db.max_timestamp)
+    smaller = database(schema, schema.sample({"customers": 40, "orders": 100}, seed=1))
+    (path / "db" / "stale.parquet").touch()
+    write(
+        smaller,
+        path,
+        name="synthetic",
+        val_timestamp=split,
+        test_timestamp=db.max_timestamp,
+        overwrite=True,
+    )
+    assert {p.name for p in (path / "db").iterdir()} == {"customers.parquet", "orders.parquet"}
+    assert len(read(path).table_dict["orders"].df) == 100
+    with pytest.raises(ValueError, match="val_timestamp"):
+        write(
+            db, tmp_path / "other", name="x", val_timestamp=db.max_timestamp, test_timestamp=split
+        )

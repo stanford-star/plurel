@@ -121,5 +121,6 @@ def test_declared_time_order_is_enforced_on_the_observed_table():
         table(Normal(std=3600.0)).sample(N, seed=0)
     with pytest.raises(ValueError, match="precedes"):
         table(Exponential(3600.0), marginal=DEFAULT_CALENDAR).sample(N, seed=0)
-    with pytest.raises(ValueError, match="unknown timestamp"):
-        SCM({"t": Root()}, {"t": Column("t", "timestamp", after="nothing")})
+    for after in ("nothing", "t"):
+        with pytest.raises(ValueError, match="another timestamp"):
+            SCM({"t": Root()}, {"t": Column("t", "timestamp", after=after)})

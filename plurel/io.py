@@ -1,3 +1,4 @@
+import shutil
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -40,8 +41,15 @@ def write(
     val_timestamp: pd.Timestamp,
     test_timestamp: pd.Timestamp,
     description: str | None = None,
+    overwrite: bool = False,
 ) -> Path:
+    if val_timestamp > test_timestamp:
+        raise ValueError("val_timestamp must not be after test_timestamp")
     path = Path(path)
+    if (path / "manifest.yaml").exists():
+        if not overwrite:
+            raise FileExistsError(f"{path} already holds a dataset; pass overwrite=True")
+        shutil.rmtree(path / "db")
     (path / "db").mkdir(parents=True, exist_ok=True)
     for table_name, table in db.table_dict.items():
         table.df.to_parquet(path / "db" / f"{table_name}.parquet", index=False)
