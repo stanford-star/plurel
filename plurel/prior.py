@@ -12,7 +12,15 @@ from plurel.distributions import (
     Pareto,
     Uniform,
 )
-from plurel.layouts import BarabasiAlbert, Layered, RandomCauchy, ReverseRandomTree, WattsStrogatz
+from plurel.layouts import (
+    BarabasiAlbert,
+    ErdosRenyi,
+    Layered,
+    RandomCauchy,
+    RandomTree,
+    ReverseRandomTree,
+    WattsStrogatz,
+)
 from plurel.links import HSBMLink, Link, RandomLink, TreeLink
 from plurel.mechanisms import (
     TRANSFORM_NAMES,
@@ -330,6 +338,8 @@ class SchemaPrior:
         activity_row_count: Rows of a table nothing references.
         link_level_count: Cluster levels of an HSBM link.
         link_cluster_count: Clusters per level on each side of an HSBM link.
+        link_within: Affinity of matching clusters in an HSBM link.
+        link_between: Affinity of mismatched clusters in an HSBM link.
         link_cluster_weights: Relative cluster sizes of an HSBM link; None for equal sizes.
         link_popularity: Per-parent popularity of an HSBM link; None for uniform.
         link_inactive_share: Share of parents an HSBM link leaves without children.
@@ -347,13 +357,22 @@ class SchemaPrior:
 
     table_count: Range = LogIntegersRange(2, 8)
     table_layouts: Choices = Choices(
-        (BarabasiAlbert(2), ReverseRandomTree(), WattsStrogatz(2), Layered(3, 0.1))
+        (
+            BarabasiAlbert(2),
+            ReverseRandomTree(),
+            RandomTree(),
+            WattsStrogatz(2),
+            Layered(3, 0.1),
+            ErdosRenyi(0.4),
+        )
     )
     table_prior: TablePrior = TablePrior()
     entity_row_count: Range = LogIntegersRange(500, 1000)
     activity_row_count: Range = LogIntegersRange(10_000, 30_000)
     link_level_count: Range = IntegersRange(1, 3)
     link_cluster_count: Range = IntegersRange(1, 3)
+    link_within: Choices = Choices((0.9, Uniform(0.4, 0.95)))
+    link_between: Choices = Choices((Uniform(0.001, 0.002), Pareto(1.0, 0.01)))
     link_cluster_weights: Choices = Choices((None, Pareto(1.5)))
     link_popularity: Choices = Choices((None, Pareto(2.5)))
     link_inactive_share: Range = Range(0.0, 0.7)
@@ -417,6 +436,8 @@ class SchemaPrior:
         return HSBMLink(
             tuple(self.link_cluster_count.draw(rng) for _ in range(levels)),
             tuple(self.link_cluster_count.draw(rng) for _ in range(levels)),
+            within=self.link_within.draw(rng),
+            between=self.link_between.draw(rng),
             cluster_weights=self.link_cluster_weights.draw(rng),
             popularity=self.link_popularity.draw(rng),
             inactive=self.link_inactive_share.draw(rng),
