@@ -1,4 +1,4 @@
-from plurel.columns import Column, rank_map
+from plurel.columns import DEFAULT_CALENDAR, Column, rank_map
 from plurel.distributions import (
     DISTRIBUTIONS,
     AutoRegressive,
@@ -43,6 +43,7 @@ from plurel.random import Seed, generator
 from plurel.scm import SCM, Interventions
 
 __all__ = [
+    "DEFAULT_CALENDAR",
     "DISTRIBUTIONS",
     "EFFECTS",
     "MECHANISMS",

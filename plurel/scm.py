@@ -53,10 +53,10 @@ class SCM:
                 latents[name] = _intervention(interventions[name], n, mechanism.dim)
                 continue
             parents = {parent: latents[parent] for parent in mechanism.parents}
-            value = mechanism.evaluate(parents, exogenous[name])
-            if value.shape != (n, mechanism.dim):
-                raise ValueError(f"{name!r} produced {value.shape}, declared {(n, mechanism.dim)}")
-            latents[name] = value
+            latent = mechanism.evaluate(parents, exogenous[name])
+            if latent.shape != (n, mechanism.dim):
+                raise ValueError(f"{name!r} produced {latent.shape}, declared {(n, mechanism.dim)}")
+            latents[name] = latent
         return latents
 
     def sample(
