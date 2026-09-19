@@ -2,7 +2,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from itertools import combinations
 from statistics import NormalDist
-from typing import Protocol, runtime_checkable
 
 import numpy as np
 
@@ -47,29 +46,10 @@ def _uniform(size: int) -> tuple[float, ...]:
     return (1.0 / size,) * size
 
 
-@runtime_checkable
-class Mechanism(Protocol):
-    @property
-    def dim(self) -> int: ...
+class Mechanism:
+    dim: int
+    parents: tuple[str, ...]
 
-    @property
-    def parents(self) -> tuple[str, ...]: ...
-
-    @property
-    def mean_parents(self) -> tuple[str, ...]: ...
-
-    @property
-    def noise_parents(self) -> tuple[str, ...]: ...
-
-    @property
-    def interaction_pairs(self) -> tuple[tuple[str, str], ...]: ...
-
-    def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray: ...
-
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray: ...
-
-
-class Structure:
     @property
     def mean_parents(self) -> tuple[str, ...]:
         return self.parents
@@ -82,8 +62,14 @@ class Structure:
     def interaction_pairs(self) -> tuple[tuple[str, str], ...]:
         return ()
 
+    def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        raise NotImplementedError
 
-class Term:
+    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
+        raise NotImplementedError
+
+
+class Effect:
     parents: tuple[str, ...]
 
     @property
@@ -95,7 +81,7 @@ class Term:
 
 
 @dataclass(frozen=True)
-class Effect(Term):
+class Linear(Effect):
     parent: str
     weight: float
     transform: Function = "linear"
@@ -109,7 +95,7 @@ class Effect(Term):
 
 
 @dataclass(frozen=True)
-class LookupEffect(Term):
+class Lookup(Effect):
     parent: str
     values: tuple[float, ...]
     probabilities: tuple[float, ...] | None = None
@@ -129,7 +115,7 @@ class LookupEffect(Term):
 
 
 @dataclass(frozen=True)
-class ProductEffect(Term):
+class Product(Effect):
     parents: tuple[str, str]
     weight: float
 
@@ -143,7 +129,7 @@ class ProductEffect(Term):
 
 
 @dataclass(frozen=True)
-class LookupScaleEffect(Term):
+class LookupScale(Effect):
     selector: str
     scaled: str
     scales: tuple[float, ...]
@@ -165,7 +151,7 @@ class LookupScaleEffect(Term):
 
 
 @dataclass(frozen=True)
-class TransformedProductEffect(Term):
+class TransformedProduct(Effect):
     parents: tuple[str, ...]
     weight: float
     transform: Function = "linear"
@@ -183,7 +169,7 @@ class TransformedProductEffect(Term):
 class Noise:
     std: float = 1.0
     distribution: Distribution = field(default_factory=Normal)
-    scale_effects: tuple[Effect, ...] = ()
+    scale_effects: tuple[Linear, ...] = ()
     clip: float = 3.0
 
     def __post_init__(self) -> None:
@@ -203,7 +189,7 @@ class Noise:
 
 
 @dataclass(frozen=True)
-class Root(Structure):
+class Root(Mechanism):
     distribution: Distribution = field(default_factory=Normal)
     dim: int = 1
 
@@ -219,8 +205,8 @@ class Root(Structure):
 
 
 @dataclass(frozen=True)
-class Additive(Structure):
-    effects: tuple[Term, ...] = ()
+class Additive(Mechanism):
+    effects: tuple[Effect, ...] = ()
     noise: Noise = field(default_factory=Noise)
 
     @property
