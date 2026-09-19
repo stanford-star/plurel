@@ -27,8 +27,8 @@ REDUCTIONS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
 }
 
 
-def apply_transform(transform: Function, values: np.ndarray) -> np.ndarray:
-    return transform(values) if callable(transform) else TRANSFORMS[transform](values)
+def apply_transform(transform: Function, x: np.ndarray) -> np.ndarray:
+    return transform(x) if callable(transform) else TRANSFORMS[transform](x)
 
 
 def _normal_edges(probabilities: tuple[float, ...]) -> np.ndarray:
@@ -61,17 +61,17 @@ def _draw(distribution: Distribution, n: int, rng: np.random.Generator, dim: int
 class Effect:
     parent: str
 
-    def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
+    def apply(self, x: np.ndarray) -> np.ndarray:
         raise NotImplementedError
 
 
 @dataclass(frozen=True)
 class LinearEffect(Effect):
-    weight: float
+    weight: float = 1.0
     transform: Function = "linear"
 
-    def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
-        return self.weight * apply_transform(self.transform, values[self.parent])
+    def apply(self, x: np.ndarray) -> np.ndarray:
+        return self.weight * apply_transform(self.transform, x)
 
 
 @dataclass(frozen=True)
@@ -84,9 +84,9 @@ class LookupEffect(Effect):
             raise ValueError("at least two level values")
         _check_probabilities(self.probabilities, len(self.values))
 
-    def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
+    def apply(self, x: np.ndarray) -> np.ndarray:
         probabilities = self.probabilities or _uniform(len(self.values))
-        return np.asarray(self.values)[bin_levels(values[self.parent], probabilities)]
+        return np.asarray(self.values)[bin_levels(x, probabilities)]
 
 
 @dataclass(frozen=True)
@@ -96,9 +96,9 @@ class Mechanism:
     parents = ()
 
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
-        return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, 0))
+        return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, self.dim))
 
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
+    def evaluate(self, values: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
         raise NotImplementedError
 
 
@@ -106,8 +106,8 @@ class Mechanism:
 class Root(Mechanism):
     dim: int = 1
 
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
-        return noise
+    def evaluate(self, values: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
+        return exogenous
 
 
 @dataclass(frozen=True)
@@ -123,9 +123,9 @@ class Combine(Mechanism):
     def parents(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(effect.parent for effect in self.effects))
 
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
-        terms = [effect.evaluate(parents) for effect in self.effects] or [np.zeros_like(noise)]
-        return REDUCTIONS[self.op](np.stack(terms)) + noise
+    def evaluate(self, values: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
+        terms = [effect.apply(values[effect.parent]) for effect in self.effects]
+        return REDUCTIONS[self.op](np.stack(terms)) + exogenous if terms else exogenous
 
 
 MECHANISMS: dict[str, type] = {
