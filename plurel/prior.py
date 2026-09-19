@@ -22,8 +22,59 @@ from plurel.mechanisms import (
 from plurel.random import Seed, generator
 from plurel.scm import SCM
 
-FAMILIES = ("linear", "matrix", "mlp", "tree", "fourier", "quadratic")
 ACTIVATIONS = tuple(name for name in TRANSFORM_NAMES if name != "identity")
+
+
+def _linear(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+    return LinearEffect(parent, float(rng.normal()), str(rng.choice(TRANSFORM_NAMES)), dim=d_in)
+
+
+def _matrix(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+    return MatrixEffect(parent, rng.normal(0.0, 1.0 / np.sqrt(d_in), (d_in, d_out)))
+
+
+def _mlp(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+    hidden = prior.hidden.draw(rng)
+    weights = (
+        rng.normal(0.0, 1.0 / np.sqrt(d_in), (d_in, hidden)),
+        rng.normal(0.0, 1.0 / np.sqrt(hidden), (hidden, d_out)),
+    )
+    biases = (rng.normal(0.0, 0.5, hidden), np.zeros(d_out))
+    return MLPEffect(
+        parent, weights, biases, ("identity", str(rng.choice(ACTIVATIONS)), "identity")
+    )
+
+
+def _tree(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+    trees, depth = prior.trees.draw(rng), prior.depth.draw(rng)
+    splits = rng.integers(0, d_in, (trees, depth))
+    return TreeEffect(
+        parent, splits, rng.normal(size=(trees, depth)), rng.normal(size=(trees, 2**depth, d_out))
+    )
+
+
+def _fourier(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+    frequencies = rng.normal(size=(d_in, prior.frequencies)) * rng.uniform(0.5, 3.0)
+    phases = rng.uniform(0.0, 2.0 * np.pi, prior.frequencies)
+    weights = rng.normal(0.0, 1.0 / np.sqrt(prior.frequencies), (prior.frequencies, d_out))
+    return FourierEffect(parent, frequencies, phases, weights)
+
+
+def _quadratic(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+    scale = 1.0 / (np.sqrt(d_in) * (d_in + 1))
+    return QuadraticEffect(parent, rng.normal(0.0, scale, (d_out, d_in + 1, d_in + 1)))
+
+
+BUILDERS = {
+    "linear": _linear,
+    "matrix": _matrix,
+    "mlp": _mlp,
+    "tree": _tree,
+    "fourier": _fourier,
+    "quadratic": _quadratic,
+}
+FAMILIES = tuple(BUILDERS)
+PRESERVING = ("linear",)
 
 
 @dataclass(frozen=True)
@@ -42,6 +93,11 @@ class Choices:
     def draw(self, rng: np.random.Generator):
         weights = None if self.weights is None else np.asarray(self.weights) / sum(self.weights)
         return self.values[rng.choice(len(self.values), p=weights)]
+
+    def without(self, values: tuple) -> "Choices":
+        keep = [k for k, value in enumerate(self.values) if value not in values]
+        weights = None if self.weights is None else tuple(self.weights[k] for k in keep)
+        return Choices(tuple(self.values[k] for k in keep), weights)
 
 
 @dataclass(frozen=True)
@@ -119,27 +175,14 @@ class TablePrior:
         dims = [
             self.classes.draw(rng) if categorical[i] else self.width.draw(rng) for i in range(n)
         ]
-        mechanisms: dict[str, Mechanism] = {}
-        for i in range(n):
-            name = f"n{i}"
-            sources = tuple(f"n{p}" for p in parents[i])
-            if categorical[i]:
-                effects = tuple(
-                    self.effect(source, dims[p], dims[i], rng, block=True)
-                    for source, p in zip(sources, parents[i])
-                )
-                biases = tuple(rng.normal(0.0, 0.5, dims[i]))
-                mechanisms[name] = Softmax(effects, biases=biases)
-            elif not sources:
-                mechanisms[name] = Root(dim=dims[i], noise=self.root_noise.draw(rng))
-            else:
-                effects = tuple(
-                    self.effect(source, dims[p], dims[i], rng)
-                    for source, p in zip(sources, parents[i])
-                )
-                op = self.ops.draw(rng) if len(effects) > 1 else "sum"
-                mechanisms[name] = Combine(effects, op, noise=Normal(std=self.noise.draw(rng)))
-        columns = self.columns_for(mechanisms, dims, categorical, rng)
+        mechanisms = {
+            f"n{i}": self.mechanism(parents[i], dims, i, categorical[i], rng) for i in range(n)
+        }
+        columns = {"id": Column(kind="key")}
+        feature_nodes = rng.permutation(n)[: rng.integers(1, n + 1)]
+        for c in range(self.columns.draw(rng)):
+            i = int(rng.choice(feature_nodes))
+            columns[f"col{c}"] = self.column(i, dims[i], categorical[i], rng)
         time_column = None
         if rng.random() < self.timestamp:
             mechanisms["time"] = Root(noise=self.calendar)
@@ -147,79 +190,46 @@ class TablePrior:
             time_column = "time"
         return SCM(mechanisms, columns, time_column=time_column)
 
-    def effect(
-        self, parent: str, d_in: int, d_out: int, rng: np.random.Generator, block: bool = False
-    ) -> Effect:
-        family = self.families.draw(rng)
-        while family == "linear" and (block or d_in != d_out):
-            family = self.families.draw(rng)
-        scale = 1.0 / np.sqrt(d_in)
-        if family == "linear":
-            return LinearEffect(
-                parent, float(rng.normal()), str(rng.choice(TRANSFORM_NAMES)), dim=d_in
-            )
-        if family == "matrix":
-            return MatrixEffect(parent, rng.normal(0.0, scale, (d_in, d_out)))
-        if family == "mlp":
-            hidden = self.hidden.draw(rng)
-            weights = (
-                rng.normal(0.0, scale, (d_in, hidden)),
-                rng.normal(0.0, 1.0 / np.sqrt(hidden), (hidden, d_out)),
-            )
-            biases = (rng.normal(0.0, 0.5, hidden), np.zeros(d_out))
-            return MLPEffect(
-                parent, weights, biases, ("identity", str(rng.choice(ACTIVATIONS)), "identity")
-            )
-        if family == "tree":
-            trees, depth = self.trees.draw(rng), self.depth.draw(rng)
-            split_dims = rng.integers(0, d_in, (trees, depth))
-            return TreeEffect(
-                parent,
-                split_dims,
-                rng.normal(0.0, 1.0, (trees, depth)),
-                rng.normal(0.0, 1.0, (trees, 2**depth, d_out)),
-            )
-        if family == "fourier":
-            frequencies = rng.normal(0.0, 1.0, (d_in, self.frequencies)) * rng.uniform(0.5, 3.0)
-            phases = rng.uniform(0.0, 2.0 * np.pi, self.frequencies)
-            return FourierEffect(
-                parent,
-                frequencies,
-                phases,
-                rng.normal(0.0, 1.0 / np.sqrt(self.frequencies), (self.frequencies, d_out)),
-            )
-        return QuadraticEffect(
-            parent, rng.normal(0.0, scale / (d_in + 1), (d_out, d_in + 1, d_in + 1))
-        )
+    def mechanism(
+        self,
+        sources: tuple[int, ...],
+        dims: list[int],
+        i: int,
+        categorical: bool,
+        rng: np.random.Generator,
+    ) -> Mechanism:
+        effects = tuple(self.effect(f"n{p}", dims[p], dims[i], categorical, rng) for p in sources)
+        if categorical:
+            return Softmax(effects, biases=tuple(rng.normal(0.0, 0.5, dims[i])))
+        if not effects:
+            return Root(dim=dims[i], noise=self.root_noise.draw(rng))
+        op = self.ops.draw(rng) if len(effects) > 1 else "sum"
+        return Combine(effects, op, noise=Normal(std=self.noise.draw(rng)))
 
-    def columns_for(self, mechanisms, dims, categorical, rng) -> dict[str, Column]:
-        n = len(dims)
-        feature_nodes = rng.permutation(n)[: rng.integers(1, n + 1)]
-        columns: dict[str, Column] = {"id": Column(kind="key")}
-        for c in range(self.columns.draw(rng)):
-            i = int(rng.choice(feature_nodes))
-            node = f"n{i}"
-            missing = self.missing.draw(rng) if rng.random() < self.missing_share else 0.0
-            if categorical[i]:
-                categories = tuple(f"c{k}" for k in range(dims[i]))
-                columns[f"col{c}"] = Column(
-                    node, "categorical", categories=categories, missing=missing
-                )
-            elif rng.random() < self.binned:
-                k = self.classes.draw(rng)
-                probabilities = tuple(float(p) for p in rng.dirichlet(np.ones(k)))
-                dim = int(rng.integers(dims[i]))
-                columns[f"col{c}"] = Column(
-                    node,
-                    "categorical",
-                    dims=dim,
-                    categories=tuple(f"c{j}" for j in range(k)),
-                    probabilities=probabilities,
-                    missing=missing,
-                )
-            else:
-                dim = int(rng.integers(dims[i]))
-                columns[f"col{c}"] = Column(
-                    node, dims=dim, marginal=self.marginals.draw(rng), missing=missing
-                )
-        return columns
+    def effect(
+        self, parent: str, d_in: int, d_out: int, block: bool, rng: np.random.Generator
+    ) -> Effect:
+        preserving = d_in == d_out and not block
+        families = self.families if preserving else self.families.without(PRESERVING)
+        return BUILDERS[families.draw(rng)](self, parent, d_in, d_out, rng)
+
+    def column(self, i: int, dim: int, categorical: bool, rng: np.random.Generator) -> Column:
+        node = f"n{i}"
+        missing = self.missing.draw(rng) if rng.random() < self.missing_share else 0.0
+        if categorical:
+            categories = tuple(f"c{k}" for k in range(dim))
+            return Column(node, "categorical", categories=categories, missing=missing)
+        slot = int(rng.integers(dim))
+        if rng.random() < self.binned:
+            k = self.classes.draw(rng)
+            probabilities = tuple(float(p) for p in rng.dirichlet(np.ones(k)))
+            categories = tuple(f"c{j}" for j in range(k))
+            return Column(
+                node,
+                "categorical",
+                dims=slot,
+                categories=categories,
+                probabilities=probabilities,
+                missing=missing,
+            )
+        return Column(node, dims=slot, marginal=self.marginals.draw(rng), missing=missing)
