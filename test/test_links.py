@@ -98,3 +98,24 @@ def test_hsbm_draws_do_not_depend_on_chunking(monkeypatch):
     whole = link.sample(500, 300, np.random.default_rng(3))
     monkeypatch.setattr(plurel.links, "CHUNK_BYTES", 8 * 300 * 7)
     np.testing.assert_array_equal(link.sample(500, 300, np.random.default_rng(3)), whole)
+
+
+class Broken:
+    def sample(self, n, rng):
+        return np.full(n, np.nan)
+
+
+def test_hsbm_survives_sparse_blocks_and_rejects_non_finite_weights():
+    rng = np.random.default_rng(0)
+    link = HSBMLink((4,), (4,), between=(1e-6, 2e-6))
+    few = link.sample(100, 3, rng)
+    assert few.min() >= 0 and few.max() < 3
+    sparse = HSBMLink((2,), (2,), inactive=0.5).sample(2000, 4, rng)
+    assert (
+        0 <= sparse.min()
+        and sparse.max() < 4
+        and (np.bincount(sparse, minlength=4) == 0).sum() == 2
+    )
+    for kwargs in ({"cluster_weights": Broken()}, {"attractiveness": Broken()}):
+        with pytest.raises(ValueError):
+            HSBMLink((2,), (2,), **kwargs).sample(100, 100, rng)

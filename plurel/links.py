@@ -28,8 +28,8 @@ def _check_counts(counts: tuple[int, ...]) -> None:
 def clusters(n: int, counts: tuple[int, ...], shares: np.ndarray | None = None) -> np.ndarray:
     _check_counts(counts)
     shares = np.ones(int(np.prod(counts))) if shares is None else np.asarray(shares, dtype=float)
-    if len(shares) != np.prod(counts) or shares.min() <= 0:
-        raise ValueError("one positive share per base cluster")
+    if len(shares) != np.prod(counts) or not (np.isfinite(shares) & (shares > 0)).all():
+        raise ValueError("one positive finite share per base cluster")
     k, cumulative = len(shares), np.cumsum(shares) / shares.sum()
     bounds = (
         np.round(cumulative * (n - k)) + np.arange(1, k + 1) if n >= k else np.round(cumulative * n)
@@ -92,6 +92,8 @@ class HSBMLink:
         log_weight = np.zeros(n_parent)
         if self.attractiveness is not None:
             weight = self.attractiveness.sample(n_parent, rng)
+            if not np.isfinite(weight).all():
+                raise ValueError("attractiveness must draw finite weights")
             log_weight += np.log(np.maximum(weight, np.finfo(float).tiny))
         inactive = rng.permutation(n_parent)[: min(round(n_parent * self.inactive), n_parent - 1)]
         log_weight[inactive] = -np.inf
@@ -107,7 +109,7 @@ class HSBMLink:
             )
             cdf = np.cumsum(np.exp(log_p - log_p.max(axis=0, keepdims=True)), axis=0)
             draws = rng.uniform(0.0, 1.0, (1, stop - start)) * cdf[-1]
-            parents[start:stop] = (cdf >= draws).argmax(axis=0)
+            parents[start:stop] = (cdf > draws).argmax(axis=0)
         return parents
 
 
