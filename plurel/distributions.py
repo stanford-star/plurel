@@ -18,8 +18,8 @@ class Normal:
     std: float = 1.0
 
     def __post_init__(self) -> None:
-        if self.std <= 0:
-            raise ValueError("std must be positive")
+        if self.std < 0:
+            raise ValueError("std must be non-negative")
 
     def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return rng.normal(self.mean, self.std, n)

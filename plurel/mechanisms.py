@@ -174,14 +174,9 @@ class TransformedProductEffect(Effect):
 
 @dataclass(frozen=True)
 class Noise:
-    std: float = 1.0
     distribution: Distribution = field(default_factory=Normal)
     scale_effects: tuple[LinearEffect, ...] = ()
     clip: float = 3.0
-
-    def __post_init__(self) -> None:
-        if self.std < 0:
-            raise ValueError("std must be non-negative")
 
     @property
     def parents(self) -> tuple[str, ...]:
@@ -192,7 +187,7 @@ class Noise:
 
     def apply(self, values: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
         log_scale = sum((effect.evaluate(values) for effect in self.scale_effects), 0.0)
-        return self.std * np.exp(np.clip(log_scale, -self.clip, self.clip)) * noise
+        return np.exp(np.clip(log_scale, -self.clip, self.clip)) * noise
 
 
 @dataclass(frozen=True)
