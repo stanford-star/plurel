@@ -10,6 +10,7 @@ from plurel.random import Seed, generator
 from plurel.scm import SCM, Interventions, checked, generations
 
 Node = tuple[str, str]
+Links = dict[Node, np.ndarray]
 
 
 def _sum(values: np.ndarray, index: np.ndarray, n: int) -> np.ndarray:
@@ -129,13 +130,13 @@ class Schema:
             raise ValueError(f"port {name!r} declares dim {port.dim}, source has {source}")
         return matches[0]
 
-    def links(self, rows: Mapping[str, int], rng: np.random.Generator) -> dict[FK, np.ndarray]:
+    def links(self, rows: Mapping[str, int], rng: np.random.Generator) -> Links:
         links = {}
         for fk, stream in zip(self.fkeys, rng.spawn(len(self.fkeys))):
             index = fk.link.sample(rows[fk.table], rows[fk.parent], stream)
             if fk.nullable:
                 index[stream.random(len(index)) < fk.nullable] = -1
-            links[fk] = index
+            links[fk.table, fk.column] = index
         return links
 
     def evaluate(
@@ -143,7 +144,7 @@ class Schema:
         node: Node,
         rows: Mapping[str, int],
         latents: dict[str, dict[str, np.ndarray]],
-        links: dict[FK, np.ndarray],
+        links: Links,
         stream: np.random.Generator,
         interventions: Mapping[str, Interventions],
     ) -> np.ndarray:
@@ -151,14 +152,15 @@ class Schema:
         if node in self.ports and name not in interventions.get(table, {}):
             port, fk = self.ports[node]
             source = latents[port.table][port.node]
-            return checked(name, port, port.resolve(source, links[fk], rows[table]), rows[table])
+            index = links[fk.table, fk.column]
+            return checked(name, port, port.resolve(source, index, rows[table]), rows[table])
         scm = self.tables[table]
         return scm.evaluate(name, rows[table], latents[table], stream, interventions.get(table, {}))
 
     def propagate(
         self,
         rows: Mapping[str, int],
-        links: dict[FK, np.ndarray],
+        links: Links,
         rng: np.random.Generator,
         interventions: Mapping[str, Interventions],
     ) -> dict[str, dict[str, np.ndarray]]:
@@ -175,7 +177,7 @@ class Schema:
         self,
         rows: Mapping[str, int],
         latents: dict[str, dict[str, np.ndarray]],
-        links: dict[FK, np.ndarray],
+        links: Links,
         rng: np.random.Generator,
     ) -> dict[str, pd.DataFrame]:
         frames = {}
@@ -183,7 +185,8 @@ class Schema:
             frame = scm.observe(latents[table], stream, rows[table])
             for fk in self.fkeys:
                 if fk.table == table:
-                    frame[fk.column] = pd.Series(links[fk], dtype="Int64").mask(links[fk] < 0)
+                    index = links[table, fk.column]
+                    frame[fk.column] = pd.Series(index, dtype="Int64").mask(index < 0)
             frames[table] = frame
         return frames
 

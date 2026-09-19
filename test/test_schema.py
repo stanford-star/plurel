@@ -2,7 +2,17 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from plurel import SCM, Column, Combine, LinearEffect, MatrixEffect, Normal, Root, Softmax
+from plurel import (
+    SCM,
+    Column,
+    Combine,
+    LinearEffect,
+    MatrixEffect,
+    Normal,
+    Root,
+    Softmax,
+    generator,
+)
 from plurel.links import HSBMLink, RandomLink, TreeLink
 from plurel.schema import AGGREGATES, FK, Port, Schema
 
@@ -205,3 +215,50 @@ def test_schema_validation():
     empty = schema.sample({"customers": 5, "orders": 0, "employees": 0}, seed=0)
     assert len(empty["orders"]) == 0 and list(empty["orders"]) == ["amount", "value", "customer_id"]
     assert not empty["customers"]["n_orders"].any()
+
+
+def test_evaluation_order_within_a_generation_does_not_matter(schema):
+    linking, noise, _ = generator(0).spawn(3)
+    links = schema.links(ROWS, linking)
+    expected = schema.propagate(ROWS, links, noise, {})
+    streams = dict(zip(schema.order, generator(0).spawn(3)[1].spawn(len(schema.order))))
+    latents = {table: {} for table in ROWS}
+    for generation in schema.generations:
+        for table, name in reversed(generation):
+            node = (table, name)
+            latents[table][name] = schema.evaluate(node, ROWS, latents, links, streams[node], {})
+    for table in ROWS:
+        assert set(latents[table]) == set(expected[table])
+        for name, latent in latents[table].items():
+            np.testing.assert_array_equal(latent, expected[table][name])
+
+
+def test_influence_flows_child_to_parent_to_other_child():
+    tables = {
+        "a": SCM({"total": Port("b", "x", aggregate="sum")}, {"total": Column("total")}),
+        "b": SCM({"x": Root()}, {"x": Column("x")}),
+        "c": SCM({"from_a": Port("a", "total")}, {"from_a": Column("from_a")}),
+        "d": SCM(
+            {"from_b": Port("b", "x"), "from_c": Port("c", "from_a")},
+            {"from_b": Column("from_b"), "from_c": Column("from_c")},
+        ),
+    }
+    fkeys = (FK("b", "a_id", "a"), FK("c", "a_id", "a"), FK("d", "b_id", "b"), FK("d", "c_id", "c"))
+    schema = Schema(tables, fkeys)
+    positions = [
+        schema.order.index(node)
+        for node in (("b", "x"), ("a", "total"), ("c", "from_a"), ("d", "from_c"))
+    ]
+    assert positions == sorted(positions)
+    rows = {"a": 20, "b": 500, "c": 100, "d": 1000}
+    frames, latents = schema.sample_with_latents(rows, seed=0)
+    total = np.zeros(rows["a"])
+    np.add.at(total, frames["b"]["a_id"].to_numpy(), latents["b"]["x"][:, 0])
+    np.testing.assert_allclose(frames["a"]["total"], total)
+    np.testing.assert_allclose(frames["c"]["from_a"], total[frames["c"]["a_id"].to_numpy()])
+    np.testing.assert_allclose(
+        frames["d"]["from_c"], frames["c"]["from_a"].to_numpy()[frames["d"]["c_id"].to_numpy()]
+    )
+    np.testing.assert_allclose(
+        frames["d"]["from_b"], frames["b"]["x"].to_numpy()[frames["d"]["b_id"].to_numpy()]
+    )
