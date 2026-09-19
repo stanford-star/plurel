@@ -6,12 +6,10 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 import pandas as pd
 
-from plurel.random import Array
-
 
 @runtime_checkable
 class Distribution(Protocol):
-    def sample(self, n: int, rng: np.random.Generator) -> Array: ...
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray: ...
 
 
 @dataclass(frozen=True)
@@ -23,7 +21,7 @@ class Normal:
         if self.std <= 0:
             raise ValueError("std must be positive")
 
-    def sample(self, n: int, rng: np.random.Generator) -> Array:
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return rng.normal(self.mean, self.std, n)
 
 
@@ -36,7 +34,7 @@ class Uniform:
         if self.low >= self.high:
             raise ValueError("low must be below high")
 
-    def sample(self, n: int, rng: np.random.Generator) -> Array:
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return rng.uniform(self.low, self.high, n)
 
 
@@ -53,7 +51,7 @@ class Beta:
         if self.low >= self.high:
             raise ValueError("low must be below high")
 
-    def sample(self, n: int, rng: np.random.Generator) -> Array:
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return self.low + (self.high - self.low) * rng.beta(self.alpha, self.beta, n)
 
 
@@ -66,7 +64,7 @@ class LogNormal:
         if self.sigma <= 0:
             raise ValueError("sigma must be positive")
 
-    def sample(self, n: int, rng: np.random.Generator) -> Array:
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return rng.lognormal(self.mean, self.sigma, n)
 
 
@@ -78,7 +76,7 @@ class Exponential:
         if self.scale <= 0:
             raise ValueError("scale must be positive")
 
-    def sample(self, n: int, rng: np.random.Generator) -> Array:
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return rng.exponential(self.scale, n)
 
 
@@ -91,7 +89,7 @@ class Pareto:
         if self.alpha <= 0 or self.scale <= 0:
             raise ValueError("alpha and scale must be positive")
 
-    def sample(self, n: int, rng: np.random.Generator) -> Array:
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return self.scale * rng.pareto(self.alpha, n)
 
 
@@ -103,7 +101,7 @@ class Poisson:
         if self.lam <= 0:
             raise ValueError("lam must be positive")
 
-    def sample(self, n: int, rng: np.random.Generator) -> Array:
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return rng.poisson(self.lam, n).astype(float)
 
 
@@ -121,7 +119,7 @@ class Mixture:
             if any(w <= 0 for w in self.weights) or not np.isclose(sum(self.weights), 1.0):
                 raise ValueError("weights must be positive and sum to one")
 
-    def sample(self, n: int, rng: np.random.Generator) -> Array:
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         assignment = rng.choice(len(self.components), n, p=self.weights)
         out = np.empty(n)
         for index, component in enumerate(self.components):
@@ -140,7 +138,7 @@ class Trend:
         if self.alpha < 0:
             raise ValueError("alpha must be non-negative")
 
-    def values(self, t: Array) -> Array:
+    def values(self, t: np.ndarray) -> np.ndarray:
         return self.scale * t**self.alpha * np.exp(max(0.0, self.alpha - 5.0) * t)
 
 
@@ -154,7 +152,7 @@ class Cycle:
         if self.periods <= 0:
             raise ValueError("periods must be positive")
 
-    def values(self, t: Array) -> Array:
+    def values(self, t: np.ndarray) -> np.ndarray:
         return self.scale * np.sin(2.0 * np.pi * self.periods * t + self.phase)
 
 
@@ -169,7 +167,7 @@ class AutoRegressive:
         if self.scale < 0:
             raise ValueError("scale must be non-negative")
 
-    def sample(self, n: int, rng: np.random.Generator) -> Array:
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         innovations = rng.normal(0.0, self.scale, n)
         if self.rho == 0.0:
             return innovations
@@ -187,7 +185,7 @@ class TimeSeries:
     cycle: Cycle = field(default_factory=Cycle)
     noise: AutoRegressive = field(default_factory=AutoRegressive)
 
-    def sample(self, n: int, rng: np.random.Generator) -> Array:
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         t = np.linspace(0.0, 1.0, n)
         return self.trend.values(t) + self.cycle.values(t) + self.noise.sample(n, rng)
 
@@ -213,7 +211,7 @@ class Calendar:
         if self.oversampling < 1:
             raise ValueError("oversampling must be at least one")
 
-    def sample(self, n: int, rng: np.random.Generator) -> Array:
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         span = (self.end - self.start).total_seconds()
         candidates = max(n * self.oversampling, n + 1)
         offsets = rng.uniform(0.0, span, candidates)

@@ -15,11 +15,10 @@ from plurel.distributions import (
     Trend,
     Uniform,
 )
-from plurel.random import Array, Seed, generator
+from plurel.random import Seed, generator
 
 __all__ = [
     "DISTRIBUTIONS",
-    "Array",
     "AutoRegressive",
     "Beta",
     "Calendar",
