@@ -81,15 +81,15 @@ class HSBMLink:
         return clusters(n, counts, self.cluster_weights.sample(int(np.prod(counts)), rng))
 
     def block_affinity(self, parent: int, child: int, rng: np.random.Generator) -> np.ndarray:
-        affinity = self.between.sample(parent * child, rng).reshape(parent, child)
+        block_affinity = self.between.sample(parent * child, rng).reshape(parent, child)
         index = np.arange(max(parent, child))
         within = self.within
         if isinstance(within, Distribution):
             within = within.sample(len(index), rng)
-        affinity[index % parent, index % child] = within
-        if not (np.isfinite(affinity).all() and affinity.min() > 0):
+        block_affinity[index % parent, index % child] = within
+        if not (np.isfinite(block_affinity).all() and block_affinity.min() > 0):
             raise ValueError("affinities must draw finite positive values")
-        return affinity
+        return block_affinity
 
     def log_weights(self, n_parent: int, rng: np.random.Generator) -> np.ndarray:
         log_weight = np.zeros(n_parent)
