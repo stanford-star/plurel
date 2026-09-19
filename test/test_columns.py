@@ -73,7 +73,7 @@ def test_timestamp_columns_follow_the_calendar_in_latent_order(latent):
     stamps = Column("t", "timestamp").observe(latent, rng)
     assert stamps.dtype == "datetime64[ns]"
     assert stamps.min() >= DEFAULT_CALENDAR.start and stamps.max() <= DEFAULT_CALENDAR.end
-    assert (np.diff(stamps.to_numpy()[np.argsort(latent.ravel())]) >= np.timedelta64(0)).all()
+    assert (np.diff(stamps.to_numpy()[np.argsort(latent.ravel())]) >= np.timedelta64(0, "ns")).all()
     calendar = Calendar(pd.Timestamp("2020-01-01"), pd.Timestamp("2020-02-01"))
     month = Column("t", "timestamp", marginal=calendar).observe(latent, rng)
     assert month.max() <= calendar.end
