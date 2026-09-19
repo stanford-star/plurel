@@ -1,3 +1,4 @@
+from plurel.columns import Column, rank_map
 from plurel.distributions import (
     DISTRIBUTIONS,
     AutoRegressive,
@@ -51,6 +52,7 @@ __all__ = [
     "AutoRegressive",
     "Beta",
     "Calendar",
+    "Column",
     "Combine",
     "Cycle",
     "Distribution",
@@ -82,4 +84,5 @@ __all__ = [
     "bin_levels",
     "generator",
     "nested_logits",
+    "rank_map",
 ]

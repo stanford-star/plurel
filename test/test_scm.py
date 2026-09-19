@@ -1,7 +1,9 @@
 import numpy as np
+import pandas as pd
 import pytest
 
-from plurel.distributions import Normal
+from plurel.columns import Column
+from plurel.distributions import Normal, Uniform
 from plurel.mechanisms import Combine, LinearEffect, MatrixEffect, NearestEffect, Root, Softmax
 from plurel.scm import SCM
 
@@ -66,3 +68,23 @@ def test_simulate_rejects_a_node_that_breaks_its_declared_width():
     scm = SCM({"h": Root(dim=3), "y": Combine((LinearEffect("h"),))})
     with pytest.raises(ValueError, match="declared"):
         scm.simulate(N, seed=0)
+
+
+def test_sample_observes_columns_from_one_draw(scm):
+    frame, values = scm.sample_with_latents(N, seed=0)
+    assert list(frame) == ["y", "xz", "x", "z"] and len(frame) == N
+    np.testing.assert_array_equal(frame["x"], values["x"].ravel())
+    assert all(np.array_equal(values[k], v) for k, v in scm.simulate(N, seed=0).items())
+    columns = {
+        "amount": Column("y", marginal=Uniform(), missing=0.1),
+        "segment": Column("segment", "categorical", levels=("a", "b", "c")),
+        "when": Column("z", "timestamp"),
+    }
+    typed = SCM(MECHANISMS, columns)
+    frame = typed.sample(N, seed=0)
+    assert list(frame) == list(columns) and frame["when"].dtype == "datetime64[ns]"
+    assert set(frame["segment"]) == {"a", "b", "c"} and 0.05 < frame["amount"].isna().mean() < 0.15
+    same = typed.sample(N, seed=0, interventions={"x": 0.0})
+    pd.testing.assert_series_equal(same["when"], frame["when"])
+    with pytest.raises(ValueError):
+        SCM(MECHANISMS, {"c": Column("missing")})
