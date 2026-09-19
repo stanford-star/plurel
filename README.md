@@ -114,10 +114,8 @@ $ pixi run python scripts/synthetic_gen.py \
 | `--num_dbs` | Number of databases to generate. |
 | `--num_proc` | Number of parallel processes (default: number of CPU cores). |
 
-## Examples
-
-- [`examples/generation/`](examples/generation/) — notebook that synthesizes a database from a SQL schema.
-- [`examples/relational_transformer/`](examples/relational_transformer/) — pretraining Relational Transformer on PluRel data: preprocessing, hosted preprocessed datasets, and checkpoints.
+> [!NOTE]
+> See [`examples/generation/`](examples/generation/) for a notebook that synthesizes from a SQL schema.
 
 ## Citation
 
