@@ -10,7 +10,7 @@ from plurel.distributions import Distribution, Gumbel, Normal
 Function = str | Callable[[np.ndarray], np.ndarray]
 
 TRANSFORMS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
-    "linear": lambda x: x,
+    "identity": lambda x: x,
     "tanh": np.tanh,
     "relu": lambda x: np.maximum(x, 0.0) - 0.4,
     "square": lambda x: x**2 - 1.0,
@@ -81,7 +81,7 @@ class Effect:
 @dataclass(frozen=True)
 class LinearEffect(Effect):
     weight: float = 1.0
-    transform: Function = "linear"
+    transform: Function = "identity"
     dim: int = 1
 
     def apply(self, x: np.ndarray) -> np.ndarray:
@@ -148,7 +148,7 @@ class MLPEffect(Effect):
 
     def apply(self, x: np.ndarray) -> np.ndarray:
         depth = len(self.weights)
-        activations = self.activations or ("linear",) * (depth + 1)
+        activations = self.activations or ("identity",) * (depth + 1)
         biases = self.biases or (0.0,) * depth
         h = apply_transform(activations[0], x)
         for weight, bias, activation in zip(self.weights, biases, activations[1:]):

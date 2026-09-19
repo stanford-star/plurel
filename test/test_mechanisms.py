@@ -172,9 +172,9 @@ def test_mlp_effect_places_activations_between_layers(values):
     h = values["h"]
     w1, w2 = MLP.weights
     np.testing.assert_allclose(MLP.apply(h), h @ w1 @ w2)
-    hidden = MLPEffect("h", (w1, w2), activations=("linear", "tanh", "linear"))
+    hidden = MLPEffect("h", (w1, w2), activations=("identity", "tanh", "identity"))
     np.testing.assert_allclose(hidden.apply(h), np.tanh(h @ w1) @ w2)
-    first = MLPEffect("h", (w1,), activations=("tanh", "linear"))
+    first = MLPEffect("h", (w1,), activations=("tanh", "identity"))
     np.testing.assert_allclose(first.apply(h), np.tanh(h) @ w1)
     with pytest.raises(ValueError):
         MLPEffect("h", (w1,), activations=("tanh",))
