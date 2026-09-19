@@ -262,3 +262,37 @@ def test_influence_flows_child_to_parent_to_other_child():
     np.testing.assert_allclose(
         frames["d"]["from_b"], frames["b"]["x"].to_numpy()[frames["d"]["b_id"].to_numpy()]
     )
+
+
+def test_ports_read_through_the_key_they_name():
+    buyer_seller = SCM(
+        {
+            "buyer_value": Port("customers", "value", via="buyer_id"),
+            "seller_value": Port("customers", "value", via="seller_id"),
+        },
+        {"buyer_value": Column("buyer_value"), "seller_value": Column("seller_value")},
+    )
+    both = SCM(
+        {
+            "value": Root(),
+            "bought": Port("orders", "buyer_value", via="buyer_id", aggregate="count"),
+            "sold": Port("orders", "seller_value", via="seller_id", aggregate="count"),
+        },
+        {"bought": Column("bought"), "sold": Column("sold")},
+    )
+    fkeys = (FK("orders", "buyer_id", "customers"), FK("orders", "seller_id", "customers"))
+    schema = Schema({"customers": both, "orders": buyer_seller}, fkeys)
+    rows = {"customers": 50, "orders": 2000}
+    frames, latents = schema.sample_with_latents(rows, seed=0)
+    value = latents["customers"]["value"][:, 0]
+    buyer = frames["orders"]["buyer_id"].to_numpy()
+    seller = frames["orders"]["seller_id"].to_numpy()
+    assert not np.array_equal(buyer, seller)
+    np.testing.assert_array_equal(frames["orders"]["buyer_value"], value[buyer])
+    np.testing.assert_array_equal(frames["orders"]["seller_value"], value[seller])
+    np.testing.assert_array_equal(frames["customers"]["bought"], np.bincount(buyer, minlength=50))
+    np.testing.assert_array_equal(frames["customers"]["sold"], np.bincount(seller, minlength=50))
+    assert Schema({"t": SCM({"x": Root()}, {"x": Column("x")})}).sample({"t": 5}, seed=0)[
+        "t"
+    ].shape == (5, 1)
+    assert Schema({"t": SCM({}, {})}).sample({"t": 4}, seed=0)["t"].shape == (4, 0)
