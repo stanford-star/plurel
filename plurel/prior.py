@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 
 import numpy as np
 
@@ -99,18 +99,32 @@ class Choices:
         weights = None if self.weights is None else tuple(self.weights[k] for k in keep)
         return Choices(tuple(self.values[k] for k in keep), weights)
 
+    def warp(self, rng: np.random.Generator) -> "Choices":
+        base = np.ones(len(self.values)) if self.weights is None else np.asarray(self.weights)
+        preference = rng.dirichlet(np.full(len(self.values), META_CONCENTRATION.draw(rng)))
+        return Choices(self.values, tuple(float(w) for w in base * preference))
+
 
 @dataclass(frozen=True)
 class Range:
     low: float
     high: float
+    shape: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
         if self.low > self.high:
             raise ValueError("low must not exceed high")
 
+    def unit(self, rng: np.random.Generator) -> float:
+        return float(rng.random() if self.shape is None else rng.beta(*self.shape))
+
     def draw(self, rng: np.random.Generator) -> float:
-        return float(rng.uniform(self.low, self.high))
+        return self.low + (self.high - self.low) * self.unit(rng)
+
+    def warp(self, rng: np.random.Generator) -> "Range":
+        location, concentration = META_LOCATION.draw(rng), META_CONCENTRATION.draw(rng)
+        shape = (location * concentration, (1.0 - location) * concentration)
+        return replace(self, shape=shape)
 
 
 @dataclass(frozen=True)
@@ -121,21 +135,24 @@ class LogRange(Range):
             raise ValueError("a log range must be positive")
 
     def draw(self, rng: np.random.Generator) -> float:
-        return float(np.exp(rng.uniform(np.log(self.low), np.log(self.high))))
+        return float(np.exp(np.log(self.low) + np.log(self.high / self.low) * self.unit(rng)))
 
 
 @dataclass(frozen=True)
 class IntegersRange(Range):
     def draw(self, rng: np.random.Generator) -> int:
-        return int(rng.integers(self.low, self.high + 1))
+        return min(int(self.low + (self.high + 1 - self.low) * self.unit(rng)), int(self.high))
 
 
 @dataclass(frozen=True)
 class LogIntegersRange(LogRange):
     def draw(self, rng: np.random.Generator) -> int:
-        return min(
-            int(np.exp(rng.uniform(np.log(self.low), np.log(self.high + 1)))), int(self.high)
-        )
+        span = np.log((self.high + 1) / self.low)
+        return min(int(np.exp(np.log(self.low) + span * self.unit(rng))), int(self.high))
+
+
+META_LOCATION = Range(0.0, 1.0)
+META_CONCENTRATION = LogRange(0.1, 10_000.0)
 
 
 @dataclass(frozen=True)
@@ -167,8 +184,19 @@ class TablePrior:
     timestamp: float = 0.5
     calendar: Calendar = DEFAULT_CALENDAR
 
+    def warp(self, rng: np.random.Generator) -> "TablePrior":
+        knobs = {
+            field.name: getattr(self, field.name).warp(rng)
+            for field in fields(self)
+            if isinstance(getattr(self, field.name), Range | Choices)
+        }
+        return replace(self, **knobs)
+
     def realize(self, seed: Seed = None) -> SCM:
         rng = generator(seed)
+        return self.warp(rng).build(rng)
+
+    def build(self, rng: np.random.Generator) -> SCM:
         n = self.nodes.draw(rng)
         parents = self.layouts.draw(rng).sample(n, rng)
         categorical = rng.random(n) < self.categorical

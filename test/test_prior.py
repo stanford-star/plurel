@@ -70,3 +70,27 @@ def test_table_prior_knobs_are_respected():
     scm = single.realize(0)
     assert len(scm.mechanisms) <= 2 and isinstance(scm.mechanisms["n0"], Root | Softmax)
     assert scm.sample(5, seed=0).shape[0] == 5
+
+
+def test_warping_gives_each_realization_its_own_style():
+    rng = np.random.default_rng(0)
+    tight = Range(0.0, 1.0, shape=(1000.0, 1000.0))
+    assert all(abs(tight.draw(rng) - 0.5) < 0.1 for _ in range(100))
+    skewed = LogIntegersRange(1, 32, shape=(0.5, 20.0))
+    assert np.median([skewed.draw(rng) for _ in range(500)]) == 1
+    warped = IntegersRange(2, 8).warp(rng)
+    assert warped.shape is not None and all(2 <= warped.draw(rng) <= 8 for _ in range(200))
+    choices = Choices(("a", "b", "c"), (1.0, 1.0, 0.0)).warp(rng)
+    assert choices.values == ("a", "b", "c") and choices.weights[2] == 0.0
+    prior = TablePrior().warp(rng)
+    assert prior.nodes.shape is not None and prior.families.weights is not None
+    assert prior.categorical == TablePrior().categorical
+    spreads = [
+        np.std([m.dim for m in TablePrior().realize(seed).mechanisms.values()])
+        for seed in range(60)
+    ]
+    flat = [
+        np.std([m.dim for m in TablePrior().build(np.random.default_rng(seed)).mechanisms.values()])
+        for seed in range(60)
+    ]
+    assert np.mean(spreads) < np.mean(flat)
