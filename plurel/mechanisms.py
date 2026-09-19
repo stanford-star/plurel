@@ -152,12 +152,12 @@ class TransformedProductEffect(Effect):
 @dataclass(frozen=True)
 class Noise:
     distribution: Distribution = field(default_factory=Normal)
-    scale_effects: tuple[LinearEffect, ...] = ()
+    scale_effects: tuple[Effect, ...] = ()
     clip: float = 3.0
 
     @property
     def parents(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(effect.parent for effect in self.scale_effects))
+        return tuple(dict.fromkeys(p for effect in self.scale_effects for p in effect.parents))
 
     def sample(self, n: int, rng: np.random.Generator, dim: int) -> np.ndarray:
         return np.stack([self.distribution.sample(n, rng) for _ in range(dim)], axis=1)
