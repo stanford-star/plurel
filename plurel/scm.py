@@ -15,7 +15,10 @@ def intervention(value: float | np.ndarray, n: int, dim: int) -> np.ndarray:
     value = np.asarray(value, dtype=float)
     if value.shape == (n,):
         value = value[:, None]
-    return np.array(np.broadcast_to(value, (n, dim)))
+    try:
+        return np.array(np.broadcast_to(value, (n, dim)))
+    except ValueError as error:
+        raise ValueError(f"intervention of shape {value.shape} does not fit {(n, dim)}") from error
 
 
 def checked(name: str, mechanism: Mechanism, latent: np.ndarray, n: int) -> np.ndarray:

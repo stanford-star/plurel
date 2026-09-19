@@ -116,6 +116,12 @@ def test_sampling_is_deterministic_and_interventions_keep_common_random_numbers(
     residual = latents["orders"]["amount"] - 2.0 * latents["orders"]["value"]
     residual_forced = latents_forced["orders"]["amount"] - 2.0 * latents_forced["orders"]["value"]
     np.testing.assert_allclose(residual, residual_forced)
+    ported = {"orders": {"value": 1.0}, "customers": {"segment": np.eye(3)[2]}}
+    _, latents_ported = schema.sample_with_latents(ROWS, seed=0, interventions=ported)
+    assert (latents_ported["orders"]["value"] == 1.0).all()
+    linked = frames["orders"]["customer_id"].notna().to_numpy()
+    expected = np.tile(EMBEDDING[2], (linked.sum(), 1))
+    np.testing.assert_array_equal(latents_ported["orders"]["embedding"][linked], expected)
     assert orders().sample(50, seed=0).shape == (50, 2)
 
 
@@ -192,6 +198,10 @@ def test_schema_validation():
         schema.sample({"customers": 10, "orders": 10})
     with pytest.raises(ValueError):
         schema.sample(ROWS, interventions={"shops": {"x": 1.0}})
+    with pytest.raises(ValueError):
+        schema.sample(ROWS, interventions={"customers": {"nothing": 1.0}})
+    with pytest.raises(ValueError, match="does not fit"):
+        schema.sample(ROWS, interventions={"customers": {"segment": np.ones(2)}})
     empty = schema.sample({"customers": 5, "orders": 0, "employees": 0}, seed=0)
     assert len(empty["orders"]) == 0 and list(empty["orders"]) == ["amount", "value", "customer_id"]
     assert not empty["customers"]["n_orders"].any()

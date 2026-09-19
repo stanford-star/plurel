@@ -208,6 +208,9 @@ class Schema:
         interventions = dict(interventions or {})
         if unknown := set(interventions) - set(self.tables):
             raise ValueError(f"interventions on unknown tables {sorted(unknown)}")
+        for table, nodes in interventions.items():
+            if unknown := set(nodes) - set(self.tables[table].mechanisms):
+                raise ValueError(f"interventions on unknown nodes {sorted(unknown)} of {table!r}")
         linking, noise, observation = generator(seed).spawn(3)
         links = self.links(rows, linking)
         latents = self.propagate(rows, links, noise, interventions)
