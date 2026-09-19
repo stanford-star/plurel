@@ -121,12 +121,8 @@ class Mixture:
 
     def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         assignment = rng.choice(len(self.components), n, p=self.weights)
-        out = np.empty(n)
-        for index, component in enumerate(self.components):
-            mask = assignment == index
-            if mask.any():
-                out[mask] = component.sample(int(mask.sum()), rng)
-        return out
+        draws = np.stack([component.sample(n, rng) for component in self.components])
+        return draws[assignment, np.arange(n)]
 
 
 @dataclass(frozen=True)
@@ -208,14 +204,13 @@ class Calendar:
         span = (self.end - self.start).total_seconds()
         candidates = n * self.oversampling
         offsets = rng.uniform(0.0, span, candidates)
-        stamps = pd.DatetimeIndex(self.start + pd.to_timedelta(offsets, unit="s"))
+        stamps = self.start + pd.to_timedelta(offsets, unit="s")
         weights = (
             np.asarray(self.weekday_weights)[stamps.weekday]
             * np.asarray(self.hour_weights)[stamps.hour]
         )
         chosen = rng.choice(candidates, n, p=weights / weights.sum())
-        epoch = self.start.timestamp() + offsets[chosen]
-        return np.sort(epoch)
+        return np.sort(self.start.timestamp() + offsets[chosen])
 
 
 DISTRIBUTIONS: dict[str, type] = {
