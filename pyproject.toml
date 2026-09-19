@@ -33,7 +33,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "networkx",
     "numpy",
     "pandas",
     "relbench>=3.0.0",
