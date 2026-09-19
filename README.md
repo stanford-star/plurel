@@ -39,9 +39,6 @@ pip install plurel
 
 Requires Python 3.12+.
 
-> [!NOTE]
-> Development moves on `main` ahead of tagged releases. If you need features or fixes that have not yet been published to PyPI, install from source using the setup below.
-
 ## Setup
 
 For development and testing, set up the full environment with [pixi](https://pixi.sh/latest/installation/).
