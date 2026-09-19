@@ -11,6 +11,7 @@ from plurel.layouts import (
     RandomTree,
     ReverseRandomTree,
     WattsStrogatz,
+    _tree,
 )
 
 EXAMPLES = {
@@ -99,3 +100,23 @@ def test_density_hubs_rings_and_layers():
     ):
         with pytest.raises(ValueError):
             layout(**kwargs)
+
+
+class Sequence:
+    def __init__(self, values):
+        self.values = values
+
+    def integers(self, low, high, size):
+        return np.asarray(self.values, dtype=int)
+
+
+def test_prufer_decoding_is_exact_and_uniform():
+    assert {frozenset(e) for e in _tree(5, Sequence([3, 3, 1]))} == {
+        frozenset(e) for e in ((0, 3), (2, 3), (3, 1), (1, 4))
+    }
+    assert {frozenset(e) for e in _tree(2, Sequence([]))} == {frozenset((0, 1))}
+    trees = {}
+    for seed in range(4000):
+        tree = frozenset(frozenset(e) for e in _tree(4, np.random.default_rng(seed)))
+        trees[tree] = trees.get(tree, 0) + 1
+    assert len(trees) == 16 and max(trees.values()) < 1.5 * min(trees.values())

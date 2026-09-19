@@ -160,14 +160,15 @@ class WattsStrogatz:
 
     def sample(self, n: int, rng: np.random.Generator) -> Parents:
         _check_size(n)
-        k = min(self.k, max(n - 1, 0))
-        edges = {(node, (node + step) % n) for node in range(n) for step in range(1, k // 2 + 1)}
-        edges = {(min(u, v), max(u, v)) for u, v in edges if u != v}
-        for u, v in sorted(edges):
-            if rng.random() < self.rewire:
+        k = min(self.k, n)
+        lattice = [(u, (u + step) % n) for step in range(1, k // 2 + 1) for u in range(n)]
+        edges = {(min(u, v), max(u, v)) for u, v in lattice if u != v}
+        for u, v in lattice:
+            key = (min(u, v), max(u, v))
+            if u != v and key in edges and rng.random() < self.rewire:
                 candidates = [w for w in range(n) if w != u and (min(u, w), max(u, w)) not in edges]
                 if candidates:
-                    edges.remove((u, v))
+                    edges.remove(key)
                     w = int(rng.choice(candidates))
                     edges.add((min(u, w), max(u, w)))
         return _parents(n, _connected(n, sorted(edges), rng))
