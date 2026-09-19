@@ -24,6 +24,8 @@ def intervention(value: float | np.ndarray, n: int, dim: int) -> np.ndarray:
 def checked(name: str, mechanism: Mechanism, latent: np.ndarray, n: int) -> np.ndarray:
     if latent.shape != (n, mechanism.dim):
         raise ValueError(f"{name!r} produced {latent.shape}, declared {(n, mechanism.dim)}")
+    if not np.isfinite(latent).all():
+        raise ValueError(f"{name!r} produced non-finite values")
     return latent
 
 

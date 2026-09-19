@@ -7,6 +7,7 @@ from plurel import (
     Column,
     Combine,
     LinearEffect,
+    LogNormal,
     MatrixEffect,
     Normal,
     Root,
@@ -43,8 +44,8 @@ def customers():
 def orders():
     return SCM(
         {
-            "segment": Port("customers", "segment", dim=3),
-            "value": Port("customers", "value"),
+            "segment": Port("customers", "segment", dim=3, fill=0.0),
+            "value": Port("customers", "value", fill=0.0),
             "embedding": Combine((MatrixEffect("segment", EMBEDDING),), noise=None),
             "amount": Combine(
                 (LinearEffect("value", 2.0), MatrixEffect("embedding", np.ones((3, 1)))),
@@ -59,7 +60,7 @@ def employees():
     return SCM(
         {
             "level": Root(),
-            "manager_level": Port("employees", "level", via="manager_id"),
+            "manager_level": Port("employees", "level", via="manager_id", fill=0.0),
             "pay": Combine(
                 (LinearEffect("level"), LinearEffect("manager_level", 0.5)), noise=Normal(std=0.1)
             ),
@@ -138,16 +139,32 @@ def test_sampling_is_deterministic_and_interventions_keep_common_random_numbers(
 def test_aggregates_handle_empty_groups():
     values = np.array([[1.0, 10.0], [3.0, 30.0], [5.0, 50.0]])
     index = np.array([0, 0, 2])
+    nan = np.nan
     expected = {
         "count": [[2.0], [0.0], [1.0]],
         "sum": [[4.0, 40.0], [0.0, 0.0], [5.0, 50.0]],
-        "mean": [[2.0, 20.0], [-1.0, -1.0], [5.0, 50.0]],
-        "max": [[3.0, 30.0], [-1.0, -1.0], [5.0, 50.0]],
-        "min": [[1.0, 10.0], [-1.0, -1.0], [5.0, 50.0]],
+        "mean": [[2.0, 20.0], [nan, nan], [5.0, 50.0]],
+        "max": [[3.0, 30.0], [nan, nan], [5.0, 50.0]],
+        "min": [[1.0, 10.0], [nan, nan], [5.0, 50.0]],
     }
     assert set(expected) == set(AGGREGATES)
     for name, aggregate in AGGREGATES.items():
-        np.testing.assert_array_equal(aggregate(values, index, 3, -1.0), expected[name])
+        np.testing.assert_array_equal(aggregate(values, index, 3), expected[name])
+    port = Port("orders", "amount", aggregate="mean")
+    with pytest.raises(ValueError, match="fill"):
+        port.resolve(values, index, 3)
+    np.testing.assert_array_equal(
+        Port("orders", "amount", aggregate="mean", fill=-1.0).resolve(values, index, 3)[1],
+        [-1.0, -1.0],
+    )
+    np.testing.assert_array_equal(
+        Port("orders", "amount", aggregate="sum").resolve(values, index, 3), expected["sum"]
+    )
+    with pytest.raises(ValueError, match="fill"):
+        Port("customers", "value").resolve(values[:, :1], np.array([0, -1]), 2)
+    np.testing.assert_array_equal(
+        Port("customers", "value").resolve(values[:, :1], np.array([2, 0]), 2), [[5.0], [1.0]]
+    )
 
 
 def test_schema_validation():
@@ -296,3 +313,70 @@ def test_ports_read_through_the_key_they_name():
         "t"
     ].shape == (5, 1)
     assert Schema({"t": SCM({}, {})}).sample({"t": 4}, seed=0)["t"].shape == (4, 0)
+
+
+class BadLink:
+    def __init__(self, index):
+        self.index = index
+
+    def sample(self, n_child, n_parent, rng):
+        return self.index
+
+
+def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
+    customers = SCM({"segment": Softmax(biases=(0.0, 0.0, 0.0)), "value": Root()}, {})
+    orders = SCM(
+        {
+            "segment": Port("customers", "segment", dim=3, fill=0.0),
+            "value": Port("customers", "value", fill=np.nan),
+        },
+        {
+            "segment": Column("segment", "categorical", categories=("a", "b", "c")),
+            "amount": Column("value", marginal=LogNormal()),
+        },
+    )
+    fkeys = (FK("orders", "customer_id", "customers", nullable=0.3),)
+    schema = Schema({"customers": customers, "orders": orders}, fkeys)
+    frames = schema.sample({"customers": 20, "orders": 1000}, seed=0)
+    orphan = frames["orders"]["customer_id"].isna()
+    assert 0.2 < orphan.mean() < 0.4
+    pd.testing.assert_series_equal(frames["orders"]["segment"].isna(), orphan, check_names=False)
+    pd.testing.assert_series_equal(frames["orders"]["amount"].isna(), orphan, check_names=False)
+    assert (frames["orders"]["amount"].dropna() > 0).all()
+    with pytest.raises(ValueError, match="integers"):
+        schema.sample({"customers": 20.0, "orders": 10}, seed=0)
+    unfilled = SCM({"value": Port("customers", "value")}, {"value": Column("value")})
+    with pytest.raises(ValueError, match="fill"):
+        Schema({"customers": customers, "orders": unfilled}, fkeys).sample(
+            {"customers": 20, "orders": 10}, seed=0
+        )
+    assert (
+        Schema(
+            {"customers": customers, "orders": unfilled},
+            (FK("orders", "customer_id", "customers"),),
+        )
+        .sample({"customers": 20, "orders": 10}, seed=0)["orders"]
+        .notna()
+        .all()
+        .all()
+    )
+    downstream = SCM(
+        {
+            "value": Port("customers", "value", fill=np.nan),
+            "double": Combine((LinearEffect("value", 2.0),)),
+        },
+        {},
+    )
+    with pytest.raises(ValueError, match="non-finite"):
+        Schema({"customers": customers, "orders": downstream}, fkeys).sample(
+            {"customers": 20, "orders": 10}, seed=0
+        )
+    with pytest.raises(ValueError):
+        FK("orders", "customer_id", "customers", TreeLink())
+    for bad in (np.zeros(10), np.zeros(9, dtype=int), np.full(10, 20), np.full(10, -2)):
+        broken = Schema(
+            {"customers": customers, "orders": orders},
+            (FK("orders", "customer_id", "customers", BadLink(bad)),),
+        )
+        with pytest.raises(ValueError, match="link"):
+            broken.sample({"customers": 20, "orders": 10}, seed=0)

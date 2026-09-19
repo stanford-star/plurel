@@ -1,13 +1,14 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from operator import index as as_index
 
 import numpy as np
 import pandas as pd
 
-from plurel.links import Link, RandomLink
+from plurel.links import Link, RandomLink, TreeLink
 from plurel.mechanisms import Mechanism
 from plurel.random import Seed, generator
-from plurel.scm import SCM, Interventions, checked, generations
+from plurel.scm import SCM, Interventions, generations
 
 Node = tuple[str, str]
 Links = dict[Node, np.ndarray]
@@ -19,29 +20,30 @@ def _sum(values: np.ndarray, index: np.ndarray, n: int) -> np.ndarray:
     return out
 
 
-def _mean(values: np.ndarray, index: np.ndarray, n: int, fill: float) -> np.ndarray:
+def _mean(values: np.ndarray, index: np.ndarray, n: int) -> np.ndarray:
     count = np.bincount(index, minlength=n)[:, None]
     total = _sum(values, index, n)
-    return np.divide(total, count, out=np.full_like(total, fill), where=count > 0)
+    return np.divide(total, count, out=np.full_like(total, np.nan), where=count > 0)
 
 
 def _extreme(op: np.ufunc, start: float) -> Callable[..., np.ndarray]:
-    def aggregate(values: np.ndarray, index: np.ndarray, n: int, fill: float) -> np.ndarray:
+    def aggregate(values: np.ndarray, index: np.ndarray, n: int) -> np.ndarray:
         out = np.full((n, values.shape[1]), start)
         op.at(out, index, values)
-        out[np.bincount(index, minlength=n) == 0] = fill
+        out[np.bincount(index, minlength=n) == 0] = np.nan
         return out
 
     return aggregate
 
 
 AGGREGATES: dict[str, Callable[..., np.ndarray]] = {
-    "count": lambda values, index, n, fill: np.bincount(index, minlength=n)[:, None].astype(float),
-    "sum": lambda values, index, n, fill: _sum(values, index, n),
+    "count": lambda values, index, n: np.bincount(index, minlength=n)[:, None].astype(float),
+    "sum": lambda values, index, n: _sum(values, index, n),
     "mean": _mean,
     "max": _extreme(np.maximum, -np.inf),
     "min": _extreme(np.minimum, np.inf),
 }
+COMPLETE = ("count", "sum")
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,8 @@ class FK:
     def __post_init__(self) -> None:
         if not 0.0 <= self.nullable < 1.0:
             raise ValueError("nullable must be in [0, 1)")
+        if isinstance(self.link, TreeLink) and self.table != self.parent:
+            raise ValueError("a tree link needs a self-referential foreign key")
 
 
 @dataclass(frozen=True)
@@ -63,7 +67,7 @@ class Port(Mechanism):
     node: str
     via: str | None = None
     aggregate: str | None = None
-    fill: float = 0.0
+    fill: float | None = None
     dim: int = 1
 
     def __post_init__(self) -> None:
@@ -78,9 +82,18 @@ class Port(Mechanism):
     def resolve(self, source: np.ndarray, index: np.ndarray, n: int) -> np.ndarray:
         linked = index >= 0
         if self.aggregate is not None:
-            return AGGREGATES[self.aggregate](source[linked], index[linked], n, self.fill)
-        out = np.full((n, self.dim), self.fill)
-        out[linked] = source[index[linked]]
+            out = AGGREGATES[self.aggregate](source[linked], index[linked], n)
+            empty = np.bincount(index[linked], minlength=n) == 0
+        else:
+            out = np.empty((n, self.dim))
+            out[linked] = source[index[linked]]
+            empty = ~linked
+        if empty.any() and self.aggregate not in COMPLETE:
+            if self.fill is None:
+                raise ValueError(
+                    f"port {self.table}.{self.node} met rows without a match; set fill"
+                )
+            out[empty] = self.fill
         return out
 
 
@@ -133,7 +146,12 @@ class Schema:
     def links(self, rows: Mapping[str, int], rng: np.random.Generator) -> Links:
         links = {}
         for fk, stream in zip(self.fkeys, rng.spawn(len(self.fkeys))):
-            index = fk.link.sample(rows[fk.table], rows[fk.parent], stream)
+            drawn = np.asarray(fk.link.sample(rows[fk.table], rows[fk.parent], stream))
+            if drawn.shape != (rows[fk.table],) or not np.issubdtype(drawn.dtype, np.integer):
+                raise ValueError(f"link {fk.column!r} must return one integer per child row")
+            if len(drawn) and (drawn.min() < -1 or drawn.max() >= rows[fk.parent]):
+                raise ValueError(f"link {fk.column!r} points outside the parent table")
+            index = drawn.astype(np.int64)
             if fk.nullable:
                 index[stream.random(len(index)) < fk.nullable] = -1
             links[fk.table, fk.column] = index
@@ -153,7 +171,12 @@ class Schema:
             port, fk = self.ports[node]
             source = latents[port.table][port.node]
             index = links[fk.table, fk.column]
-            return checked(name, port, port.resolve(source, index, rows[table]), rows[table])
+            latent = port.resolve(source, index, rows[table])
+            if latent.shape != (rows[table], port.dim):
+                raise ValueError(
+                    f"{name!r} produced {latent.shape}, declared {(rows[table], port.dim)}"
+                )
+            return latent
         scm = self.tables[table]
         return scm.evaluate(name, rows[table], latents[table], stream, interventions.get(table, {}))
 
@@ -206,6 +229,10 @@ class Schema:
         seed: Seed = None,
         interventions: Mapping[str, Interventions] | None = None,
     ) -> tuple[dict[str, pd.DataFrame], dict[str, dict[str, np.ndarray]]]:
+        try:
+            rows = {table: as_index(n) for table, n in rows.items()}
+        except TypeError as error:
+            raise ValueError("row counts must be integers") from error
         if set(rows) != set(self.tables) or min(rows.values(), default=0) < 0:
             raise ValueError("rows must give a non-negative count for every table")
         interventions = dict(interventions or {})

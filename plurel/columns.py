@@ -14,8 +14,11 @@ DEFAULT_CALENDAR = Calendar(pd.Timestamp("1990-01-01"), pd.Timestamp("2025-01-01
 
 
 def rank_map(latent: np.ndarray, marginal: Distribution, rng: np.random.Generator) -> np.ndarray:
-    reference = np.sort(marginal.sample(len(latent), rng))
-    return reference[np.searchsorted(np.sort(latent), latent)]
+    known = ~np.isnan(latent)
+    reference = np.sort(marginal.sample(int(known.sum()), rng))
+    out = np.full(len(latent), np.nan)
+    out[known] = reference[np.searchsorted(np.sort(latent[known]), latent[known])]
+    return out
 
 
 @dataclass(frozen=True)
@@ -88,11 +91,14 @@ class Column:
         if latent.ndim == 2 and latent.shape[1] > 1:
             if latent.shape[1] != len(self.categories):
                 raise ValueError(f"one-hot node {self.node!r} must have one column per category")
-            return latent.argmax(1)
+            valid = (latent != 0).any(1) & ~np.isnan(latent).any(1)
+            return np.where(valid, latent.argmax(1), -1)
         flat = latent.reshape(len(latent))
         if isinstance(self.binning, tuple):
-            return np.digitize(flat, self.binning)
-        if self.binning == "empirical":
+            codes = np.digitize(flat, self.binning)
+        elif self.binning == "empirical":
             cuts = np.cumsum(self.category_probabilities)[:-1]
-            return np.digitize(flat, np.quantile(flat, cuts))
-        return bin_levels(flat, self.category_probabilities)
+            codes = np.digitize(flat, np.nanquantile(flat, cuts))
+        else:
+            codes = bin_levels(flat, self.category_probabilities)
+        return np.where(np.isnan(flat), -1, codes)

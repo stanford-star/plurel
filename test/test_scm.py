@@ -70,6 +70,9 @@ def test_simulate_rejects_a_node_that_breaks_its_declared_width():
     scm = SCM({"h": Root(dim=3), "y": Combine((LinearEffect("h"),))}, {})
     with pytest.raises(ValueError, match="declared"):
         scm.simulate(N, seed=0)
+    overflow = SCM({"x": Root(), "y": Combine((LinearEffect("x", np.inf),))}, {})
+    with pytest.raises(ValueError, match="non-finite"):
+        overflow.simulate(N, seed=0)
 
 
 def test_sample_observes_columns_from_one_draw(scm):
