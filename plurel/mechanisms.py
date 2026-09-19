@@ -88,7 +88,7 @@ class Effect:
 
 
 @dataclass(frozen=True)
-class Linear(Effect):
+class LinearEffect(Effect):
     parent: str
     weight: float
     transform: Function = "linear"
@@ -102,7 +102,7 @@ class Linear(Effect):
 
 
 @dataclass(frozen=True)
-class Lookup(Effect):
+class LookupEffect(Effect):
     parent: str
     values: tuple[float, ...]
     probabilities: tuple[float, ...] | None = None
@@ -122,7 +122,7 @@ class Lookup(Effect):
 
 
 @dataclass(frozen=True)
-class Product(Effect):
+class ProductEffect(Effect):
     parents: tuple[str, str]
     weight: float
 
@@ -136,7 +136,7 @@ class Product(Effect):
 
 
 @dataclass(frozen=True)
-class LookupScale(Effect):
+class LookupScaleEffect(Effect):
     selector: str
     scaled: str
     scales: tuple[float, ...]
@@ -158,7 +158,7 @@ class LookupScale(Effect):
 
 
 @dataclass(frozen=True)
-class TransformedProduct(Effect):
+class TransformedProductEffect(Effect):
     parents: tuple[str, ...]
     weight: float
     transform: Function = "linear"
@@ -176,7 +176,7 @@ class TransformedProduct(Effect):
 class Noise:
     std: float = 1.0
     distribution: Distribution = field(default_factory=Normal)
-    scale_effects: tuple[Linear, ...] = ()
+    scale_effects: tuple[LinearEffect, ...] = ()
     clip: float = 3.0
 
     def __post_init__(self) -> None:
