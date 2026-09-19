@@ -6,6 +6,8 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 import pandas as pd
 
+BUSINESS_HOURS = (0.05,) * 7 + (0.5, 0.5) + (1.0,) * 9 + (0.5,) * 4 + (0.1,) * 2
+
 
 @runtime_checkable
 class Distribution(Protocol):
@@ -188,9 +190,6 @@ class TimeSeries:
     def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         t = np.linspace(0.0, 1.0, n)
         return self.trend.values(t) + self.cycle.values(t) + self.noise.sample(n, rng)
-
-
-BUSINESS_HOURS = (0.05,) * 7 + (0.5, 0.5) + (1.0,) * 9 + (0.5,) * 4 + (0.1,) * 2
 
 
 @dataclass(frozen=True)
