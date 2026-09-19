@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 
+from plurel.io import create_database
+from plurel.links import TreeLink
 from plurel.mechanisms import EFFECTS, Root, Softmax
 from plurel.prior import (
     FAMILIES,
@@ -9,6 +11,7 @@ from plurel.prior import (
     LogIntegersRange,
     LogRange,
     Range,
+    SchemaPrior,
     TablePrior,
 )
 
@@ -71,6 +74,8 @@ def test_table_prior_knobs_are_respected():
         assert all(c.kind != "categorical" for c in scm.columns.values())
         assert all(c.missing == 0.0 for c in scm.columns.values())
         assert not scm.sample(50, seed=seed).isna().any().any()
+    with pytest.raises(ValueError, match="change width"):
+        TablePrior(effect_families=Choices(("linear",)))
     single = TablePrior(node_count=IntegersRange(1, 1), column_count=IntegersRange(1, 1))
     scm = single.realize(0)
     assert len(scm.mechanisms) <= 2 and isinstance(scm.mechanisms["n0"], Root | Softmax)
@@ -101,3 +106,77 @@ def test_warping_gives_each_realization_its_own_style():
         for seed in range(60)
     ]
     assert np.var(meta) > 1.5 * np.var(flat)
+
+
+SMALL = dict(entity_row_count=IntegersRange(60, 120), activity_row_count=IntegersRange(300, 600))
+
+
+def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
+    prior = SchemaPrior(**SMALL)
+    seen = set()
+    for seed in range(25):
+        schema = prior.realize(seed)
+        assert prior.realize(seed).order == schema.order
+        rows = prior.rows(schema, seed)
+        referenced = {fk.parent for fk in schema.fkeys if fk.parent != fk.table}
+        for table, count in rows.items():
+            low, high = (60, 120) if table in referenced else (300, 600)
+            assert low <= count <= high
+        frames, latents = schema.sample_with_latents(rows, seed=seed)
+        assert all(len(frames[t]) == n for t, n in rows.items())
+        for (table, name), (port, fk) in schema.ports.items():
+            seen.add("aggregate" if port.aggregate else "gather")
+            if isinstance(fk.link, TreeLink):
+                seen.add("self")
+            if name.endswith("_time"):
+                seen.add("follow")
+                assert port.fill is None and fk.nullable == 0.0
+                child_time = frames[fk.table][schema.tables[fk.table].time_column]
+                parent_time = frames[fk.parent][schema.tables[fk.parent].time_column]
+                keys = frames[fk.table][fk.column].to_numpy(dtype=int)
+                assert (child_time.to_numpy() >= parent_time.to_numpy()[keys]).all()
+            if port.aggregate in ("mean", "max", "min"):
+                keys = frames[fk.table][fk.column].dropna().astype(int)
+                childless = ~np.isin(np.arange(rows[table]), keys)
+                assert frames[table][name].isna().to_numpy().tolist() == childless.tolist()
+        create_database(schema, frames)
+    assert seen == {"gather", "aggregate", "self", "follow"}
+
+
+def test_schema_prior_knobs_switch_cross_table_structure_off():
+    quiet = SchemaPrior(
+        **SMALL,
+        gather_count=IntegersRange(0, 0),
+        aggregate_count=IntegersRange(0, 0),
+        self_reference_probability=0.0,
+        time_follow_probability=0.0,
+        fk_nullable_share=0.0,
+    )
+    for seed in range(8):
+        schema = quiet.realize(seed)
+        assert not schema.ports and all(fk.nullable == 0.0 for fk in schema.fkeys)
+        assert all(fk.table != fk.parent for fk in schema.fkeys)
+        frames = schema.sample(quiet.rows(schema, seed), seed=seed)
+        assert all(frames[fk.table][fk.column].notna().all() for fk in schema.fkeys)
+
+
+def test_schema_prior_edge_cases():
+    single = SchemaPrior(**SMALL, table_count=IntegersRange(1, 1), self_reference_probability=1.0)
+    for seed in range(6):
+        schema = single.realize(seed)
+        assert len(schema.tables) == 1 and all(fk.table == fk.parent for fk in schema.fkeys)
+        schema.sample(single.rows(schema, seed), seed=seed)
+    tiny = SchemaPrior(
+        **SMALL,
+        table_count=IntegersRange(1, 1),
+        table_prior=TablePrior(node_count=IntegersRange(1, 2), time_probability=0.0),
+        self_reference_probability=1.0,
+        gather_count=IntegersRange(3, 3),
+    )
+    for seed in range(12):
+        schema = tiny.realize(seed)
+        for (table, name), (port, fk) in schema.ports.items():
+            assert name != port.node and fk.table == fk.parent
+        schema.sample(tiny.rows(schema, seed), seed=seed)
+    with pytest.raises(ValueError, match="clusters"):
+        SchemaPrior(entity_row_count=IntegersRange(5, 10), activity_row_count=IntegersRange(5, 10))

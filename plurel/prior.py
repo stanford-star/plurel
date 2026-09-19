@@ -3,8 +3,25 @@ from dataclasses import dataclass, fields, replace
 import numpy as np
 
 from plurel.columns import DEFAULT_CALENDAR, Column
-from plurel.distributions import Calendar, Exponential, LogNormal, Mixture, Normal, Pareto, Uniform
-from plurel.layouts import BarabasiAlbert, Layered, RandomCauchy
+from plurel.distributions import (
+    Calendar,
+    Exponential,
+    LogNormal,
+    Mixture,
+    Normal,
+    Pareto,
+    Uniform,
+)
+from plurel.layouts import (
+    BarabasiAlbert,
+    ErdosRenyi,
+    Layered,
+    RandomCauchy,
+    RandomTree,
+    ReverseRandomTree,
+    WattsStrogatz,
+)
+from plurel.links import HSBMLink, Link, RandomLink, TreeLink
 from plurel.mechanisms import (
     TRANSFORM_NAMES,
     Combine,
@@ -20,6 +37,7 @@ from plurel.mechanisms import (
     TreeEffect,
 )
 from plurel.random import Seed, generator
+from plurel.schema import FK, Port, Schema
 from plurel.scm import SCM
 
 ACTIVATIONS = tuple(name for name in TRANSFORM_NAMES if name != "identity")
@@ -124,7 +142,7 @@ class Range:
         return self.low + (self.high - self.low) * self.unit(rng)
 
     def warp(self, rng: np.random.Generator) -> "Range":
-        location, concentration = META_LOCATION.draw(rng), META_CONCENTRATION.draw(rng)
+        location, concentration = _open_unit(rng), META_CONCENTRATION.draw(rng)
         shape = (location * concentration, (1.0 - location) * concentration)
         return replace(self, shape=shape)
 
@@ -153,8 +171,11 @@ class LogIntegersRange(LogRange):
         return min(int(np.exp(np.log(self.low) + span * self.unit(rng))), int(self.high))
 
 
-META_LOCATION = Range(0.0, 1.0)
 META_CONCENTRATION = LogRange(0.1, 10_000.0)
+
+
+def _open_unit(rng: np.random.Generator) -> float:
+    return float(rng.integers(1, 2**53) / 2**53)
 
 
 @dataclass(frozen=True)
@@ -214,6 +235,10 @@ class TablePrior:
     column_missing_share: float = 0.3
     time_probability: float = 0.5
     time_calendar: Calendar = DEFAULT_CALENDAR
+
+    def __post_init__(self) -> None:
+        if set(self.effect_families.values) <= set(PRESERVING):
+            raise ValueError("effect_families needs a family that can change width")
 
     def warp(self, rng: np.random.Generator) -> "TablePrior":
         knobs = {
@@ -295,3 +320,200 @@ class TablePrior:
                 missing=missing,
             )
         return Column(node, dims=slot, marginal=self.column_marginals.draw(rng), missing=missing)
+
+
+def _consume(mechanism: Mechanism, effect: Effect) -> Mechanism:
+    if isinstance(mechanism, Combine):
+        return replace(mechanism, effects=mechanism.effects + (effect,))
+    return Combine((effect,), noise=mechanism.noise)
+
+
+@dataclass(frozen=True)
+class SchemaPrior:
+    """Random multi-table schema prior.
+
+    A table's parents in the table graph are the tables it references. Each table is a fresh
+    warp of `table_prior`. Gathered parent nodes become extra effects on existing child nodes;
+    aggregated child nodes become new observed nodes of the parent, so the node graph across
+    tables stays acyclic by construction.
+
+    Attributes:
+        table_count: Tables in the database.
+        table_layouts: DAG generator for the table graph.
+        table_prior: Prior of every table's SCM.
+        entity_row_count: Rows of a table that other tables reference.
+        activity_row_count: Rows of a table nothing references.
+        link_level_count: Cluster levels of an HSBM link.
+        link_cluster_count: Clusters per level on each side of an HSBM link.
+        link_within: Affinity of matching clusters in an HSBM link.
+        link_between: Affinity of mismatched clusters in an HSBM link.
+        link_cluster_weights: Relative cluster sizes of an HSBM link; None for equal sizes.
+        link_popularity: Per-parent popularity of an HSBM link; None for uniform.
+        link_inactive_share: Share of parents an HSBM link leaves without children.
+        link_random_share: Probability that a key uses a uniform link instead of an HSBM link.
+        fk_nullable_share: Probability that a foreign key has null values.
+        fk_nullable_rate: Null rate of a nullable foreign key.
+        self_reference_probability: Probability that a table gets a self-referential tree key.
+        self_reference_root_share: Share of roots in a self-referential tree.
+        gather_count: Parent nodes gathered into the child per foreign key.
+        aggregate_count: Child nodes aggregated into the parent per foreign key.
+        aggregates: Aggregation of an aggregate port.
+        time_follow_probability: Probability that a child's time follows its parent's time.
+        time_delay: Mean delay in seconds of a child event after its parent event.
+    """
+
+    table_count: Range = LogIntegersRange(2, 8)
+    table_layouts: Choices = Choices(
+        (
+            BarabasiAlbert(2),
+            ReverseRandomTree(),
+            RandomTree(),
+            WattsStrogatz(2),
+            Layered(3, 0.1),
+            ErdosRenyi(0.4),
+        )
+    )
+    table_prior: TablePrior = TablePrior()
+    entity_row_count: Range = LogIntegersRange(500, 1000)
+    activity_row_count: Range = LogIntegersRange(10_000, 30_000)
+    link_level_count: Range = IntegersRange(1, 3)
+    link_cluster_count: Range = IntegersRange(1, 3)
+    link_within: Choices = Choices((0.9, Uniform(0.4, 0.95)))
+    link_between: Choices = Choices((Uniform(0.001, 0.002), Pareto(1.0, 0.01)))
+    link_cluster_weights: Choices = Choices((None, Pareto(1.5)))
+    link_popularity: Choices = Choices((None, Pareto(2.5)))
+    link_inactive_share: Range = Range(0.0, 0.7)
+    link_random_share: float = 0.2
+    fk_nullable_share: float = 0.3
+    fk_nullable_rate: Range = Range(0.01, 0.3)
+    self_reference_probability: float = 0.3
+    self_reference_root_share: Range = Range(0.05, 0.5)
+    gather_count: Range = IntegersRange(0, 3)
+    aggregate_count: Range = IntegersRange(0, 2)
+    aggregates: Choices = Choices(("count", "sum", "mean", "max", "min"))
+    time_follow_probability: float = 0.7
+    time_delay: Range = LogRange(3600.0, 90 * 24 * 3600.0)
+
+    def __post_init__(self) -> None:
+        clusters = self.link_cluster_count.high**self.link_level_count.high
+        if min(self.entity_row_count.low, self.activity_row_count.low) < clusters:
+            raise ValueError(f"row counts must allow {clusters} link clusters")
+
+    def realize(self, seed: Seed = None) -> Schema:
+        rng, _ = generator(seed).spawn(2)
+        n = self.table_count.draw(rng)
+        parents = self.table_layouts.draw(rng).sample(n, rng)
+        priors = [self.table_prior.warp(rng) for _ in range(n)]
+        tables = {f"t{i}": priors[i].build(rng) for i in range(n)}
+        fkeys, following = [], set()
+        for i, references in enumerate(parents):
+            for p in references:
+                fk = self.fkey(f"t{i}", f"t{p}", rng)
+                fkeys.append(fk)
+                self.gather(tables, fk, priors[i], rng)
+                self.aggregate(tables, fk, rng)
+                if not fk.nullable and fk.table not in following and self.follow(tables, fk, rng):
+                    following.add(fk.table)
+        for i in range(n):
+            if rng.random() < self.self_reference_probability:
+                fk = FK(
+                    f"t{i}",
+                    "parent_id",
+                    f"t{i}",
+                    TreeLink(self.self_reference_root_share.draw(rng)),
+                )
+                fkeys.append(fk)
+                self.gather(tables, fk, priors[i], rng)
+        return Schema(tables, tuple(fkeys))
+
+    def rows(self, schema: Schema, seed: Seed = None) -> dict[str, int]:
+        _, rng = generator(seed).spawn(2)
+        referenced = {fk.parent for fk in schema.fkeys if fk.parent != fk.table}
+        return {
+            table: (self.entity_row_count if table in referenced else self.activity_row_count).draw(
+                rng
+            )
+            for table in schema.tables
+        }
+
+    def link(self, rng: np.random.Generator) -> Link:
+        if rng.random() < self.link_random_share:
+            return RandomLink()
+        levels = self.link_level_count.draw(rng)
+        return HSBMLink(
+            tuple(self.link_cluster_count.draw(rng) for _ in range(levels)),
+            tuple(self.link_cluster_count.draw(rng) for _ in range(levels)),
+            within=self.link_within.draw(rng),
+            between=self.link_between.draw(rng),
+            cluster_weights=self.link_cluster_weights.draw(rng),
+            popularity=self.link_popularity.draw(rng),
+            inactive=self.link_inactive_share.draw(rng),
+        )
+
+    def fkey(self, child: str, parent: str, rng: np.random.Generator) -> FK:
+        nullable = self.fk_nullable_rate.draw(rng) if rng.random() < self.fk_nullable_share else 0.0
+        return FK(child, f"{parent}_id", parent, self.link(rng), nullable=nullable)
+
+    def gather(
+        self, tables: dict[str, SCM], fk: FK, prior: TablePrior, rng: np.random.Generator
+    ) -> None:
+        child, parent = tables[fk.table], tables[fk.parent]
+        sources = [
+            name
+            for name, m in parent.mechanisms.items()
+            if not isinstance(m, Port) and name not in parent.timestamp_nodes
+        ]
+        consumers = [
+            name
+            for name, m in child.mechanisms.items()
+            if not isinstance(m, Port) and name not in child.timestamp_nodes
+        ]
+        if fk.table == fk.parent:
+            sources = [name for name in sources if not parent.mechanisms[name].parents]
+            consumers = [name for name in consumers if child.mechanisms[name].parents]
+        mechanisms = dict(child.mechanisms)
+        count = min(self.gather_count.draw(rng), len(sources), len(consumers))
+        for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
+            consumer = str(rng.choice(consumers))
+            port = f"{fk.column}_{source}"
+            mechanisms[port] = Port(
+                fk.parent, source, via=fk.column, fill=0.0, dim=parent.mechanisms[source].dim
+            )
+            target = mechanisms[consumer]
+            block = isinstance(target, Softmax)
+            effect = prior.effect(port, parent.mechanisms[source].dim, target.dim, block, rng)
+            mechanisms[consumer] = _consume(target, effect)
+        tables[fk.table] = SCM(mechanisms, child.columns, time_column=child.time_column)
+
+    def aggregate(self, tables: dict[str, SCM], fk: FK, rng: np.random.Generator) -> None:
+        child, parent = tables[fk.table], tables[fk.parent]
+        sources = [
+            name
+            for name, m in child.mechanisms.items()
+            if m.dim == 1 and not isinstance(m, Port) and name not in child.timestamp_nodes
+        ]
+        mechanisms, columns = dict(parent.mechanisms), dict(parent.columns)
+        count = min(self.aggregate_count.draw(rng), len(sources))
+        for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
+            how = self.aggregates.draw(rng)
+            name = f"{fk.table}_{source}_{how}"
+            fill = None if how in ("count", "sum") else np.nan
+            mechanisms[name] = Port(fk.table, source, via=fk.column, aggregate=how, fill=fill)
+            columns[name] = Column(name)
+        tables[fk.parent] = SCM(mechanisms, columns, time_column=parent.time_column)
+
+    def follow(self, tables: dict[str, SCM], fk: FK, rng: np.random.Generator) -> bool:
+        child, parent = tables[fk.table], tables[fk.parent]
+        if child.time_column is None or parent.time_column is None:
+            return False
+        if rng.random() >= self.time_follow_probability:
+            return False
+        source = parent.columns[parent.time_column].node
+        target = child.columns[child.time_column].node
+        port = f"{fk.column}_{source}"
+        mechanisms = dict(child.mechanisms)
+        mechanisms[port] = Port(fk.parent, source, via=fk.column)
+        delay = Exponential(self.time_delay.draw(rng))
+        mechanisms[target] = Combine((LinearEffect(port),), noise=delay)
+        tables[fk.table] = SCM(mechanisms, child.columns, time_column=child.time_column)
+        return True
