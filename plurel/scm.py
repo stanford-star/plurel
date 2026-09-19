@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from plurel.columns import Column
+from plurel.distributions import Calendar
 from plurel.mechanisms import Mechanism
 from plurel.random import Seed, generator
 
@@ -44,7 +45,13 @@ def generations[T: Hashable](parents: Mapping[T, tuple[T, ...]]) -> tuple[tuple[
 
 
 class SCM:
-    def __init__(self, mechanisms: Mapping[str, Mechanism], columns: Mapping[str, Column]) -> None:
+    def __init__(
+        self,
+        mechanisms: Mapping[str, Mechanism],
+        columns: Mapping[str, Column],
+        pkey: str | None = None,
+        time: str | None = None,
+    ) -> None:
         self.mechanisms = dict(mechanisms)
         for child, mechanism in self.mechanisms.items():
             unknown = set(mechanism.parents) - set(self.mechanisms)
@@ -60,6 +67,14 @@ class SCM:
             )
             if unknown := nodes - set(self.mechanisms):
                 raise ValueError(f"column {name!r} refers to unknown nodes {sorted(unknown)}")
+        if pkey is not None and pkey in self.columns:
+            raise ValueError(f"primary key {pkey!r} collides with a column")
+        if time is not None and not isinstance(
+            self.columns.get(time, Column("")).marginal, Calendar
+        ):
+            raise ValueError(f"time column {time!r} must be a column with a Calendar marginal")
+        self.pkey = pkey
+        self.time = time
 
     def evaluate(
         self,

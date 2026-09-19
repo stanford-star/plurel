@@ -10,33 +10,23 @@ from relbench.manifest import DatasetManifest, TableSpec
 from plurel.schema import Schema
 
 
-def database(
-    schema: Schema,
-    frames: Mapping[str, pd.DataFrame],
-    pkeys: Mapping[str, str],
-    times: Mapping[str, str] | None = None,
-) -> Database:
-    pkeys, times = dict(pkeys), dict(times or {})
+def database(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> Database:
     if set(frames) != set(schema.tables):
         raise ValueError("one frame per table of the schema")
-    if unknown := (set(pkeys) | set(times)) - set(schema.tables):
-        raise ValueError(f"keys or time columns for unknown tables {sorted(unknown)}")
-    if missing := {fk.parent for fk in schema.fkeys} - set(pkeys):
+    if missing := {fk.parent for fk in schema.fkeys if schema.tables[fk.parent].pkey is None}:
         raise ValueError(
             f"tables referenced by a foreign key need a primary key: {sorted(missing)}"
         )
     tables = {}
     for name, frame in frames.items():
-        pkey, time = pkeys.get(name), times.get(name)
-        if pkey in frame:
-            raise ValueError(f"table {name!r} already has a column {pkey!r}")
-        if time is not None and not pd.api.types.is_datetime64_any_dtype(frame.get(time)):
-            raise ValueError(f"time column {time!r} of {name!r} must be a datetime column")
+        scm = schema.tables[name]
+        if scm.pkey in frame:
+            raise ValueError(f"table {name!r} already has a column {scm.pkey!r}")
         df = frame.reset_index(drop=True)
-        if pkey is not None:
-            df = pd.concat([pd.Series(np.arange(len(frame)), name=pkey), df], axis=1)
+        if scm.pkey is not None:
+            df = pd.concat([pd.Series(np.arange(len(frame)), name=scm.pkey), df], axis=1)
         fkeys = {fk.column: fk.parent for fk in schema.fkeys if fk.table == name}
-        tables[name] = Table(df, fkeys, pkey_col=pkey, time_col=time)
+        tables[name] = Table(df, fkeys, pkey_col=scm.pkey, time_col=scm.time)
     return Database(tables)
 
 
