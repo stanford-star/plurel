@@ -112,7 +112,7 @@ class HSBMLink:
 
 
 @dataclass(frozen=True)
-class HierarchyLink:
+class TreeLink:
     roots: float = 0.1
 
     def __post_init__(self) -> None:
@@ -122,7 +122,7 @@ class HierarchyLink:
     def sample(self, n_child: int, n_parent: int, rng: np.random.Generator) -> np.ndarray:
         _check_sizes(n_child, n_parent)
         if n_child != n_parent:
-            raise ValueError("a hierarchy links a table to itself")
+            raise ValueError("a tree links a table to itself")
         parents = np.floor(rng.uniform(0.0, 1.0, n_child) * np.arange(n_child)).astype(np.int64)
         roots = rng.random(n_child) < self.roots
         roots[:1] = True
@@ -132,5 +132,5 @@ class HierarchyLink:
 LINKS: dict[str, type] = {
     "random": RandomLink,
     "hsbm": HSBMLink,
-    "hierarchy": HierarchyLink,
+    "tree": TreeLink,
 }
