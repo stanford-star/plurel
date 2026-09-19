@@ -80,7 +80,7 @@ class HSBMLink:
             return clusters(n, counts)
         return clusters(n, counts, self.cluster_weights.sample(int(np.prod(counts)), rng))
 
-    def affinity(self, parent: int, child: int, rng: np.random.Generator) -> np.ndarray:
+    def block_affinity(self, parent: int, child: int, rng: np.random.Generator) -> np.ndarray:
         affinity = self.between.sample(parent * child, rng).reshape(parent, child)
         index = np.arange(max(parent, child))
         within = self.within
@@ -114,7 +114,7 @@ class HSBMLink:
         parent_labels = self.labels(n_parent, self.parent_clusters, rng)
         child_labels = self.labels(n_child, self.child_clusters, rng)
         levels = [
-            np.log(self.affinity(parent, child, rng))
+            np.log(self.block_affinity(parent, child, rng))
             for parent, child in zip(self.parent_clusters, self.child_clusters)
         ]
         log_weight = self.log_weights(n_parent, rng)

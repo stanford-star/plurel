@@ -153,7 +153,8 @@ def test_hsbm_matches_the_closed_form_distribution():
     parent_labels = link.labels(n_parent, link.parent_clusters, rng)
     child_labels = link.labels(n_child, link.child_clusters, rng)
     levels = [
-        np.log(link.affinity(p, c, rng)) for p, c in zip(link.parent_clusters, link.child_clusters)
+        np.log(link.block_affinity(p, c, rng))
+        for p, c in zip(link.parent_clusters, link.child_clusters)
     ]
     log_p = link.log_weights(n_parent, rng)[:, None] + sum(
         level[parent_labels[:, i][:, None], child_labels[:, i][None, :]]
@@ -194,15 +195,15 @@ def test_links_hold_their_invariants_under_random_configurations():
         link.labels(n_parent, link.parent_clusters, draws)
         link.labels(n_child, link.child_clusters, draws)
         for p, c in zip(link.parent_clusters, link.child_clusters):
-            link.affinity(p, c, draws)
+            link.block_affinity(p, c, draws)
         assert np.isfinite(link.log_weights(n_parent, draws)[parents]).all()
 
 
 def test_affinities_can_vary_per_block_and_per_pair():
     rng = np.random.default_rng(0)
-    fixed = HSBMLink().affinity(3, 3, rng)
+    fixed = HSBMLink().block_affinity(3, 3, rng)
     assert (np.diag(fixed) == 0.9).all() and (fixed[~np.eye(3, dtype=bool)] < 0.9).all()
-    varied = HSBMLink(within=Uniform(0.2, 0.9), between=Pareto(1.0, 0.01)).affinity(3, 3, rng)
+    varied = HSBMLink(within=Uniform(0.2, 0.9), between=Pareto(1.0, 0.01)).block_affinity(3, 3, rng)
     diagonal = np.diag(varied)
     assert (0.2 <= diagonal).all() and (diagonal <= 0.9).all() and len(set(diagonal)) == 3
     off = varied[~np.eye(3, dtype=bool)]
