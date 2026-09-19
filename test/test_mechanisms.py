@@ -10,7 +10,6 @@ from plurel.mechanisms import (
     LookupEffect,
     LookupScaleEffect,
     Mechanism,
-    Noise,
     ProductEffect,
     Root,
     TransformedProductEffect,
@@ -27,8 +26,8 @@ TERMS = (
     TransformedProductEffect(("x", "y"), 0.25, "step"),
 )
 EXAMPLES = {
-    "root": Root(dim=3, noise=Noise(Mixture((Normal(-2.0), Normal(2.0))))),
-    "combine": Combine(TERMS, noise=Noise(Normal(std=0.5), (LinearEffect("y", 0.3),))),
+    "root": Root(dim=3, noise=Mixture((Normal(-2.0), Normal(2.0)))),
+    "combine": Combine(TERMS, scale=(LinearEffect("y", 0.3),), noise=Normal(std=0.5)),
 }
 
 
@@ -49,7 +48,7 @@ def test_every_registered_mechanism_meets_the_contract(parents):
 
 
 def test_combine_sums_its_contributions(parents):
-    mechanism = Combine(TERMS, noise=Noise(Normal(std=0.0)))
+    mechanism = Combine(TERMS, noise=Normal(std=0.0))
     contributions = mechanism.contributions(parents)
     assert set(contributions) == {"x", "s", ("x", "y"), ("s", "y")}
     expected = sum(term.evaluate(parents) for term in TERMS)
@@ -62,7 +61,7 @@ def test_every_reduction_reduces_the_same_terms(parents):
     zeros = np.zeros((N, 1))
     for op, reduce in REDUCTIONS.items():
         np.testing.assert_allclose(
-            Combine(TERMS, op, noise=Noise(Normal(std=0.0))).evaluate(parents, zeros), reduce(terms)
+            Combine(TERMS, op, noise=Normal(std=0.0)).evaluate(parents, zeros), reduce(terms)
         )
 
 
@@ -73,11 +72,10 @@ def test_lookup_effects_share_the_level_binning(parents):
     assert set(np.unique(levels)) == {0, 1, 2}
 
 
-def test_noise_is_heteroscedastic_and_takes_any_distribution(parents):
-    rng = np.random.default_rng(2)
-    noise = Noise(Beta(2.0, 2.0, low=-1.0, high=1.0), (LinearEffect("y", 1.0),))
-    draw = noise.sample(N, rng, 1)
+def test_noise_takes_any_distribution_and_scale_effects_modulate_it(parents):
+    mechanism = Combine(scale=(LinearEffect("y", 1.0),), noise=Beta(2.0, 2.0, low=-1.0, high=1.0))
+    draw = mechanism.sample_noise(N, np.random.default_rng(2))
     assert draw.min() >= -1.0 and draw.max() <= 1.0
-    scaled = noise.apply(parents, np.ones((N, 1)))
+    scaled = mechanism.evaluate(parents, np.ones((N, 1)))
     np.testing.assert_allclose(scaled, np.exp(np.clip(parents["y"], -3.0, 3.0)))
-    assert Combine(TERMS, noise=noise).parents == ("x", "s", "y")
+    assert Combine(TERMS, scale=mechanism.scale).parents == ("x", "s", "y")

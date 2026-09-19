@@ -18,6 +18,8 @@ TRANSFORMS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
 }
 TRANSFORM_NAMES = tuple(TRANSFORMS)
 
+SCALE_CLIP = 3.0
+
 REDUCTIONS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
     "sum": lambda terms: terms.sum(0),
     "max": lambda terms: terms.max(0),
@@ -50,6 +52,10 @@ def _check_probabilities(probabilities: tuple[float, ...] | None, size: int) -> 
 
 def _uniform(size: int) -> tuple[float, ...]:
     return (1.0 / size,) * size
+
+
+def _draw(distribution: Distribution, n: int, rng: np.random.Generator, dim: int) -> np.ndarray:
+    return np.stack([distribution.sample(n, rng) for _ in range(dim)], axis=1)
 
 
 class Effect:
@@ -149,31 +155,13 @@ class TransformedProductEffect(Effect):
 
 
 @dataclass(frozen=True)
-class Noise:
-    distribution: Distribution = field(default_factory=Normal)
-    scale_effects: tuple[Effect, ...] = ()
-    clip: float = 3.0
-
-    @property
-    def parents(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(p for effect in self.scale_effects for p in effect.parents))
-
-    def sample(self, n: int, rng: np.random.Generator, dim: int) -> np.ndarray:
-        return np.stack([self.distribution.sample(n, rng) for _ in range(dim)], axis=1)
-
-    def apply(self, values: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
-        log_scale = sum((effect.evaluate(values) for effect in self.scale_effects), 0.0)
-        return np.exp(np.clip(log_scale, -self.clip, self.clip)) * noise
-
-
-@dataclass(frozen=True)
 class Mechanism:
-    noise: Noise | None = field(default_factory=Noise, kw_only=True)
+    noise: Distribution | None = field(default_factory=Normal, kw_only=True)
     dim = 1
     parents = ()
 
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
-        return self.noise.sample(n, rng, self.dim) if self.noise else np.zeros((n, 0))
+        return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, 0))
 
     def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
         raise NotImplementedError
@@ -191,6 +179,7 @@ class Root(Mechanism):
 class Combine(Mechanism):
     effects: tuple[Effect, ...] = ()
     op: str = "sum"
+    scale: tuple[Effect, ...] = ()
 
     def __post_init__(self) -> None:
         if self.op not in REDUCTIONS:
@@ -198,7 +187,7 @@ class Combine(Mechanism):
 
     @property
     def parents(self) -> tuple[str, ...]:
-        effects = (*self.effects, *self.noise.scale_effects)
+        effects = (*self.effects, *self.scale)
         return tuple(dict.fromkeys(p for effect in effects for p in effect.parents))
 
     def contributions(
@@ -211,7 +200,9 @@ class Combine(Mechanism):
 
     def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
         terms = list(self.contributions(parents).values()) or [np.zeros_like(noise)]
-        return REDUCTIONS[self.op](np.stack(terms)) + self.noise.apply(parents, noise)
+        log_scale = sum((effect.evaluate(parents) for effect in self.scale), 0.0)
+        scale = np.exp(np.clip(log_scale, -SCALE_CLIP, SCALE_CLIP))
+        return REDUCTIONS[self.op](np.stack(terms)) + scale * noise
 
 
 MECHANISMS: dict[str, type] = {
