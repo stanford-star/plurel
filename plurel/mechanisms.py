@@ -83,8 +83,19 @@ class Structure:
         return ()
 
 
+class Term:
+    parents: tuple[str, ...]
+
+    @property
+    def key(self) -> str | tuple[str, ...]:
+        return self.parents[0] if len(self.parents) == 1 else self.parents
+
+    def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
+        raise NotImplementedError
+
+
 @dataclass(frozen=True)
-class Effect:
+class Effect(Term):
     parent: str
     weight: float
     transform: Function = "linear"
@@ -93,16 +104,12 @@ class Effect:
     def parents(self) -> tuple[str, ...]:
         return (self.parent,)
 
-    @property
-    def key(self) -> str:
-        return self.parent
-
     def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
         return self.weight * apply_transform(self.transform, values[self.parent])
 
 
 @dataclass(frozen=True)
-class LookupEffect:
+class LookupEffect(Term):
     parent: str
     values: tuple[float, ...]
     probabilities: tuple[float, ...] | None = None
@@ -116,17 +123,13 @@ class LookupEffect:
     def parents(self) -> tuple[str, ...]:
         return (self.parent,)
 
-    @property
-    def key(self) -> str:
-        return self.parent
-
     def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
         probabilities = self.probabilities or _uniform(len(self.values))
         return np.asarray(self.values)[bin_levels(values[self.parent], probabilities)]
 
 
 @dataclass(frozen=True)
-class ProductEffect:
+class ProductEffect(Term):
     parents: tuple[str, str]
     weight: float
 
@@ -134,17 +137,13 @@ class ProductEffect:
         if len(set(self.parents)) != 2:
             raise ValueError("two distinct parents")
 
-    @property
-    def key(self) -> tuple[str, str]:
-        return self.parents
-
     def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
         left, right = self.parents
         return self.weight * values[left] * values[right]
 
 
 @dataclass(frozen=True)
-class LookupScaleEffect:
+class LookupScaleEffect(Term):
     selector: str
     scaled: str
     scales: tuple[float, ...]
@@ -159,10 +158,6 @@ class LookupScaleEffect:
     def parents(self) -> tuple[str, ...]:
         return (self.selector, self.scaled)
 
-    @property
-    def key(self) -> tuple[str, str]:
-        return (self.selector, self.scaled)
-
     def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
         probabilities = self.probabilities or _uniform(len(self.scales))
         levels = bin_levels(values[self.selector], probabilities)
@@ -170,7 +165,7 @@ class LookupScaleEffect:
 
 
 @dataclass(frozen=True)
-class TransformedProductEffect:
+class TransformedProductEffect(Term):
     parents: tuple[str, ...]
     weight: float
     transform: Function = "linear"
@@ -179,16 +174,9 @@ class TransformedProductEffect:
         if len(set(self.parents)) != len(self.parents) or len(self.parents) < 2:
             raise ValueError("two or more distinct parents")
 
-    @property
-    def key(self) -> tuple[str, ...]:
-        return self.parents
-
     def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
         terms = [apply_transform(self.transform, values[parent]) for parent in self.parents]
         return self.weight * np.prod(terms, axis=0)
-
-
-MeanEffect = Effect | LookupEffect | ProductEffect | LookupScaleEffect | TransformedProductEffect
 
 
 @dataclass(frozen=True)
@@ -232,7 +220,7 @@ class Root(Structure):
 
 @dataclass(frozen=True)
 class Additive(Structure):
-    effects: tuple[MeanEffect, ...] = ()
+    effects: tuple[Term, ...] = ()
     noise: Noise = field(default_factory=Noise)
 
     @property
