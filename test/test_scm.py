@@ -28,16 +28,16 @@ def scm():
 
 
 def test_simulate_evaluates_every_node_in_topological_order(scm):
-    values = scm.simulate(N, seed=0)
-    assert set(values) == set(MECHANISMS)
+    latents = scm.simulate(N, seed=0)
+    assert set(latents) == set(MECHANISMS)
     assert scm.order.index("x") < scm.order.index("xz") < scm.order.index("y")
     for name, mechanism in MECHANISMS.items():
-        assert values[name].shape == (N, mechanism.dim)
-    np.testing.assert_allclose(values["xz"], values["x"] * values["z"])
-    np.testing.assert_array_equal(values["embedding"], TABLE[values["segment"].argmax(1)])
+        assert latents[name].shape == (N, mechanism.dim)
+    np.testing.assert_allclose(latents["xz"], latents["x"] * latents["z"])
+    np.testing.assert_array_equal(latents["embedding"], TABLE[latents["segment"].argmax(1)])
     again = scm.simulate(N, seed=0)
-    assert all(np.array_equal(values[name], again[name]) for name in MECHANISMS)
-    assert not np.array_equal(values["x"], scm.simulate(N, seed=1)["x"])
+    assert all(np.array_equal(latents[name], again[name]) for name in MECHANISMS)
+    assert not np.array_equal(latents["x"], scm.simulate(N, seed=1)["x"])
 
 
 def test_interventions_replace_a_node_and_keep_common_random_numbers(scm):
@@ -72,10 +72,10 @@ def test_simulate_rejects_a_node_that_breaks_its_declared_width():
 
 
 def test_sample_observes_columns_from_one_draw(scm):
-    frame, values = scm.sample_with_latents(N, seed=0)
+    frame, latents = scm.sample_with_latents(N, seed=0)
     assert list(frame) == ["y", "xz", "x", "z"] and len(frame) == N
-    np.testing.assert_array_equal(frame["x"], values["x"].ravel())
-    assert all(np.array_equal(values[k], v) for k, v in scm.simulate(N, seed=0).items())
+    np.testing.assert_array_equal(frame["x"], latents["x"].ravel())
+    assert all(np.array_equal(latents[k], v) for k, v in scm.simulate(N, seed=0).items())
     columns = {
         "amount": Column("y", marginal=Uniform(), missing=0.1),
         "segment": Column("segment", "categorical", categories=("a", "b", "c")),

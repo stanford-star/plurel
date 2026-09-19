@@ -65,31 +65,29 @@ class Column:
             return ()
         return self.probabilities or (1.0 / len(self.categories),) * len(self.categories)
 
-    def observe(self, values: np.ndarray, rng: np.random.Generator) -> pd.Series:
-        values = values if self.dims is None else values[:, self.dims]
+    def observe(self, latent: np.ndarray, rng: np.random.Generator) -> pd.Series:
+        latent = latent if self.dims is None else latent[:, self.dims]
         if self.kind == "categorical":
-            observed = pd.Categorical.from_codes(self.codes(values), list(self.categories))
+            observed = pd.Categorical.from_codes(self.codes(latent), list(self.categories))
         else:
-            if values.ndim == 2 and values.shape[1] != 1:
+            if latent.ndim == 2 and latent.shape[1] != 1:
                 raise ValueError(f"numeric column needs one dimension of {self.node!r}")
-            latent = values.reshape(len(values))
-            observed = rank_map(latent, self.marginal, rng) if self.marginal else latent
+            flat = latent.reshape(len(latent))
+            observed = rank_map(flat, self.marginal, rng) if self.marginal else flat
             if isinstance(self.marginal, Calendar):
                 observed = pd.to_datetime(observed, unit="s")
         series = pd.Series(observed)
         return series.mask(rng.random(len(series)) < self.missing) if self.missing else series
 
-    def codes(self, values: np.ndarray) -> np.ndarray:
-        if values.ndim == 2 and values.shape[1] > 1:
-            if values.shape[1] != len(self.categories):
-                raise ValueError(
-                    f"one-hot block of {self.node!r} must have one column per category"
-                )
-            return values.argmax(1)
-        latent = values.reshape(len(values))
+    def codes(self, latent: np.ndarray) -> np.ndarray:
+        if latent.ndim == 2 and latent.shape[1] > 1:
+            if latent.shape[1] != len(self.categories):
+                raise ValueError(f"one-hot node {self.node!r} must have one column per category")
+            return latent.argmax(1)
+        flat = latent.reshape(len(latent))
         if isinstance(self.binning, tuple):
-            return np.digitize(latent, self.binning)
+            return np.digitize(flat, self.binning)
         if self.binning == "empirical":
             cuts = np.cumsum(self.category_probabilities)[:-1]
-            return np.digitize(latent, np.quantile(latent, cuts))
-        return bin_levels(latent, self.category_probabilities)
+            return np.digitize(flat, np.quantile(flat, cuts))
+        return bin_levels(flat, self.category_probabilities)

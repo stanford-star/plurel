@@ -221,7 +221,7 @@ class Mechanism:
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, self.dim))
 
-    def evaluate(self, values: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
+    def evaluate(self, latents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
         raise NotImplementedError
 
 
@@ -229,7 +229,7 @@ class Mechanism:
 class Root(Mechanism):
     dim: int = 1
 
-    def evaluate(self, values: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
+    def evaluate(self, latents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
         return exogenous
 
 
@@ -251,8 +251,8 @@ class Combine(Mechanism):
     def parents(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(effect.parent for effect in self.effects))
 
-    def evaluate(self, values: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
-        terms = [effect.apply(values[effect.parent]) for effect in self.effects]
+    def evaluate(self, latents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
+        terms = [effect.apply(latents[effect.parent]) for effect in self.effects]
         return REDUCTIONS[self.op](terms) + exogenous if terms else exogenous
 
 
@@ -272,8 +272,8 @@ class Softmax(Combine):
     def dim(self) -> int:
         return super().dim if self.effects else len(self.biases or ())
 
-    def evaluate(self, values: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
-        scores = super().evaluate(values, exogenous) + np.asarray(self.biases or 0.0)
+    def evaluate(self, latents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
+        scores = super().evaluate(latents, exogenous) + np.asarray(self.biases or 0.0)
         return np.eye(self.dim)[scores.argmax(1)]
 
 

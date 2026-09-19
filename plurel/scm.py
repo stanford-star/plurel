@@ -43,18 +43,18 @@ class SCM:
             raise ValueError(f"interventions on unknown nodes {sorted(unknown)}")
         rng = generator(seed)
         exogenous = {name: self.mechanisms[name].sample_noise(n, rng) for name in self.order}
-        values: dict[str, np.ndarray] = {}
+        latents: dict[str, np.ndarray] = {}
         for name in self.order:
             mechanism = self.mechanisms[name]
             if interventions and name in interventions:
-                values[name] = _intervention(interventions[name], n, mechanism.dim)
+                latents[name] = _intervention(interventions[name], n, mechanism.dim)
                 continue
-            parents = {parent: values[parent] for parent in mechanism.parents}
+            parents = {parent: latents[parent] for parent in mechanism.parents}
             value = mechanism.evaluate(parents, exogenous[name])
             if value.shape != (n, mechanism.dim):
                 raise ValueError(f"{name!r} produced {value.shape}, declared {(n, mechanism.dim)}")
-            values[name] = value
-        return values
+            latents[name] = value
+        return latents
 
     def sample(
         self, n: int, *, seed: Seed = None, interventions: Interventions | None = None
@@ -65,8 +65,8 @@ class SCM:
         self, n: int, *, seed: Seed = None, interventions: Interventions | None = None
     ) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
         rng = generator(seed)
-        values = self.simulate(n, seed=rng, interventions=interventions)
+        latents = self.simulate(n, seed=rng, interventions=interventions)
         observed = {
-            name: column.observe(values[column.node], rng) for name, column in self.columns.items()
+            name: column.observe(latents[column.node], rng) for name, column in self.columns.items()
         }
-        return pd.DataFrame(observed, index=range(n)), values
+        return pd.DataFrame(observed, index=range(n)), latents
