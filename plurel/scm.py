@@ -11,11 +11,17 @@ from plurel.random import Seed, generator
 Interventions = Mapping[str, float | np.ndarray]
 
 
-def _intervention(value: float | np.ndarray, n: int, dim: int) -> np.ndarray:
+def intervention(value: float | np.ndarray, n: int, dim: int) -> np.ndarray:
     value = np.asarray(value, dtype=float)
     if value.shape == (n,):
         value = value[:, None]
     return np.array(np.broadcast_to(value, (n, dim)))
+
+
+def checked(name: str, mechanism: Mechanism, latent: np.ndarray, n: int) -> np.ndarray:
+    if latent.shape != (n, mechanism.dim):
+        raise ValueError(f"{name!r} produced {latent.shape}, declared {(n, mechanism.dim)}")
+    return latent
 
 
 class SCM:
@@ -50,14 +56,19 @@ class SCM:
         for name in self.order:
             mechanism = self.mechanisms[name]
             if interventions and name in interventions:
-                latents[name] = _intervention(interventions[name], n, mechanism.dim)
+                latents[name] = intervention(interventions[name], n, mechanism.dim)
                 continue
             parents = {parent: latents[parent] for parent in mechanism.parents}
-            latent = mechanism.evaluate(parents, exogenous[name])
-            if latent.shape != (n, mechanism.dim):
-                raise ValueError(f"{name!r} produced {latent.shape}, declared {(n, mechanism.dim)}")
-            latents[name] = latent
+            latents[name] = checked(
+                name, mechanism, mechanism.evaluate(parents, exogenous[name]), n
+            )
         return latents
+
+    def observe(
+        self, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
+    ) -> pd.DataFrame:
+        observed = {name: column.observe(latents, rng) for name, column in self.columns.items()}
+        return pd.DataFrame(observed, index=range(n))
 
     def sample(
         self, n: int, *, seed: Seed = None, interventions: Interventions | None = None
@@ -69,5 +80,4 @@ class SCM:
     ) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
         rng = generator(seed)
         latents = self.simulate(n, seed=rng, interventions=interventions)
-        observed = {name: column.observe(latents, rng) for name, column in self.columns.items()}
-        return pd.DataFrame(observed, index=range(n)), latents
+        return self.observe(latents, rng, n), latents

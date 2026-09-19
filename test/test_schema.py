@@ -1,0 +1,197 @@
+import numpy as np
+import pandas as pd
+import pytest
+
+from plurel import SCM, Column, Combine, LinearEffect, MatrixEffect, Normal, Root, Softmax
+from plurel.links import HSBMLink, RandomLink, TreeLink
+from plurel.schema import AGGREGATES, FK, Port, Schema
+
+ROWS = {"customers": 300, "orders": 2000, "employees": 150}
+EMBEDDING = np.arange(9.0).reshape(3, 3)
+
+
+def customers():
+    return SCM(
+        {
+            "segment": Softmax(biases=(0.0, 0.5, -0.5)),
+            "value": Root(),
+            "n_orders": Port("orders", "amount", aggregate="count"),
+            "spend": Port("orders", "amount", aggregate="sum"),
+            "churn": Combine(
+                (LinearEffect("spend", -0.1), LinearEffect("value")), noise=Normal(std=0.1)
+            ),
+        },
+        {
+            "segment": Column("segment", "categorical", categories=("a", "b", "c")),
+            "value": Column("value"),
+            "n_orders": Column("n_orders"),
+            "churn": Column("churn"),
+        },
+    )
+
+
+def orders():
+    return SCM(
+        {
+            "segment": Port("customers", "segment", dim=3),
+            "value": Port("customers", "value"),
+            "embedding": Combine((MatrixEffect("segment", EMBEDDING),), noise=None),
+            "amount": Combine(
+                (LinearEffect("value", 2.0), MatrixEffect("embedding", np.ones((3, 1)))),
+                noise=Normal(std=0.5),
+            ),
+        },
+        {"amount": Column("amount"), "value": Column("value")},
+    )
+
+
+def employees():
+    return SCM(
+        {
+            "level": Root(),
+            "manager_level": Port("employees", "level", via="manager_id"),
+            "pay": Combine(
+                (LinearEffect("level"), LinearEffect("manager_level", 0.5)), noise=Normal(std=0.1)
+            ),
+        },
+        {"level": Column("level"), "pay": Column("pay")},
+    )
+
+
+FKEYS = (
+    FK("orders", "customer_id", "customers", HSBMLink((2,), (2,)), nullable=0.1),
+    FK("employees", "manager_id", "employees", TreeLink(roots=0.2)),
+)
+
+
+@pytest.fixture
+def schema():
+    return Schema({"customers": customers(), "orders": orders(), "employees": employees()}, FKEYS)
+
+
+def test_sample_propagates_latents_in_both_directions(schema):
+    frames, latents = schema.sample_with_latents(ROWS, seed=0)
+    assert set(frames) == set(ROWS) and all(len(frames[t]) == n for t, n in ROWS.items())
+    assert schema.order.index(("orders", "amount")) < schema.order.index(("customers", "spend"))
+    fk = frames["orders"]["customer_id"]
+    assert fk.dtype == "Int64" and 0.05 < fk.isna().mean() < 0.15
+    linked = fk.notna().to_numpy()
+    index = fk.to_numpy(dtype=float, na_value=-1).astype(int)
+    np.testing.assert_array_equal(
+        latents["orders"]["value"][linked, 0], latents["customers"]["value"][index[linked], 0]
+    )
+    assert not latents["orders"]["value"][~linked].any()
+    np.testing.assert_array_equal(
+        latents["orders"]["embedding"],
+        EMBEDDING[latents["customers"]["segment"][index].argmax(1)] * linked[:, None],
+    )
+    counts = np.bincount(index[linked], minlength=ROWS["customers"])
+    np.testing.assert_array_equal(frames["customers"]["n_orders"], counts)
+    spend = np.zeros(ROWS["customers"])
+    np.add.at(spend, index[linked], latents["orders"]["amount"][linked, 0])
+    np.testing.assert_allclose(latents["customers"]["spend"][:, 0], spend)
+    assert np.corrcoef(spend, frames["customers"]["churn"])[0, 1] < -0.3
+    manager = frames["employees"]["manager_id"]
+    roots = manager.isna().to_numpy()
+    assert roots[0] and (manager.dropna().to_numpy() < np.flatnonzero(~roots)).all()
+    level = latents["employees"]["level"][:, 0]
+    np.testing.assert_array_equal(
+        latents["employees"]["manager_level"][~roots, 0],
+        level[manager.dropna().to_numpy().astype(int)],
+    )
+    assert not latents["employees"]["manager_level"][roots].any()
+
+
+def test_sampling_is_deterministic_and_interventions_keep_common_random_numbers(schema):
+    frames, latents = schema.sample_with_latents(ROWS, seed=0)
+    again, _ = schema.sample_with_latents(ROWS, seed=0)
+    for table in ROWS:
+        pd.testing.assert_frame_equal(frames[table], again[table])
+    forced, latents_forced = schema.sample_with_latents(
+        ROWS, seed=0, interventions={"customers": {"value": 0.0}}
+    )
+    pd.testing.assert_series_equal(forced["orders"]["customer_id"], frames["orders"]["customer_id"])
+    pd.testing.assert_frame_equal(forced["employees"], frames["employees"])
+    assert not latents_forced["orders"]["value"].any()
+    residual = latents["orders"]["amount"] - 2.0 * latents["orders"]["value"]
+    residual_forced = latents_forced["orders"]["amount"] - 2.0 * latents_forced["orders"]["value"]
+    np.testing.assert_allclose(residual, residual_forced)
+    assert orders().sample(50, seed=0).shape == (50, 2)
+
+
+def test_aggregates_handle_empty_groups():
+    values = np.array([[1.0, 10.0], [3.0, 30.0], [5.0, 50.0]])
+    index = np.array([0, 0, 2])
+    expected = {
+        "count": [[2.0], [0.0], [1.0]],
+        "sum": [[4.0, 40.0], [0.0, 0.0], [5.0, 50.0]],
+        "mean": [[2.0, 20.0], [-1.0, -1.0], [5.0, 50.0]],
+        "max": [[3.0, 30.0], [-1.0, -1.0], [5.0, 50.0]],
+        "min": [[1.0, 10.0], [-1.0, -1.0], [5.0, 50.0]],
+    }
+    assert set(expected) == set(AGGREGATES)
+    for name, aggregate in AGGREGATES.items():
+        np.testing.assert_array_equal(aggregate(values, index, 3, -1.0), expected[name])
+
+
+def test_schema_validation():
+    tables = {"customers": customers(), "orders": orders(), "employees": employees()}
+    with pytest.raises(ValueError):
+        Schema(tables, (FK("orders", "customer_id", "shops"),))
+    with pytest.raises(ValueError):
+        Schema(tables, (FK("orders", "amount", "customers"),))
+    with pytest.raises(ValueError):
+        Schema(tables, FKEYS + (FK("orders", "customer_id", "customers"),))
+    with pytest.raises(ValueError):
+        Schema(tables, FKEYS[1:])
+    twice = FKEYS + (FK("orders", "referrer_id", "customers", RandomLink()),)
+    with pytest.raises(ValueError):
+        Schema(tables, twice)
+    via = {
+        "customers": SCM(
+            {
+                **customers().mechanisms,
+                "n_orders": Port("orders", "amount", via="customer_id", aggregate="count"),
+                "spend": Port("orders", "amount", via="customer_id", aggregate="sum"),
+            },
+            customers().columns,
+        ),
+        "orders": SCM(
+            {
+                **orders().mechanisms,
+                "segment": Port("customers", "segment", via="customer_id", dim=3),
+                "value": Port("customers", "value", via="referrer_id"),
+            },
+            orders().columns,
+        ),
+    }
+    assert Schema({**tables, **via}, twice).ports[("orders", "value")][1].column == "referrer_id"
+    for bad in (
+        {"segment": Port("customers", "segment")},
+        {"value": Port("customers", "nothing")},
+        {"value": Port("customers", "value", aggregate="sum")},
+    ):
+        with pytest.raises(ValueError):
+            Schema(
+                {**tables, "orders": SCM({**orders().mechanisms, **bad}, orders().columns)}, FKEYS
+            )
+    with pytest.raises(ValueError):
+        Port("orders", "amount", aggregate="count", dim=3)
+    with pytest.raises(ValueError):
+        Port("orders", "amount", aggregate="median")
+    with pytest.raises(ValueError):
+        FK("orders", "customer_id", "customers", nullable=1.0)
+    looped = SCM(
+        {**customers().mechanisms, "value": Port("orders", "value", aggregate="mean")},
+        customers().columns,
+    )
+    with pytest.raises(ValueError):
+        Schema({**tables, "customers": looped}, FKEYS)
+    schema = Schema(tables, FKEYS)
+    with pytest.raises(ValueError):
+        schema.sample({"customers": 10, "orders": 10})
+    with pytest.raises(ValueError):
+        schema.sample(ROWS, interventions={"shops": {"x": 1.0}})
+    empty = schema.sample({"customers": 5, "orders": 0, "employees": 0}, seed=0)
+    assert len(empty["orders"]) == 0 and list(empty["orders"]) == ["amount", "value", "customer_id"]
+    assert not empty["customers"]["n_orders"].any()
