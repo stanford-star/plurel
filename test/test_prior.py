@@ -85,12 +85,14 @@ def test_warping_gives_each_realization_its_own_style():
     prior = TablePrior().warp(rng)
     assert prior.nodes.shape is not None and prior.families.weights is not None
     assert prior.categorical == TablePrior().categorical
-    spreads = [
-        np.std([m.dim for m in TablePrior().realize(seed).mechanisms.values()])
+    meta = [
+        np.mean([m.dim for m in TablePrior().realize(seed).mechanisms.values()])
         for seed in range(60)
     ]
     flat = [
-        np.std([m.dim for m in TablePrior().build(np.random.default_rng(seed)).mechanisms.values()])
+        np.mean(
+            [m.dim for m in TablePrior().build(np.random.default_rng(seed)).mechanisms.values()]
+        )
         for seed in range(60)
     ]
-    assert np.mean(spreads) < np.mean(flat)
+    assert np.var(meta) > 1.5 * np.var(flat)
