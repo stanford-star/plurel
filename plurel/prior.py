@@ -180,6 +180,7 @@ class TablePrior:
         column_count: Observed columns besides the key.
         column_marginals: Marginal a numeric column is rank-mapped onto; None keeps the latent.
         column_binned_share: Probability that a numeric column is binned into categories instead.
+        column_bins: Categories of a binned column.
         column_missing: Missing rate of a column that has missingness.
         column_missing_share: Probability that a column has missingness.
         time_probability: Probability that the table gets a calendar time column.
@@ -208,6 +209,7 @@ class TablePrior:
         (None, Uniform(), LogNormal(), Pareto(2.0), Exponential()), (3.0, 1.0, 1.0, 1.0, 1.0)
     )
     column_binned_share: float = 0.2
+    column_bins: Range = IntegersRange(2, 8)
     column_missing: Range = Range(0.01, 0.1)
     column_missing_share: float = 0.3
     time_probability: float = 0.5
@@ -279,7 +281,7 @@ class TablePrior:
             return Column(node, "categorical", categories=categories, missing=missing)
         slot = int(rng.integers(dim))
         if rng.random() < self.column_binned_share:
-            k = self.node_classes.draw(rng)
+            k = self.column_bins.draw(rng)
             probabilities = tuple(float(p) for p in rng.dirichlet(np.ones(k)))
             categories = tuple(f"c{j}" for j in range(k))
             return Column(
