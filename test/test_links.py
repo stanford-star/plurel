@@ -137,3 +137,56 @@ def test_hsbm_draws_do_not_depend_on_chunking(monkeypatch):
     whole = link.sample(500, 300, np.random.default_rng(3))
     monkeypatch.setattr(plurel.links, "CHUNK_BYTES", 8 * 300 * 7)
     np.testing.assert_array_equal(link.sample(500, 300, np.random.default_rng(3)), whole)
+
+
+def test_hsbm_matches_the_closed_form_distribution():
+    link = HSBMLink((2, 3), (2, 2), within=0.7, between=(0.05, 0.2), attractiveness=Pareto(2.0))
+    n_child, n_parent = 30_000, 6
+    parents = link.sample(n_child, n_parent, np.random.default_rng(7))
+    rng = np.random.default_rng(7)
+    parent_labels = link.labels(n_parent, link.parent_clusters, rng)
+    child_labels = link.labels(n_child, link.child_clusters, rng)
+    levels = [
+        np.log(link.affinity(p, c, rng)) for p, c in zip(link.parent_clusters, link.child_clusters)
+    ]
+    log_p = link.log_weights(n_parent, rng)[:, None] + sum(
+        level[parent_labels[:, i][:, None], child_labels[:, i][None, :]]
+        for i, level in enumerate(levels)
+    )
+    expected = np.exp(log_p) / np.exp(log_p).sum(axis=0)
+    base = child_labels[:, 0] * 2 + child_labels[:, 1]
+    for block in np.unique(base):
+        rows = np.flatnonzero(base == block)
+        observed = np.bincount(parents[rows], minlength=n_parent) / len(rows)
+        np.testing.assert_allclose(observed, expected[:, rows[0]], atol=0.02)
+
+
+def test_links_hold_their_invariants_under_random_configurations():
+    rng = np.random.default_rng(11)
+    for _ in range(60):
+        depth = int(rng.integers(1, 4))
+        link = HSBMLink(
+            tuple(int(c) for c in rng.integers(1, 4, depth)),
+            tuple(int(c) for c in rng.integers(1, 4, depth)),
+            within=float(rng.uniform(0.3, 1.0)),
+            cluster_weights=Pareto(1.5) if rng.random() < 0.5 else None,
+            attractiveness=Pareto(2.0) if rng.random() < 0.5 else None,
+            inactive=float(rng.uniform(0.0, 0.6)),
+        )
+        n_parent = int(rng.integers(np.prod(link.parent_clusters), 200))
+        n_child = 0 if rng.random() < 0.1 else int(rng.integers(np.prod(link.child_clusters), 500))
+        seed = int(rng.integers(1 << 30))
+        parents = link.sample(n_child, n_parent, np.random.default_rng(seed))
+        assert parents.shape == (n_child,) and parents.dtype == np.int64
+        np.testing.assert_array_equal(
+            parents, link.sample(n_child, n_parent, np.random.default_rng(seed))
+        )
+        if n_child == 0:
+            continue
+        assert parents.min() >= 0 and parents.max() < n_parent
+        draws = np.random.default_rng(seed)
+        link.labels(n_parent, link.parent_clusters, draws)
+        link.labels(n_child, link.child_clusters, draws)
+        for p, c in zip(link.parent_clusters, link.child_clusters):
+            link.affinity(p, c, draws)
+        assert np.isfinite(link.log_weights(n_parent, draws)[parents]).all()
