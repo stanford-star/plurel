@@ -129,6 +129,90 @@ class NearestEffect(Effect):
 
 
 @dataclass(frozen=True)
+class MLPEffect(Effect):
+    weights: tuple[np.ndarray, ...]
+    biases: tuple[np.ndarray, ...] | None = None
+    activations: tuple[Function, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.weights or any(
+            a.shape[1] != b.shape[0] for a, b in zip(self.weights, self.weights[1:])
+        ):
+            raise ValueError("weights must chain")
+        if self.activations is not None and len(self.activations) != len(self.weights) + 1:
+            raise ValueError("one activation before each layer and one after the last")
+
+    @property
+    def dim(self) -> int:
+        return self.weights[-1].shape[1]
+
+    def apply(self, x: np.ndarray) -> np.ndarray:
+        depth = len(self.weights)
+        activations = self.activations or ("linear", *("tanh",) * (depth - 1), "linear")
+        biases = self.biases or (0.0,) * depth
+        h = apply_transform(activations[0], x)
+        for weight, bias, activation in zip(self.weights, biases, activations[1:]):
+            h = apply_transform(activation, h @ weight + bias)
+        return h
+
+
+@dataclass(frozen=True)
+class TreeEffect(Effect):
+    split_dims: np.ndarray
+    split_points: np.ndarray
+    leaves: np.ndarray
+
+    def __post_init__(self) -> None:
+        trees, depth = self.split_dims.shape
+        if self.split_points.shape != (trees, depth) or self.leaves.shape[:2] != (trees, 2**depth):
+            raise ValueError("one split point per split and 2**depth leaves per tree")
+
+    @property
+    def dim(self) -> int:
+        return self.leaves.shape[2]
+
+    def apply(self, x: np.ndarray) -> np.ndarray:
+        sides = x[:, self.split_dims] > self.split_points
+        index = sides @ (2 ** np.arange(self.split_dims.shape[1]))
+        return self.leaves[np.arange(len(self.leaves)), index].mean(1)
+
+
+@dataclass(frozen=True)
+class FourierEffect(Effect):
+    frequencies: np.ndarray
+    phases: np.ndarray
+    weights: np.ndarray
+
+    def __post_init__(self) -> None:
+        if not self.frequencies.shape[1] == len(self.phases) == self.weights.shape[0]:
+            raise ValueError("one phase and one weight row per frequency")
+
+    @property
+    def dim(self) -> int:
+        return self.weights.shape[1]
+
+    def apply(self, x: np.ndarray) -> np.ndarray:
+        return np.cos(x @ self.frequencies + self.phases) @ self.weights
+
+
+@dataclass(frozen=True)
+class QuadraticEffect(Effect):
+    tensor: np.ndarray
+
+    def __post_init__(self) -> None:
+        if self.tensor.ndim != 3 or self.tensor.shape[1] != self.tensor.shape[2]:
+            raise ValueError("tensor must be (dim, features + 1, features + 1)")
+
+    @property
+    def dim(self) -> int:
+        return self.tensor.shape[0]
+
+    def apply(self, x: np.ndarray) -> np.ndarray:
+        x = np.concatenate([x, np.ones((len(x), 1))], axis=1)
+        return np.einsum("oij,ni,nj->no", self.tensor, x, x)
+
+
+@dataclass(frozen=True)
 class Mechanism:
     noise: Distribution | None = field(default_factory=Normal, kw_only=True)
     dim = 1
@@ -198,6 +282,10 @@ EFFECTS: dict[str, type] = {
     "lookup": LookupEffect,
     "matrix": MatrixEffect,
     "nearest": NearestEffect,
+    "mlp": MLPEffect,
+    "tree": TreeEffect,
+    "fourier": FourierEffect,
+    "quadratic": QuadraticEffect,
 }
 
 MECHANISMS: dict[str, type] = {
