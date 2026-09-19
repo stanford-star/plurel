@@ -59,6 +59,7 @@ from plurel.prior import (
     LogIntegersRange,
     LogRange,
     Range,
+    SchemaPrior,
     TablePrior,
 )
 from plurel.random import Seed, generator
@@ -77,6 +78,7 @@ __all__ = [
     "REDUCTIONS",
     "SCM",
     "Schema",
+    "SchemaPrior",
     "TRANSFORMS",
     "AutoRegressive",
     "BarabasiAlbert",

@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 
+from plurel.io import create_database
+from plurel.links import TreeLink
 from plurel.mechanisms import EFFECTS, Root, Softmax
 from plurel.prior import (
     FAMILIES,
@@ -9,6 +11,7 @@ from plurel.prior import (
     LogIntegersRange,
     LogRange,
     Range,
+    SchemaPrior,
     TablePrior,
 )
 
@@ -101,3 +104,50 @@ def test_warping_gives_each_realization_its_own_style():
         for seed in range(60)
     ]
     assert np.var(meta) > 1.5 * np.var(flat)
+
+
+SMALL = dict(entity_row_count=IntegersRange(60, 120), activity_row_count=IntegersRange(300, 600))
+
+
+def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
+    prior = SchemaPrior(**SMALL)
+    seen = set()
+    for seed in range(25):
+        schema = prior.realize(seed)
+        assert prior.realize(seed).order == schema.order
+        rows = prior.rows(schema, seed)
+        referenced = {fk.parent for fk in schema.fkeys if fk.parent != fk.table}
+        for table, count in rows.items():
+            low, high = (60, 120) if table in referenced else (300, 600)
+            assert low <= count <= high
+        frames, latents = schema.sample_with_latents(rows, seed=seed)
+        assert all(len(frames[t]) == n for t, n in rows.items())
+        for (table, name), (port, fk) in schema.ports.items():
+            seen.add("aggregate" if port.aggregate else "gather")
+            if isinstance(fk.link, TreeLink):
+                seen.add("self")
+            if name.endswith("_time"):
+                seen.add("follow")
+                child_time = frames[fk.table][schema.tables[fk.table].time_column]
+                parent_time = frames[fk.parent][schema.tables[fk.parent].time_column]
+                keys = frames[fk.table][fk.column].to_numpy(dtype=int)
+                assert (child_time.to_numpy() >= parent_time.to_numpy()[keys]).all()
+        create_database(schema, frames)
+    assert seen == {"gather", "aggregate", "self", "follow"}
+
+
+def test_schema_prior_knobs_switch_cross_table_structure_off():
+    quiet = SchemaPrior(
+        **SMALL,
+        gather_count=IntegersRange(0, 0),
+        aggregate_count=IntegersRange(0, 0),
+        self_reference_probability=0.0,
+        time_follow_probability=0.0,
+        fk_nullable_share=0.0,
+    )
+    for seed in range(8):
+        schema = quiet.realize(seed)
+        assert not schema.ports and all(fk.nullable == 0.0 for fk in schema.fkeys)
+        assert all(fk.table != fk.parent for fk in schema.fkeys)
+        frames = schema.sample(quiet.rows(schema, seed), seed=seed)
+        assert all(frames[fk.table][fk.column].notna().all() for fk in schema.fkeys)

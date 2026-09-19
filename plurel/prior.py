@@ -3,8 +3,17 @@ from dataclasses import dataclass, fields, replace
 import numpy as np
 
 from plurel.columns import DEFAULT_CALENDAR, Column
-from plurel.distributions import Calendar, Exponential, LogNormal, Mixture, Normal, Pareto, Uniform
-from plurel.layouts import BarabasiAlbert, Layered, RandomCauchy
+from plurel.distributions import (
+    Calendar,
+    Exponential,
+    LogNormal,
+    Mixture,
+    Normal,
+    Pareto,
+    Uniform,
+)
+from plurel.layouts import BarabasiAlbert, Layered, RandomCauchy, ReverseRandomTree, WattsStrogatz
+from plurel.links import HSBMLink, Link, RandomLink, TreeLink
 from plurel.mechanisms import (
     TRANSFORM_NAMES,
     Combine,
@@ -20,6 +29,7 @@ from plurel.mechanisms import (
     TreeEffect,
 )
 from plurel.random import Seed, generator
+from plurel.schema import FK, Port, Schema
 from plurel.scm import SCM
 
 ACTIVATIONS = tuple(name for name in TRANSFORM_NAMES if name != "identity")
@@ -295,3 +305,174 @@ class TablePrior:
                 missing=missing,
             )
         return Column(node, dims=slot, marginal=self.column_marginals.draw(rng), missing=missing)
+
+
+def _consume(mechanism: Mechanism, effect: Effect) -> Mechanism:
+    if isinstance(mechanism, Combine):
+        return replace(mechanism, effects=mechanism.effects + (effect,))
+    return Combine((effect,), noise=mechanism.noise)
+
+
+@dataclass(frozen=True)
+class SchemaPrior:
+    """Random multi-table schema prior.
+
+    A table's parents in the table graph are the tables it references. Each table is a fresh
+    warp of `table_prior`. Gathered parent nodes become extra effects on existing child nodes;
+    aggregated child nodes become new observed nodes of the parent, so the node graph across
+    tables stays acyclic by construction.
+
+    Attributes:
+        table_count: Tables in the database.
+        table_layouts: DAG generator for the table graph.
+        table_prior: Prior of every table's SCM.
+        entity_row_count: Rows of a table that other tables reference.
+        activity_row_count: Rows of a table nothing references.
+        link_level_count: Cluster levels of an HSBM link.
+        link_cluster_count: Clusters per level on each side of an HSBM link.
+        link_popularity: Per-parent popularity of an HSBM link; None for uniform.
+        link_inactive_share: Share of parents an HSBM link leaves without children.
+        link_random_share: Probability that a key uses a uniform link instead of an HSBM link.
+        fk_nullable_share: Probability that a foreign key has null values.
+        fk_nullable_rate: Null rate of a nullable foreign key.
+        self_reference_probability: Probability that a table gets a self-referential tree key.
+        self_reference_root_share: Share of roots in a self-referential tree.
+        gather_count: Parent nodes gathered into the child per foreign key.
+        aggregate_count: Child nodes aggregated into the parent per foreign key.
+        aggregates: Aggregation of an aggregate port.
+        time_follow_probability: Probability that a child's time follows its parent's time.
+        time_delay: Mean delay in seconds of a child event after its parent event.
+    """
+
+    table_count: Range = LogIntegersRange(2, 8)
+    table_layouts: Choices = Choices(
+        (BarabasiAlbert(2), ReverseRandomTree(), WattsStrogatz(2), Layered(3, 0.1))
+    )
+    table_prior: TablePrior = TablePrior()
+    entity_row_count: Range = LogIntegersRange(500, 1000)
+    activity_row_count: Range = LogIntegersRange(10_000, 30_000)
+    link_level_count: Range = IntegersRange(1, 3)
+    link_cluster_count: Range = IntegersRange(1, 3)
+    link_popularity: Choices = Choices((None, Pareto(2.5)))
+    link_inactive_share: Range = Range(0.0, 0.7)
+    link_random_share: float = 0.2
+    fk_nullable_share: float = 0.3
+    fk_nullable_rate: Range = Range(0.01, 0.3)
+    self_reference_probability: float = 0.3
+    self_reference_root_share: Range = Range(0.05, 0.5)
+    gather_count: Range = IntegersRange(0, 3)
+    aggregate_count: Range = IntegersRange(0, 2)
+    aggregates: Choices = Choices(("count", "sum", "mean", "max", "min"))
+    time_follow_probability: float = 0.7
+    time_delay: Range = LogRange(3600.0, 90 * 24 * 3600.0)
+
+    def realize(self, seed: Seed = None) -> Schema:
+        rng = generator(seed)
+        n = self.table_count.draw(rng)
+        parents = self.table_layouts.draw(rng).sample(n, rng)
+        priors = [self.table_prior.warp(rng) for _ in range(n)]
+        tables = {f"t{i}": priors[i].build(rng) for i in range(n)}
+        fkeys = []
+        for i, references in enumerate(parents):
+            for p in references:
+                fk = self.fkey(f"t{i}", f"t{p}", rng)
+                fkeys.append(fk)
+                self.gather(tables, fk, priors[i], rng)
+                self.aggregate(tables, fk, rng)
+                if not fk.nullable:
+                    self.follow(tables, fk, rng)
+        for i in range(n):
+            if rng.random() < self.self_reference_probability:
+                fk = FK(
+                    f"t{i}",
+                    "parent_id",
+                    f"t{i}",
+                    TreeLink(self.self_reference_root_share.draw(rng)),
+                )
+                fkeys.append(fk)
+                self.gather(tables, fk, priors[i], rng)
+        return Schema(tables, tuple(fkeys))
+
+    def rows(self, schema: Schema, seed: Seed = None) -> dict[str, int]:
+        rng = generator(seed)
+        referenced = {fk.parent for fk in schema.fkeys if fk.parent != fk.table}
+        return {
+            table: (self.entity_row_count if table in referenced else self.activity_row_count).draw(
+                rng
+            )
+            for table in schema.tables
+        }
+
+    def link(self, rng: np.random.Generator) -> Link:
+        if rng.random() < self.link_random_share:
+            return RandomLink()
+        levels = self.link_level_count.draw(rng)
+        return HSBMLink(
+            tuple(self.link_cluster_count.draw(rng) for _ in range(levels)),
+            tuple(self.link_cluster_count.draw(rng) for _ in range(levels)),
+            popularity=self.link_popularity.draw(rng),
+            inactive=self.link_inactive_share.draw(rng),
+        )
+
+    def fkey(self, child: str, parent: str, rng: np.random.Generator) -> FK:
+        nullable = self.fk_nullable_rate.draw(rng) if rng.random() < self.fk_nullable_share else 0.0
+        return FK(child, f"{parent}_id", parent, self.link(rng), nullable=nullable)
+
+    def gather(
+        self, tables: dict[str, SCM], fk: FK, prior: TablePrior, rng: np.random.Generator
+    ) -> None:
+        child, parent = tables[fk.table], tables[fk.parent]
+        sources = [
+            name
+            for name, m in parent.mechanisms.items()
+            if not isinstance(m, Port) and name != "time"
+        ]
+        if fk.table == fk.parent:
+            sources = [name for name in sources if not parent.mechanisms[name].parents]
+        consumers = [
+            name
+            for name, m in child.mechanisms.items()
+            if not isinstance(m, Port) and name != "time"
+        ]
+        mechanisms = dict(child.mechanisms)
+        for _ in range(min(self.gather_count.draw(rng), len(sources), len(consumers))):
+            source = str(rng.choice(sources))
+            consumer = str(rng.choice([name for name in consumers if name != source]))
+            port = f"{fk.column}_{source}"
+            mechanisms[port] = Port(
+                fk.parent, source, via=fk.column, fill=0.0, dim=parent.mechanisms[source].dim
+            )
+            target = mechanisms[consumer]
+            block = isinstance(target, Softmax)
+            effect = prior.effect(port, parent.mechanisms[source].dim, target.dim, block, rng)
+            mechanisms[consumer] = _consume(target, effect)
+        tables[fk.table] = SCM(mechanisms, child.columns, time_column=child.time_column)
+
+    def aggregate(self, tables: dict[str, SCM], fk: FK, rng: np.random.Generator) -> None:
+        child, parent = tables[fk.table], tables[fk.parent]
+        sources = [
+            name
+            for name, m in child.mechanisms.items()
+            if m.dim == 1 and not isinstance(m, Port) and name != "time"
+        ]
+        mechanisms, columns = dict(parent.mechanisms), dict(parent.columns)
+        for _ in range(min(self.aggregate_count.draw(rng), len(sources))):
+            source, how = str(rng.choice(sources)), self.aggregates.draw(rng)
+            name = f"{fk.table}_{source}_{how}"
+            fill = None if how in ("count", "sum") else 0.0
+            mechanisms[name] = Port(fk.table, source, via=fk.column, aggregate=how, fill=fill)
+            columns[name] = Column(name)
+        tables[fk.parent] = SCM(mechanisms, columns, time_column=parent.time_column)
+
+    def follow(self, tables: dict[str, SCM], fk: FK, rng: np.random.Generator) -> None:
+        child, parent = tables[fk.table], tables[fk.parent]
+        own = isinstance(child.mechanisms.get(child.time_column), Root)
+        if not own or parent.time_column is None or rng.random() >= self.time_follow_probability:
+            return
+        mechanisms = dict(child.mechanisms)
+        port = f"{fk.column}_time"
+        mechanisms[port] = Port(fk.parent, "time", via=fk.column, fill=0.0)
+        mechanisms["time"] = Combine(
+            (LinearEffect(port),), noise=Exponential(self.time_delay.draw(rng))
+        )
+        tables[fk.table] = SCM(mechanisms, child.columns, time_column=child.time_column)
