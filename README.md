@@ -21,11 +21,6 @@ Synthetic Data unlocks Scaling Laws for Relational Foundation Models
 
 PluRel is an open-source library for synthesizing diverse relational and tabular data using Structural Causal Models (SCMs). It is the reference implementation for the [PluRel paper](https://arxiv.org/abs/2602.04029).
 
-This repository provides:
-
-- Scalable generation of synthetic multi-table relational databases (from scratch or from SQL schemas), with configurable table layouts, SCM mechanisms, column types, time series, and post-processing.
-- Output written directly in the `relbench` format: a self-describing dataset directory with a `manifest.yaml` (relational metadata) next to plain `db/<table>.parquet` files, loadable with [relbench](https://github.com/snap-stanford/relbench)'s `load_dataset` or any parquet reader.
-
 > [!NOTE]
 > Pretraining models on PluRel data (preprocessing, checkpoints, inference with [Relational Transformer](https://github.com/rishabh-ranjan/relational-transformer)) is covered in [`examples/relational_transformer/`](examples/relational_transformer/).
 
