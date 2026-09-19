@@ -18,8 +18,6 @@ TRANSFORMS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
 }
 TRANSFORM_NAMES = tuple(TRANSFORMS)
 
-SCALE_CLIP = 3.0
-
 REDUCTIONS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
     "sum": lambda terms: terms.sum(0),
     "max": lambda terms: terms.max(0),
@@ -179,7 +177,6 @@ class Root(Mechanism):
 class Combine(Mechanism):
     effects: tuple[Effect, ...] = ()
     op: str = "sum"
-    scale: tuple[Effect, ...] = ()
 
     def __post_init__(self) -> None:
         if self.op not in REDUCTIONS:
@@ -187,8 +184,7 @@ class Combine(Mechanism):
 
     @property
     def parents(self) -> tuple[str, ...]:
-        effects = (*self.effects, *self.scale)
-        return tuple(dict.fromkeys(p for effect in effects for p in effect.parents))
+        return tuple(dict.fromkeys(p for effect in self.effects for p in effect.parents))
 
     def contributions(
         self, parents: dict[str, np.ndarray]
@@ -200,9 +196,7 @@ class Combine(Mechanism):
 
     def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
         terms = list(self.contributions(parents).values()) or [np.zeros_like(noise)]
-        log_scale = sum((effect.evaluate(parents) for effect in self.scale), 0.0)
-        scale = np.exp(np.clip(log_scale, -SCALE_CLIP, SCALE_CLIP))
-        return REDUCTIONS[self.op](np.stack(terms)) + scale * noise
+        return REDUCTIONS[self.op](np.stack(terms)) + noise
 
 
 MECHANISMS: dict[str, type] = {

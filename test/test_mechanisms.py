@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from plurel.distributions import Beta, Mixture, Normal
+from plurel.distributions import Mixture, Normal
 from plurel.mechanisms import (
     MECHANISMS,
     REDUCTIONS,
@@ -27,7 +27,7 @@ TERMS = (
 )
 EXAMPLES = {
     "root": Root(dim=3, noise=Mixture((Normal(-2.0), Normal(2.0)))),
-    "combine": Combine(TERMS, scale=(LinearEffect("y", 0.3),), noise=Normal(std=0.5)),
+    "combine": Combine(TERMS, noise=Normal(std=0.5)),
 }
 
 
@@ -70,12 +70,3 @@ def test_lookup_effects_share_the_level_binning(parents):
     lookup = LookupEffect("s", (10.0, 20.0, 30.0), PROBABILITIES).evaluate(parents)
     np.testing.assert_array_equal(lookup, np.asarray([10.0, 20.0, 30.0])[levels])
     assert set(np.unique(levels)) == {0, 1, 2}
-
-
-def test_noise_takes_any_distribution_and_scale_effects_modulate_it(parents):
-    mechanism = Combine(scale=(LinearEffect("y", 1.0),), noise=Beta(2.0, 2.0, low=-1.0, high=1.0))
-    draw = mechanism.sample_noise(N, np.random.default_rng(2))
-    assert draw.min() >= -1.0 and draw.max() <= 1.0
-    scaled = mechanism.evaluate(parents, np.ones((N, 1)))
-    np.testing.assert_allclose(scaled, np.exp(np.clip(parents["y"], -3.0, 3.0)))
-    assert Combine(TERMS, scale=mechanism.scale).parents == ("x", "s", "y")
