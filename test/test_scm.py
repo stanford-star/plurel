@@ -19,11 +19,12 @@ MECHANISMS = {
     "cluster": Combine((NearestEffect("h", np.eye(3)),), noise=None),
     "embedding": Combine((MatrixEffect("segment", TABLE),), noise=None),
 }
+COLUMNS = {name: Column(name) for name in ("y", "xz", "x", "z")}
 
 
 @pytest.fixture
 def scm():
-    return SCM(MECHANISMS)
+    return SCM(MECHANISMS, COLUMNS)
 
 
 def test_simulate_evaluates_every_node_in_topological_order(scm):
@@ -59,13 +60,13 @@ def test_interventions_replace_a_node_and_keep_common_random_numbers(scm):
 
 def test_construction_rejects_unknown_parents_and_cycles():
     with pytest.raises(ValueError):
-        SCM({"y": Combine((LinearEffect("x"),))})
+        SCM({"y": Combine((LinearEffect("x"),))}, {})
     with pytest.raises(ValueError):
-        SCM({"a": Combine((LinearEffect("b"),)), "b": Combine((LinearEffect("a"),))})
+        SCM({"a": Combine((LinearEffect("b"),)), "b": Combine((LinearEffect("a"),))}, {})
 
 
 def test_simulate_rejects_a_node_that_breaks_its_declared_width():
-    scm = SCM({"h": Root(dim=3), "y": Combine((LinearEffect("h"),))})
+    scm = SCM({"h": Root(dim=3), "y": Combine((LinearEffect("h"),))}, {})
     with pytest.raises(ValueError, match="declared"):
         scm.simulate(N, seed=0)
 

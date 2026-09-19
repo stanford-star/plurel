@@ -19,9 +19,7 @@ def _intervention(value: float | np.ndarray, n: int, dim: int) -> np.ndarray:
 
 
 class SCM:
-    def __init__(
-        self, mechanisms: Mapping[str, Mechanism], columns: Mapping[str, Column] | None = None
-    ) -> None:
+    def __init__(self, mechanisms: Mapping[str, Mechanism], columns: Mapping[str, Column]) -> None:
         self.mechanisms = dict(mechanisms)
         for child, mechanism in self.mechanisms.items():
             unknown = set(mechanism.parents) - set(self.mechanisms)
@@ -32,12 +30,6 @@ class SCM:
             self.order = tuple(TopologicalSorter(parents).static_order())
         except CycleError as error:
             raise ValueError("mechanisms must form a directed acyclic graph") from error
-        if columns is None:
-            columns = {
-                name: Column(name)
-                for name, mechanism in self.mechanisms.items()
-                if mechanism.dim == 1
-            }
         self.columns = dict(columns)
         for name, column in self.columns.items():
             if column.node not in self.mechanisms:
