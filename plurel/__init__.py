@@ -39,11 +39,13 @@ from plurel.mechanisms import (
     nested_logits,
 )
 from plurel.random import Seed, generator
+from plurel.scm import SCM, Interventions
 
 __all__ = [
     "DISTRIBUTIONS",
     "EFFECTS",
     "MECHANISMS",
+    "SCM",
     "REDUCTIONS",
     "TRANSFORMS",
     "AutoRegressive",
@@ -56,6 +58,7 @@ __all__ = [
     "Exponential",
     "FourierEffect",
     "Gumbel",
+    "Interventions",
     "LogNormal",
     "LinearEffect",
     "LookupEffect",
