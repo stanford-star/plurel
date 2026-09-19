@@ -57,60 +57,14 @@ $ pixi run pre-commit install
 ```
 
 
-## Synthesize Relational Data from Scratch
+## Status: v2 in progress
 
-- The `SyntheticDataset` class can be used to create [relbench](https://github.com/stanford-star/relbench) compatible dataset objects. With a `cache_dir` set, `get_db()` writes the dataset in `relbench` format (`manifest.yaml` + `db/*.parquet`), ready for `relbench.load.load_dataset`.
-- It only requires a `seed` and a `Config` object that contains `database`, `scm` and `dag` level params for sampling. See example below.
-
-```py
-from plurel import SyntheticDataset, Config
-
-# create relbench compatible dataset
-dataset = SyntheticDataset(seed=0, config=Config())
-
-# create database which can be cached via relbench APIs
-db = dataset.make_db()
-```
-
-### Configuration
-
-The `Config` class controls all aspects of synthetic database generation through three parameter groups:
-
-| Parameters | Description |
-|-----------------|-------------|
-| `DatabaseParams` | Table layout (`BarabasiAlbert`, `ReverseRandomTree`, `WattsStrogatz`, `Layered`), number of tables, row counts, column counts, timestamp ranges, and column post-processing (transforms, zero inflation, NaN rate). |
-| `SCMParams` | SCM graph layouts, column types, MLP initialization, activation functions, noise distributions, and time-series trend/cycle parameters. |
-| `DAGParams` | DAG-specific parameters like edge dropout, in-degree limits, and rewiring probabilities for different graph types. |
-
-```py
-from plurel import Config, DatabaseParams, SCMParams
-
-config = Config(
-    database_params=DatabaseParams(num_tables_choices=Choices(kind="range", value=[5, 10])),
-    schema_file="path/to/schema.sql",  # optional: generate from SQL schema
-    cache_dir="~/.cache/relbench",       # optional: cache generated databases
-)
-```
-
-### Scalable Generation
-
-We also provide a multiprocessing-based script to generate databases in parallel.
-
-```bash
-$ pixi run python scripts/synthetic_gen.py \
-    --seed_offset 0 \
-    --num_dbs 1000 \
-    --num_proc 16
-```
-
-| Argument | Description |
-|----------|-------------|
-| `--seed_offset` | Seed offset for database generation. DBs will be named `plurel-<seed>` (override with `--db_prefix`). |
-| `--num_dbs` | Number of databases to generate. |
-| `--num_proc` | Number of parallel processes (default: number of CPU cores). |
-
-> [!NOTE]
-> See [`examples/generation/`](examples/generation/) for a notebook that synthesizes from a SQL schema.
+This branch rebuilds PluRel's core around a realized structural causal model API: one `SCM` per
+table with explicit, inspectable mechanisms; a `Schema` that links tables through foreign keys
+and lets child tables influence parent rows; a `Prior` that samples realized schemas; and
+`sample()` for observational or interventional databases in the `relbench` format. The v1
+generator and the paper-exact code remain at the [`v1.1.0`](https://github.com/stanford-star/plurel/tree/v1.1.0)
+and [`v1.0.0`](https://github.com/stanford-star/plurel/tree/v1.0.0) tags.
 
 ## Citation
 
