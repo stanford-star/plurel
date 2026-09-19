@@ -233,6 +233,10 @@ class TablePrior:
     time_probability: float = 0.5
     time_calendar: Calendar = DEFAULT_CALENDAR
 
+    def __post_init__(self) -> None:
+        if set(self.effect_families.values) <= set(PRESERVING):
+            raise ValueError("effect_families needs a family that can change width")
+
     def warp(self, rng: np.random.Generator) -> "TablePrior":
         knobs = {
             field.name: getattr(self, field.name).warp(rng)
@@ -393,7 +397,7 @@ class SchemaPrior:
             raise ValueError(f"row counts must allow {clusters} link clusters")
 
     def realize(self, seed: Seed = None) -> Schema:
-        rng = generator(seed)
+        rng, _ = generator(seed).spawn(2)
         n = self.table_count.draw(rng)
         parents = self.table_layouts.draw(rng).sample(n, rng)
         priors = [self.table_prior.warp(rng) for _ in range(n)]
@@ -420,7 +424,7 @@ class SchemaPrior:
         return Schema(tables, tuple(fkeys))
 
     def rows(self, schema: Schema, seed: Seed = None) -> dict[str, int]:
-        rng = generator(seed)
+        _, rng = generator(seed).spawn(2)
         referenced = {fk.parent for fk in schema.fkeys if fk.parent != fk.table}
         return {
             table: (self.entity_row_count if table in referenced else self.activity_row_count).draw(
