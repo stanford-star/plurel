@@ -168,14 +168,9 @@ class AutoRegressive:
             raise ValueError("scale must be non-negative")
 
     def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
-        innovations = rng.normal(0.0, self.scale, n)
-        if self.rho == 0.0:
-            return innovations
-        out = np.empty(n)
-        state = 0.0
-        for index in range(n):
-            state = self.rho * state + innovations[index]
-            out[index] = state
+        out = rng.normal(0.0, self.scale, n)
+        for index in range(1, n):
+            out[index] += self.rho * out[index - 1]
         return out
 
 
