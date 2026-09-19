@@ -95,6 +95,10 @@ def test_database_wraps_sampled_tables_with_relbench_metadata(schema):
         )
     with pytest.raises(ValueError):
         database(schema, {"customers": frames["customers"]})
+    with pytest.raises(ValueError, match="lacks"):
+        database(schema, {**frames, "orders": frames["orders"].drop(columns="order_id")})
+    with pytest.raises(ValueError, match="datetime"):
+        database(schema, {**frames, "orders": frames["orders"].assign(when=0.0)})
 
 
 def test_write_and_read_round_trip(schema, tmp_path):

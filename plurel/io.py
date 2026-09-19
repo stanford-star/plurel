@@ -21,6 +21,11 @@ def database(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> Database:
     tables = {}
     for name, frame in frames.items():
         scm = schema.tables[name]
+        declared = {scm.pkey_column, scm.time_column} - {None}
+        if not declared <= set(frame):
+            raise ValueError(f"frame of {name!r} lacks its declared key or time column")
+        if scm.time_column and not pd.api.types.is_datetime64_any_dtype(frame[scm.time_column]):
+            raise ValueError(f"time column of {name!r} is not a datetime column")
         fkeys = {fk.column: fk.parent for fk in schema.fkeys if fk.table == name}
         table = Table(frame.reset_index(drop=True), fkeys, scm.pkey_column, scm.time_column)
         tables[name] = table

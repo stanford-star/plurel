@@ -67,19 +67,14 @@ class SCM:
             )
             if unknown := nodes - set(self.mechanisms):
                 raise ValueError(f"column {name!r} refers to unknown nodes {sorted(unknown)}")
+        kinds = {name: column.kind for name, column in self.columns.items()}
         for name, column in self.columns.items():
-            if (
-                column.after is not None
-                and self.columns.get(column.after, Column("")).kind != "timestamp"
-            ):
+            if column.after is not None and kinds.get(column.after) != "timestamp":
                 raise ValueError(f"column {name!r} comes after an unknown timestamp column")
-        keys = [name for name, column in self.columns.items() if column.kind == "key"]
+        keys = [name for name, kind in kinds.items() if kind == "key"]
         if len(keys) > 1:
             raise ValueError("a table has at most one key column")
-        if (
-            time_column is not None
-            and self.columns.get(time_column, Column("")).kind != "timestamp"
-        ):
+        if time_column is not None and kinds.get(time_column) != "timestamp":
             raise ValueError(f"time column {time_column!r} must be a timestamp column")
         self.pkey_column = keys[0] if keys else None
         self.time_column = time_column
