@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 import plurel.links
-from plurel.distributions import Pareto
+from plurel.distributions import Pareto, Uniform
 from plurel.links import LINKS, HSBMLink, Link, RandomLink, TreeLink, clusters
 
 EXAMPLES = {
@@ -52,7 +52,7 @@ def test_cluster_shares_set_unequal_sizes():
     np.testing.assert_array_equal(clusters(7, (2, 2)), equal)
     skewed = [[0, 0], [0, 1], [0, 1], [1, 0], [1, 1], [1, 1], [1, 1]]
     np.testing.assert_array_equal(clusters(7, (2, 2), shares=(1, 1, 1, 4)), skewed)
-    link = HSBMLink((4,), (4,), between=(1e-6, 2e-6), cluster_weights=Pareto(1.0))
+    link = HSBMLink((4,), (4,), between=Uniform(1e-6, 2e-6), cluster_weights=Pareto(1.0))
     parents = link.sample(4000, 400, np.random.default_rng(0))
     draws = np.random.default_rng(0)
     parent_labels = link.labels(400, (4,), draws)[:, 0]
@@ -87,8 +87,6 @@ def test_links_reject_unexpected_sizes_shares_and_parameters():
         {"parent_clusters": (0,), "child_clusters": (1,)},
         {"parent_clusters": (2,), "child_clusters": (2, 2)},
         {"within": 0.0},
-        {"between": (0.0, 0.1)},
-        {"between": (0.2, 0.1)},
         {"inactive": 1.0},
     ):
         with pytest.raises(ValueError):
@@ -98,6 +96,8 @@ def test_links_reject_unexpected_sizes_shares_and_parameters():
             clusters(7, (2, 2), shares=shares)
     for link, n_child, n_parent in (
         (HSBMLink((4,), (4,)), 100, 3),
+        (HSBMLink((2,), (2,), within=Uniform(-1.0, 1.0)), 100, 10),
+        (HSBMLink((2,), (2,), between=Uniform(-1.0, 1.0)), 100, 10),
         (HSBMLink((1,), (4,)), 3, 100),
         (HSBMLink((2,), (2,), inactive=0.9), 100, 3),
         (HSBMLink(cluster_weights=Weights(np.nan)), 100, 10),
@@ -140,7 +140,13 @@ def test_hsbm_draws_do_not_depend_on_chunking(monkeypatch):
 
 
 def test_hsbm_matches_the_closed_form_distribution():
-    link = HSBMLink((2, 3), (2, 2), within=0.7, between=(0.05, 0.2), attractiveness=Pareto(2.0))
+    link = HSBMLink(
+        (2, 3),
+        (2, 2),
+        within=Uniform(0.4, 0.9),
+        between=Pareto(1.0, 0.01),
+        attractiveness=Pareto(2.0),
+    )
     n_child, n_parent = 30_000, 6
     parents = link.sample(n_child, n_parent, np.random.default_rng(7))
     rng = np.random.default_rng(7)
@@ -190,3 +196,14 @@ def test_links_hold_their_invariants_under_random_configurations():
         for p, c in zip(link.parent_clusters, link.child_clusters):
             link.affinity(p, c, draws)
         assert np.isfinite(link.log_weights(n_parent, draws)[parents]).all()
+
+
+def test_affinities_can_vary_per_block_and_per_pair():
+    rng = np.random.default_rng(0)
+    fixed = HSBMLink().affinity(3, 3, rng)
+    assert (np.diag(fixed) == 0.9).all() and (fixed[~np.eye(3, dtype=bool)] < 0.9).all()
+    varied = HSBMLink(within=Uniform(0.2, 0.9), between=Pareto(1.0, 0.01)).affinity(3, 3, rng)
+    diagonal = np.diag(varied)
+    assert (0.2 <= diagonal).all() and (diagonal <= 0.9).all() and len(set(diagonal)) == 3
+    off = varied[~np.eye(3, dtype=bool)]
+    assert off.min() > 0 and off.max() > 10 * off.min()

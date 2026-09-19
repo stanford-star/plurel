@@ -3,7 +3,7 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from plurel.distributions import Distribution
+from plurel.distributions import Distribution, Uniform
 
 CHUNK_BYTES = 20_000_000
 
@@ -59,8 +59,8 @@ def _draw(log_p: np.ndarray, rng: np.random.Generator) -> np.ndarray:
 class HSBMLink:
     parent_clusters: tuple[int, ...] = (1,)
     child_clusters: tuple[int, ...] = (1,)
-    within: float = 0.9
-    between: tuple[float, float] = (0.001, 0.002)
+    within: float | Distribution = 0.9
+    between: Distribution = Uniform(0.001, 0.002)
     cluster_weights: Distribution | None = None
     attractiveness: Distribution | None = None
     inactive: float = 0.0
@@ -70,8 +70,8 @@ class HSBMLink:
         _check_counts(self.child_clusters)
         if len(self.parent_clusters) != len(self.child_clusters):
             raise ValueError("one cluster count per level on both sides")
-        if self.within <= 0 or not 0 < self.between[0] <= self.between[1]:
-            raise ValueError("within and between affinities must be positive, between ascending")
+        if not isinstance(self.within, Distribution) and self.within <= 0:
+            raise ValueError("within affinity must be positive")
         if not 0.0 <= self.inactive < 1.0:
             raise ValueError("inactive must be in [0, 1)")
 
@@ -81,9 +81,14 @@ class HSBMLink:
         return clusters(n, counts, self.cluster_weights.sample(int(np.prod(counts)), rng))
 
     def affinity(self, parent: int, child: int, rng: np.random.Generator) -> np.ndarray:
-        affinity = rng.uniform(*self.between, (parent, child))
+        affinity = self.between.sample(parent * child, rng).reshape(parent, child)
         index = np.arange(max(parent, child))
-        affinity[index % parent, index % child] = self.within
+        within = self.within
+        if isinstance(within, Distribution):
+            within = within.sample(len(index), rng)
+        affinity[index % parent, index % child] = within
+        if not (np.isfinite(affinity).all() and affinity.min() > 0):
+            raise ValueError("affinities must draw finite positive values")
         return affinity
 
     def log_weights(self, n_parent: int, rng: np.random.Generator) -> np.ndarray:
