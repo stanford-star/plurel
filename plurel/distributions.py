@@ -82,6 +82,8 @@ class Exponential:
 
 @dataclass(frozen=True)
 class Pareto:
+    """Lomax form, ``scale * pareto(alpha)``: the support starts at zero, not at ``scale``."""
+
     alpha: float = 2.0
     scale: float = 1.0
 
