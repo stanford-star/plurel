@@ -27,7 +27,7 @@ TERMS = (
     TransformedProductEffect(("x", "y"), 0.25, "step"),
 )
 EXAMPLES = {
-    "root": Root(Mixture((Normal(-2.0), Normal(2.0))), dim=3),
+    "root": Root(Noise(Mixture((Normal(-2.0), Normal(2.0)))), dim=3),
     "combine": Combine(TERMS, Noise(Normal(std=0.5), (LinearEffect("y", 0.3),))),
 }
 

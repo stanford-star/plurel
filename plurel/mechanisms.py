@@ -192,7 +192,7 @@ class Noise:
 
 @dataclass(frozen=True)
 class Root(Mechanism):
-    distribution: Distribution = field(default_factory=Normal)
+    noise: Noise = field(default_factory=Noise)
     dim: int = 1
 
     @property
@@ -200,7 +200,7 @@ class Root(Mechanism):
         return ()
 
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
-        return np.stack([self.distribution.sample(n, rng) for _ in range(self.dim)], axis=1)
+        return self.noise.sample(n, rng, self.dim)
 
     def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
         return noise
