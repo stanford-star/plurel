@@ -41,9 +41,11 @@ from plurel.mechanisms import (
     nested_logits,
 )
 from plurel.random import Seed, generator
+from plurel.schema import AGGREGATES, FK, Port, Schema
 from plurel.scm import SCM, Interventions
 
 __all__ = [
+    "AGGREGATES",
     "DEFAULT_CALENDAR",
     "DISTRIBUTIONS",
     "EFFECTS",
@@ -51,6 +53,7 @@ __all__ = [
     "MECHANISMS",
     "REDUCTIONS",
     "SCM",
+    "Schema",
     "TRANSFORMS",
     "AutoRegressive",
     "Beta",
@@ -61,6 +64,7 @@ __all__ = [
     "Distribution",
     "Effect",
     "Exponential",
+    "FK",
     "FourierEffect",
     "Gumbel",
     "HSBMLink",
@@ -77,6 +81,7 @@ __all__ = [
     "Normal",
     "Pareto",
     "Poisson",
+    "Port",
     "QuadraticEffect",
     "RandomLink",
     "Root",

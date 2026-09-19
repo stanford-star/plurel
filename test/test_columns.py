@@ -95,3 +95,21 @@ def test_missingness_is_a_rate_or_an_indicator_node(latent):
     assert mnar.isna().to_numpy().tolist() == (latent.ravel() > 1.0).tolist()
     with pytest.raises(ValueError):
         Column("x", missing="hidden").observe({"x": latent, "hidden": np.eye(3)[[0] * N]}, rng)
+
+
+def test_nan_latents_and_empty_one_hot_rows_observe_as_missing(latent):
+    holed = latent.copy()
+    holed[:5] = np.nan
+    binned = observe(
+        Column("x", "categorical", categories=CATEGORIES, probabilities=PROBABILITIES), holed
+    )
+    assert binned[:5].isna().all() and binned[5:].notna().all()
+    for binning in ("empirical", (-0.5, 0.5)):
+        column = Column("x", "categorical", categories=CATEGORIES, binning=binning)
+        assert observe(column, holed)[:5].isna().all()
+    mapped = observe(Column("x", marginal=Uniform()), holed)
+    assert mapped[:5].isna().all() and mapped[5:].notna().all()
+    one_hot = np.eye(3)[np.arange(N) % 3]
+    one_hot[:5] = 0.0
+    read = observe(Column("h", "categorical", categories=CATEGORIES), one_hot)
+    assert read[:5].isna().all() and read[5:].notna().all()
