@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -141,7 +139,7 @@ class Trend:
             raise ValueError("alpha must be non-negative")
 
     def values(self, t: np.ndarray) -> np.ndarray:
-        return self.scale * t**self.alpha * np.exp(max(0.0, self.alpha - 5.0) * t)
+        return self.scale * t**self.alpha
 
 
 @dataclass(frozen=True)
@@ -205,21 +203,22 @@ class Calendar:
             raise ValueError("start must be before end")
         if len(self.weekday_weights) != 7 or len(self.hour_weights) != 24:
             raise ValueError("seven weekday weights and twenty-four hour weights")
-        if min(self.weekday_weights) < 0 or min(self.hour_weights) < 0:
-            raise ValueError("weights must be non-negative")
+        for weights in (self.weekday_weights, self.hour_weights):
+            if min(weights) < 0 or max(weights) <= 0:
+                raise ValueError("weights must be non-negative with a positive entry")
         if self.oversampling < 1:
             raise ValueError("oversampling must be at least one")
 
     def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         span = (self.end - self.start).total_seconds()
-        candidates = max(n * self.oversampling, n + 1)
+        candidates = n * self.oversampling
         offsets = rng.uniform(0.0, span, candidates)
         stamps = pd.DatetimeIndex(self.start + pd.to_timedelta(offsets, unit="s"))
         weights = (
             np.asarray(self.weekday_weights)[stamps.weekday]
             * np.asarray(self.hour_weights)[stamps.hour]
         )
-        chosen = rng.choice(candidates, n, replace=False, p=weights / weights.sum())
+        chosen = rng.choice(candidates, n, p=weights / weights.sum())
         epoch = self.start.timestamp() + offsets[chosen]
         return np.sort(epoch)
 
