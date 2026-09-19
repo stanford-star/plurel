@@ -1,6 +1,6 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from operator import index as as_index
+from operator import index as as_int
 
 import numpy as np
 import pandas as pd
@@ -14,31 +14,31 @@ Node = tuple[str, str]
 Links = dict[Node, np.ndarray]
 
 
-def _sum(values: np.ndarray, index: np.ndarray, n: int) -> np.ndarray:
+def _sum(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
     out = np.zeros((n, values.shape[1]))
-    np.add.at(out, index, values)
+    np.add.at(out, indices, values)
     return out
 
 
-def _mean(values: np.ndarray, index: np.ndarray, n: int) -> np.ndarray:
-    count = np.bincount(index, minlength=n)[:, None]
-    total = _sum(values, index, n)
+def _mean(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
+    count = np.bincount(indices, minlength=n)[:, None]
+    total = _sum(values, indices, n)
     return np.divide(total, count, out=np.full_like(total, np.nan), where=count > 0)
 
 
 def _extreme(op: np.ufunc, start: float) -> Callable[..., np.ndarray]:
-    def aggregate(values: np.ndarray, index: np.ndarray, n: int) -> np.ndarray:
+    def aggregate(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
         out = np.full((n, values.shape[1]), start)
-        op.at(out, index, values)
-        out[np.bincount(index, minlength=n) == 0] = np.nan
+        op.at(out, indices, values)
+        out[np.bincount(indices, minlength=n) == 0] = np.nan
         return out
 
     return aggregate
 
 
 AGGREGATES: dict[str, Callable[..., np.ndarray]] = {
-    "count": lambda values, index, n: np.bincount(index, minlength=n)[:, None].astype(float),
-    "sum": lambda values, index, n: _sum(values, index, n),
+    "count": lambda values, indices, n: np.bincount(indices, minlength=n)[:, None].astype(float),
+    "sum": lambda values, indices, n: _sum(values, indices, n),
     "mean": _mean,
     "max": _extreme(np.maximum, -np.inf),
     "min": _extreme(np.minimum, np.inf),
@@ -79,14 +79,14 @@ class Port(Mechanism):
     def evaluate(self, latents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
         return exogenous
 
-    def resolve(self, source: np.ndarray, index: np.ndarray, n: int) -> np.ndarray:
-        linked = index >= 0
+    def resolve(self, source: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
+        linked = indices >= 0
         if self.aggregate is not None:
-            out = AGGREGATES[self.aggregate](source[linked], index[linked], n)
-            empty = np.bincount(index[linked], minlength=n) == 0
+            out = AGGREGATES[self.aggregate](source[linked], indices[linked], n)
+            empty = np.bincount(indices[linked], minlength=n) == 0
         else:
             out = np.empty((n, self.dim))
-            out[linked] = source[index[linked]]
+            out[linked] = source[indices[linked]]
             empty = ~linked
         if empty.any() and self.aggregate not in COMPLETE:
             if self.fill is None:
@@ -151,10 +151,10 @@ class Schema:
                 raise ValueError(f"link {fk.column!r} must return one integer per child row")
             if len(drawn) and (drawn.min() < -1 or drawn.max() >= rows[fk.parent]):
                 raise ValueError(f"link {fk.column!r} points outside the parent table")
-            index = drawn.astype(np.int64)
+            indices = drawn.astype(np.int64)
             if fk.nullable:
-                index[stream.random(len(index)) < fk.nullable] = -1
-            links[fk.table, fk.column] = index
+                indices[stream.random(len(indices)) < fk.nullable] = -1
+            links[fk.table, fk.column] = indices
         return links
 
     def evaluate(
@@ -170,8 +170,8 @@ class Schema:
         if node in self.ports and name not in interventions.get(table, {}):
             port, fk = self.ports[node]
             source = latents[port.table][port.node]
-            index = links[fk.table, fk.column]
-            latent = port.resolve(source, index, rows[table])
+            indices = links[fk.table, fk.column]
+            latent = port.resolve(source, indices, rows[table])
             if latent.shape != (rows[table], port.dim):
                 raise ValueError(
                     f"{name!r} produced {latent.shape}, declared {(rows[table], port.dim)}"
@@ -208,8 +208,8 @@ class Schema:
             frame = scm.observe(latents[table], stream, rows[table])
             for fk in self.fkeys:
                 if fk.table == table:
-                    index = links[table, fk.column]
-                    frame[fk.column] = pd.Series(index, dtype="Int64").mask(index < 0)
+                    indices = links[table, fk.column]
+                    frame[fk.column] = pd.Series(indices, dtype="Int64").mask(indices < 0)
             frames[table] = frame
         return frames
 
@@ -230,7 +230,7 @@ class Schema:
         interventions: Mapping[str, Interventions] | None = None,
     ) -> tuple[dict[str, pd.DataFrame], dict[str, dict[str, np.ndarray]]]:
         try:
-            rows = {table: as_index(n) for table, n in rows.items()}
+            rows = {table: as_int(n) for table, n in rows.items()}
         except TypeError as error:
             raise ValueError("row counts must be integers") from error
         if set(rows) != set(self.tables) or min(rows.values(), default=0) < 0:
