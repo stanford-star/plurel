@@ -26,7 +26,7 @@ def customers(pkey="customer_id"):
             "spend": Port("orders", "amount", aggregate="sum"),
         },
         CUSTOMER_COLUMNS,
-        pkey=pkey,
+        pkey_column=pkey,
     )
 
 
@@ -38,8 +38,8 @@ def orders(pkey="order_id", time="when"):
             "amount": Combine((LinearEffect("when"),), noise=Normal(std=0.5)),
         },
         ORDER_COLUMNS,
-        pkey=pkey,
-        time=time,
+        pkey_column=pkey,
+        time_column=time,
     )
 
 
@@ -58,7 +58,7 @@ def test_tables_declare_their_keys_and_time():
         orders(time="nothing")
     with pytest.raises(ValueError, match="collides"):
         orders(pkey="amount")
-    assert orders(pkey=None, time=None).pkey is None
+    assert orders(pkey=None, time=None).pkey_column is None
 
 
 def test_database_adds_primary_keys_and_relbench_metadata(schema):

@@ -49,8 +49,8 @@ class SCM:
         self,
         mechanisms: Mapping[str, Mechanism],
         columns: Mapping[str, Column],
-        pkey: str | None = None,
-        time: str | None = None,
+        pkey_column: str | None = None,
+        time_column: str | None = None,
     ) -> None:
         self.mechanisms = dict(mechanisms)
         for child, mechanism in self.mechanisms.items():
@@ -67,14 +67,16 @@ class SCM:
             )
             if unknown := nodes - set(self.mechanisms):
                 raise ValueError(f"column {name!r} refers to unknown nodes {sorted(unknown)}")
-        if pkey is not None and pkey in self.columns:
-            raise ValueError(f"primary key {pkey!r} collides with a column")
-        if time is not None and not isinstance(
-            self.columns.get(time, Column("")).marginal, Calendar
+        if pkey_column is not None and pkey_column in self.columns:
+            raise ValueError(f"primary key {pkey_column!r} collides with a column")
+        if time_column is not None and not isinstance(
+            self.columns.get(time_column, Column("")).marginal, Calendar
         ):
-            raise ValueError(f"time column {time!r} must be a column with a Calendar marginal")
-        self.pkey = pkey
-        self.time = time
+            raise ValueError(
+                f"time column {time_column!r} must be a column with a Calendar marginal"
+            )
+        self.pkey_column = pkey_column
+        self.time_column = time_column
 
     def evaluate(
         self,

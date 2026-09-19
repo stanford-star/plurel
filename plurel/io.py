@@ -13,20 +13,22 @@ from plurel.schema import Schema
 def database(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> Database:
     if set(frames) != set(schema.tables):
         raise ValueError("one frame per table of the schema")
-    if missing := {fk.parent for fk in schema.fkeys if schema.tables[fk.parent].pkey is None}:
+    if missing := {
+        fk.parent for fk in schema.fkeys if schema.tables[fk.parent].pkey_column is None
+    }:
         raise ValueError(
             f"tables referenced by a foreign key need a primary key: {sorted(missing)}"
         )
     tables = {}
     for name, frame in frames.items():
         scm = schema.tables[name]
-        if scm.pkey in frame:
-            raise ValueError(f"table {name!r} already has a column {scm.pkey!r}")
+        if scm.pkey_column in frame:
+            raise ValueError(f"table {name!r} already has a column {scm.pkey_column!r}")
         df = frame.reset_index(drop=True)
-        if scm.pkey is not None:
-            df = pd.concat([pd.Series(np.arange(len(frame)), name=scm.pkey), df], axis=1)
+        if scm.pkey_column is not None:
+            df = pd.concat([pd.Series(np.arange(len(frame)), name=scm.pkey_column), df], axis=1)
         fkeys = {fk.column: fk.parent for fk in schema.fkeys if fk.table == name}
-        tables[name] = Table(df, fkeys, pkey_col=scm.pkey, time_col=scm.time)
+        tables[name] = Table(df, fkeys, pkey_col=scm.pkey_column, time_col=scm.time_column)
     return Database(tables)
 
 
