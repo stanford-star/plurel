@@ -8,11 +8,8 @@ from plurel.mechanisms import (
     Combine,
     LinearEffect,
     LookupEffect,
-    LookupScaleEffect,
     Mechanism,
-    ProductEffect,
     Root,
-    TransformedProductEffect,
     bin_levels,
 )
 
@@ -21,9 +18,7 @@ PROBABILITIES = (0.2, 0.5, 0.3)
 TERMS = (
     LinearEffect("x", 1.5, "tanh"),
     LookupEffect("s", (10.0, 20.0, 30.0), PROBABILITIES),
-    ProductEffect(("x", "y"), 0.5),
-    LookupScaleEffect("s", "y", (2.0, -3.0, 1.0), PROBABILITIES),
-    TransformedProductEffect(("x", "y"), 0.25, "step"),
+    LinearEffect("y", 0.5, "exp"),
 )
 EXAMPLES = {
     "root": Root(dim=3, noise=Mixture((Normal(-2.0), Normal(2.0)))),
@@ -61,3 +56,14 @@ def test_lookup_effects_share_the_level_binning(parents):
     lookup = LookupEffect("s", (10.0, 20.0, 30.0), PROBABILITIES).evaluate(parents)
     np.testing.assert_array_equal(lookup, np.asarray([10.0, 20.0, 30.0])[levels])
     assert set(np.unique(levels)) == {0, 1, 2}
+
+
+def test_interactions_are_product_nodes(parents):
+    zeros = np.zeros((N, 1))
+    product = Combine((LinearEffect("x", 1.0), LinearEffect("y", 1.0)), op="product")
+    interaction = product.evaluate(parents, zeros)
+    np.testing.assert_allclose(interaction, parents["x"] * parents["y"])
+    target = Combine((LinearEffect("x", 2.0), LinearEffect("h", -0.5)))
+    values = target.evaluate({**parents, "h": interaction}, zeros)
+    np.testing.assert_allclose(values, 2.0 * parents["x"] - 0.5 * parents["x"] * parents["y"])
+    assert target.parents == ("x", "h")

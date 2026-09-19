@@ -15,6 +15,7 @@ TRANSFORMS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
     "square": lambda x: x**2 - 1.0,
     "step": lambda x: np.where(x > 0.0, 0.8, -0.8),
     "cube": lambda x: np.clip(x, -3.0, 3.0) ** 3 / 9.0,
+    "exp": lambda x: np.exp(np.clip(x, -2.5, 2.5)),
 }
 TRANSFORM_NAMES = tuple(TRANSFORMS)
 
@@ -22,7 +23,7 @@ REDUCTIONS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
     "sum": lambda terms: terms.sum(0),
     "max": lambda terms: terms.max(0),
     "min": lambda terms: terms.min(0),
-    "product": lambda terms: np.expm1(np.clip(terms.sum(0), -2.5, 2.5)),
+    "product": lambda terms: terms.prod(0),
 }
 
 
@@ -56,12 +57,9 @@ def _draw(distribution: Distribution, n: int, rng: np.random.Generator, dim: int
     return np.stack([distribution.sample(n, rng) for _ in range(dim)], axis=1)
 
 
+@dataclass(frozen=True)
 class Effect:
-    parents: tuple[str, ...]
-
-    @property
-    def key(self) -> str | tuple[str, ...]:
-        return self.parents[0] if len(self.parents) == 1 else self.parents
+    parent: str
 
     def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
         raise NotImplementedError
@@ -69,13 +67,8 @@ class Effect:
 
 @dataclass(frozen=True)
 class LinearEffect(Effect):
-    parent: str
     weight: float
     transform: Function = "linear"
-
-    @property
-    def parents(self) -> tuple[str, ...]:
-        return (self.parent,)
 
     def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
         return self.weight * apply_transform(self.transform, values[self.parent])
@@ -83,7 +76,6 @@ class LinearEffect(Effect):
 
 @dataclass(frozen=True)
 class LookupEffect(Effect):
-    parent: str
     values: tuple[float, ...]
     probabilities: tuple[float, ...] | None = None
 
@@ -92,64 +84,9 @@ class LookupEffect(Effect):
             raise ValueError("at least two level values")
         _check_probabilities(self.probabilities, len(self.values))
 
-    @property
-    def parents(self) -> tuple[str, ...]:
-        return (self.parent,)
-
     def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
         probabilities = self.probabilities or _uniform(len(self.values))
         return np.asarray(self.values)[bin_levels(values[self.parent], probabilities)]
-
-
-@dataclass(frozen=True)
-class ProductEffect(Effect):
-    parents: tuple[str, str]
-    weight: float
-
-    def __post_init__(self) -> None:
-        if len(set(self.parents)) != 2:
-            raise ValueError("two distinct parents")
-
-    def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
-        left, right = self.parents
-        return self.weight * values[left] * values[right]
-
-
-@dataclass(frozen=True)
-class LookupScaleEffect(Effect):
-    selector: str
-    scaled: str
-    scales: tuple[float, ...]
-    probabilities: tuple[float, ...] | None = None
-
-    def __post_init__(self) -> None:
-        if len(self.scales) < 2 or self.selector == self.scaled:
-            raise ValueError("at least two scales over two distinct parents")
-        _check_probabilities(self.probabilities, len(self.scales))
-
-    @property
-    def parents(self) -> tuple[str, ...]:
-        return (self.selector, self.scaled)
-
-    def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
-        probabilities = self.probabilities or _uniform(len(self.scales))
-        levels = bin_levels(values[self.selector], probabilities)
-        return np.asarray(self.scales)[levels] * values[self.scaled]
-
-
-@dataclass(frozen=True)
-class TransformedProductEffect(Effect):
-    parents: tuple[str, ...]
-    weight: float
-    transform: Function = "linear"
-
-    def __post_init__(self) -> None:
-        if len(set(self.parents)) != len(self.parents) or len(self.parents) < 2:
-            raise ValueError("two or more distinct parents")
-
-    def evaluate(self, values: dict[str, np.ndarray]) -> np.ndarray:
-        terms = [apply_transform(self.transform, values[parent]) for parent in self.parents]
-        return self.weight * np.prod(terms, axis=0)
 
 
 @dataclass(frozen=True)
@@ -184,7 +121,7 @@ class Combine(Mechanism):
 
     @property
     def parents(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(p for effect in self.effects for p in effect.parents))
+        return tuple(dict.fromkeys(effect.parent for effect in self.effects))
 
     def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
         terms = [effect.evaluate(parents) for effect in self.effects] or [np.zeros_like(noise)]
