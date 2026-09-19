@@ -366,6 +366,11 @@ class SchemaPrior:
     time_follow_probability: float = 0.7
     time_delay: Range = LogRange(3600.0, 90 * 24 * 3600.0)
 
+    def __post_init__(self) -> None:
+        clusters = self.link_cluster_count.high**self.link_level_count.high
+        if min(self.entity_row_count.low, self.activity_row_count.low) < clusters:
+            raise ValueError(f"row counts must allow {clusters} link clusters")
+
     def realize(self, seed: Seed = None) -> Schema:
         rng = generator(seed)
         n = self.table_count.draw(rng)
@@ -427,17 +432,18 @@ class SchemaPrior:
             for name, m in parent.mechanisms.items()
             if not isinstance(m, Port) and name not in parent.timestamp_nodes
         ]
-        if fk.table == fk.parent:
-            sources = [name for name in sources if not parent.mechanisms[name].parents]
         consumers = [
             name
             for name, m in child.mechanisms.items()
             if not isinstance(m, Port) and name not in child.timestamp_nodes
         ]
+        if fk.table == fk.parent:
+            sources = [name for name in sources if not parent.mechanisms[name].parents]
+            consumers = [name for name in consumers if child.mechanisms[name].parents]
         mechanisms = dict(child.mechanisms)
-        for _ in range(min(self.gather_count.draw(rng), len(sources), len(consumers))):
-            source = str(rng.choice(sources))
-            consumer = str(rng.choice([name for name in consumers if name != source]))
+        count = min(self.gather_count.draw(rng), len(sources), len(consumers))
+        for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
+            consumer = str(rng.choice(consumers))
             port = f"{fk.column}_{source}"
             mechanisms[port] = Port(
                 fk.parent, source, via=fk.column, fill=0.0, dim=parent.mechanisms[source].dim
@@ -456,8 +462,9 @@ class SchemaPrior:
             if m.dim == 1 and not isinstance(m, Port) and name not in child.timestamp_nodes
         ]
         mechanisms, columns = dict(parent.mechanisms), dict(parent.columns)
-        for _ in range(min(self.aggregate_count.draw(rng), len(sources))):
-            source, how = str(rng.choice(sources)), self.aggregates.draw(rng)
+        count = min(self.aggregate_count.draw(rng), len(sources))
+        for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
+            how = self.aggregates.draw(rng)
             name = f"{fk.table}_{source}_{how}"
             fill = None if how in ("count", "sum") else 0.0
             mechanisms[name] = Port(fk.table, source, via=fk.column, aggregate=how, fill=fill)

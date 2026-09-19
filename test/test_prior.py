@@ -152,3 +152,25 @@ def test_schema_prior_knobs_switch_cross_table_structure_off():
         assert all(fk.table != fk.parent for fk in schema.fkeys)
         frames = schema.sample(quiet.rows(schema, seed), seed=seed)
         assert all(frames[fk.table][fk.column].notna().all() for fk in schema.fkeys)
+
+
+def test_schema_prior_edge_cases():
+    single = SchemaPrior(**SMALL, table_count=IntegersRange(1, 1), self_reference_probability=1.0)
+    for seed in range(6):
+        schema = single.realize(seed)
+        assert len(schema.tables) == 1 and all(fk.table == fk.parent for fk in schema.fkeys)
+        schema.sample(single.rows(schema, seed), seed=seed)
+    tiny = SchemaPrior(
+        **SMALL,
+        table_count=IntegersRange(1, 1),
+        table_prior=TablePrior(node_count=IntegersRange(1, 2), time_probability=0.0),
+        self_reference_probability=1.0,
+        gather_count=IntegersRange(3, 3),
+    )
+    for seed in range(12):
+        schema = tiny.realize(seed)
+        for (table, name), (port, fk) in schema.ports.items():
+            assert name != port.node and fk.table == fk.parent
+        schema.sample(tiny.rows(schema, seed), seed=seed)
+    with pytest.raises(ValueError, match="clusters"):
+        SchemaPrior(entity_row_count=IntegersRange(5, 10), activity_row_count=IntegersRange(5, 10))
