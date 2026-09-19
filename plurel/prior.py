@@ -34,7 +34,7 @@ def _matrix(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator)
 
 
 def _mlp(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
-    hidden = prior.hidden.draw(rng)
+    hidden = prior.mlp_hidden.draw(rng)
     weights = (
         rng.normal(0.0, 1.0 / np.sqrt(d_in), (d_in, hidden)),
         rng.normal(0.0, 1.0 / np.sqrt(hidden), (hidden, d_out)),
@@ -46,7 +46,7 @@ def _mlp(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) ->
 
 
 def _tree(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
-    trees, depth = prior.trees.draw(rng), prior.depth.draw(rng)
+    trees, depth = prior.tree_count.draw(rng), prior.tree_depth.draw(rng)
     splits = rng.integers(0, d_in, (trees, depth))
     return TreeEffect(
         parent, splits, rng.normal(size=(trees, depth)), rng.normal(size=(trees, 2**depth, d_out))
@@ -54,9 +54,11 @@ def _tree(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -
 
 
 def _fourier(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
-    frequencies = rng.normal(size=(d_in, prior.frequencies)) * rng.uniform(0.5, 3.0)
-    phases = rng.uniform(0.0, 2.0 * np.pi, prior.frequencies)
-    weights = rng.normal(0.0, 1.0 / np.sqrt(prior.frequencies), (prior.frequencies, d_out))
+    frequencies = rng.normal(size=(d_in, prior.fourier_frequencies)) * rng.uniform(0.5, 3.0)
+    phases = rng.uniform(0.0, 2.0 * np.pi, prior.fourier_frequencies)
+    weights = rng.normal(
+        0.0, 1.0 / np.sqrt(prior.fourier_frequencies), (prior.fourier_frequencies, d_out)
+    )
     return FourierEffect(parent, frequencies, phases, weights)
 
 
@@ -157,32 +159,32 @@ META_CONCENTRATION = LogRange(0.1, 10_000.0)
 
 @dataclass(frozen=True)
 class TablePrior:
-    nodes: Range = LogIntegersRange(3, 16)
-    layouts: Choices = Choices(
+    node_count: Range = LogIntegersRange(3, 16)
+    node_layouts: Choices = Choices(
         (RandomCauchy(), RandomCauchy(2.0), BarabasiAlbert(2), Layered(3, 0.2))
     )
-    width: Range = LogIntegersRange(1, 4)
-    categorical: float = 0.3
-    classes: Range = IntegersRange(2, 8)
-    families: Choices = Choices(FAMILIES)
-    ops: Choices = Choices(("sum", "product", "max", "logsumexp"), (6.0, 1.0, 1.0, 1.0))
-    noise: Range = LogRange(0.01, 0.5)
+    node_width: Range = LogIntegersRange(1, 4)
+    node_categorical_share: float = 0.3
+    node_classes: Range = IntegersRange(2, 8)
+    effect_families: Choices = Choices(FAMILIES)
+    combine_ops: Choices = Choices(("sum", "product", "max", "logsumexp"), (6.0, 1.0, 1.0, 1.0))
+    combine_noise: Range = LogRange(0.01, 0.5)
     root_noise: Choices = Choices(
         (Normal(), Uniform(-1.7, 1.7), Mixture((Normal(-1.5, 0.5), Normal(1.5, 0.5))))
     )
-    hidden: Range = LogIntegersRange(2, 16)
-    trees: Range = LogIntegersRange(1, 8)
-    depth: Range = IntegersRange(1, 4)
-    frequencies: int = 16
-    columns: Range = IntegersRange(3, 12)
-    marginals: Choices = Choices(
+    mlp_hidden: Range = LogIntegersRange(2, 16)
+    tree_count: Range = LogIntegersRange(1, 8)
+    tree_depth: Range = IntegersRange(1, 4)
+    fourier_frequencies: int = 16
+    column_count: Range = IntegersRange(3, 12)
+    column_marginals: Choices = Choices(
         (None, Uniform(), LogNormal(), Pareto(2.0), Exponential()), (3.0, 1.0, 1.0, 1.0, 1.0)
     )
-    binned: float = 0.2
-    missing: Range = Range(0.01, 0.1)
-    missing_share: float = 0.3
-    timestamp: float = 0.5
-    calendar: Calendar = DEFAULT_CALENDAR
+    column_binned_share: float = 0.2
+    column_missing: Range = Range(0.01, 0.1)
+    column_missing_share: float = 0.3
+    time_probability: float = 0.5
+    time_calendar: Calendar = DEFAULT_CALENDAR
 
     def warp(self, rng: np.random.Generator) -> "TablePrior":
         knobs = {
@@ -197,23 +199,24 @@ class TablePrior:
         return self.warp(rng).build(rng)
 
     def build(self, rng: np.random.Generator) -> SCM:
-        n = self.nodes.draw(rng)
-        parents = self.layouts.draw(rng).sample(n, rng)
-        categorical = rng.random(n) < self.categorical
+        n = self.node_count.draw(rng)
+        parents = self.node_layouts.draw(rng).sample(n, rng)
+        categorical = rng.random(n) < self.node_categorical_share
         dims = [
-            self.classes.draw(rng) if categorical[i] else self.width.draw(rng) for i in range(n)
+            self.node_classes.draw(rng) if categorical[i] else self.node_width.draw(rng)
+            for i in range(n)
         ]
         mechanisms = {
             f"n{i}": self.mechanism(parents[i], dims, i, categorical[i], rng) for i in range(n)
         }
         columns = {"id": Column(kind="key")}
         feature_nodes = rng.permutation(n)[: rng.integers(1, n + 1)]
-        for c in range(self.columns.draw(rng)):
+        for c in range(self.column_count.draw(rng)):
             i = int(rng.choice(feature_nodes))
             columns[f"col{c}"] = self.column(i, dims[i], categorical[i], rng)
         time_column = None
-        if rng.random() < self.timestamp:
-            mechanisms["time"] = Root(noise=self.calendar)
+        if rng.random() < self.time_probability:
+            mechanisms["time"] = Root(noise=self.time_calendar)
             columns["time"] = Column("time", "timestamp")
             time_column = "time"
         return SCM(mechanisms, columns, time_column=time_column)
@@ -231,25 +234,25 @@ class TablePrior:
             return Softmax(effects, biases=tuple(rng.normal(0.0, 0.5, dims[i])))
         if not effects:
             return Root(dim=dims[i], noise=self.root_noise.draw(rng))
-        op = self.ops.draw(rng) if len(effects) > 1 else "sum"
-        return Combine(effects, op, noise=Normal(std=self.noise.draw(rng)))
+        op = self.combine_ops.draw(rng) if len(effects) > 1 else "sum"
+        return Combine(effects, op, noise=Normal(std=self.combine_noise.draw(rng)))
 
     def effect(
         self, parent: str, d_in: int, d_out: int, block: bool, rng: np.random.Generator
     ) -> Effect:
         preserving = d_in == d_out and not block
-        families = self.families if preserving else self.families.without(PRESERVING)
+        families = self.effect_families if preserving else self.effect_families.without(PRESERVING)
         return BUILDERS[families.draw(rng)](self, parent, d_in, d_out, rng)
 
     def column(self, i: int, dim: int, categorical: bool, rng: np.random.Generator) -> Column:
         node = f"n{i}"
-        missing = self.missing.draw(rng) if rng.random() < self.missing_share else 0.0
+        missing = self.column_missing.draw(rng) if rng.random() < self.column_missing_share else 0.0
         if categorical:
             categories = tuple(f"c{k}" for k in range(dim))
             return Column(node, "categorical", categories=categories, missing=missing)
         slot = int(rng.integers(dim))
-        if rng.random() < self.binned:
-            k = self.classes.draw(rng)
+        if rng.random() < self.column_binned_share:
+            k = self.node_classes.draw(rng)
             probabilities = tuple(float(p) for p in rng.dirichlet(np.ones(k)))
             categories = tuple(f"c{j}" for j in range(k))
             return Column(
@@ -260,4 +263,4 @@ class TablePrior:
                 probabilities=probabilities,
                 missing=missing,
             )
-        return Column(node, dims=slot, marginal=self.marginals.draw(rng), missing=missing)
+        return Column(node, dims=slot, marginal=self.column_marginals.draw(rng), missing=missing)

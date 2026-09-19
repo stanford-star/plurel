@@ -58,7 +58,12 @@ def test_table_prior_realizes_valid_diverse_tables():
 
 
 def test_table_prior_knobs_are_respected():
-    plain = TablePrior(categorical=0.0, timestamp=0.0, binned=0.0, missing_share=0.0)
+    plain = TablePrior(
+        node_categorical_share=0.0,
+        time_probability=0.0,
+        column_binned_share=0.0,
+        column_missing_share=0.0,
+    )
     for seed in range(10):
         scm = plain.realize(seed)
         assert not any(isinstance(m, Softmax) for m in scm.mechanisms.values())
@@ -66,7 +71,7 @@ def test_table_prior_knobs_are_respected():
         assert all(c.kind != "categorical" for c in scm.columns.values())
         assert all(c.missing == 0.0 for c in scm.columns.values())
         assert not scm.sample(50, seed=seed).isna().any().any()
-    single = TablePrior(nodes=IntegersRange(1, 1), columns=IntegersRange(1, 1))
+    single = TablePrior(node_count=IntegersRange(1, 1), column_count=IntegersRange(1, 1))
     scm = single.realize(0)
     assert len(scm.mechanisms) <= 2 and isinstance(scm.mechanisms["n0"], Root | Softmax)
     assert scm.sample(5, seed=0).shape[0] == 5
@@ -83,8 +88,8 @@ def test_warping_gives_each_realization_its_own_style():
     choices = Choices(("a", "b", "c"), (1.0, 1.0, 0.0)).warp(rng)
     assert choices.values == ("a", "b", "c") and choices.weights[2] == 0.0
     prior = TablePrior().warp(rng)
-    assert prior.nodes.shape is not None and prior.families.weights is not None
-    assert prior.categorical == TablePrior().categorical
+    assert prior.node_count.shape is not None and prior.effect_families.weights is not None
+    assert prior.node_categorical_share == TablePrior().node_categorical_share
     meta = [
         np.mean([m.dim for m in TablePrior().realize(seed).mechanisms.values()])
         for seed in range(60)
