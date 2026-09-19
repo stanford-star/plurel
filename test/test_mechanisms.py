@@ -72,75 +72,75 @@ REFERENCE = {
 
 
 @pytest.fixture
-def values():
+def latents():
     rng = np.random.default_rng(0)
     scalars = {name: rng.standard_normal((N, 1)) for name in ("x", "y", "s")}
     return scalars | {"h": rng.standard_normal((N, 3))}
 
 
-def test_every_registered_mechanism_meets_the_contract(values):
+def test_every_registered_mechanism_meets_the_contract(latents):
     assert set(EXAMPLES) == set(MECHANISMS)
     for mechanism in EXAMPLES.values():
         assert isinstance(mechanism, Mechanism)
         exogenous = mechanism.sample_noise(N, np.random.default_rng(1))
         again = mechanism.sample_noise(N, np.random.default_rng(1))
         np.testing.assert_array_equal(exogenous, again)
-        assert mechanism.evaluate(values, exogenous).shape == (N, mechanism.dim)
+        assert mechanism.evaluate(latents, exogenous).shape == (N, mechanism.dim)
 
 
-def test_every_registered_effect_declares_its_width(values):
+def test_every_registered_effect_declares_its_width(latents):
     assert set(EFFECT_EXAMPLES) == set(EFFECTS)
     for effect in EFFECT_EXAMPLES.values():
-        x = values[effect.parent]
+        x = latents[effect.parent]
         assert effect.apply(x).shape == (N, effect.dim)
 
 
-def test_every_reduction_reduces_the_transformed_parents(values):
+def test_every_reduction_reduces_the_transformed_parents(latents):
     assert set(REFERENCE) == set(REDUCTIONS)
-    terms = np.stack([effect.apply(values[effect.parent]) for effect in TERMS])
+    terms = np.stack([effect.apply(latents[effect.parent]) for effect in TERMS])
     for op, reference in REFERENCE.items():
         mechanism = Combine(TERMS, op, noise=None)
         exogenous = mechanism.sample_noise(N, np.random.default_rng(0))
         assert exogenous.shape == (N, mechanism.dim) and not exogenous.any()
-        np.testing.assert_allclose(mechanism.evaluate(values, exogenous), reference(terms))
+        np.testing.assert_allclose(mechanism.evaluate(latents, exogenous), reference(terms))
 
 
-def test_block_effects_set_the_width_and_broadcast(values):
+def test_block_effects_set_the_width_and_broadcast(latents):
     block = MatrixEffect("h", np.ones((3, 2)))
     mixed = Combine((block, LinearEffect("x")), noise=None)
     assert mixed.dim == 2
-    expected = np.repeat(values["h"].sum(1, keepdims=True) + values["x"], 2, axis=1)
-    np.testing.assert_allclose(mixed.evaluate(values, np.zeros((N, 2))), expected)
+    expected = np.repeat(latents["h"].sum(1, keepdims=True) + latents["x"], 2, axis=1)
+    np.testing.assert_allclose(mixed.evaluate(latents, np.zeros((N, 2))), expected)
     assert Combine((block, LinearEffect("x")), op="concat").dim == 3
     assert Combine((LinearEffect("h", dim=3),)).dim == 3
     node = Combine((MLP, TREE), op="logsumexp")
     assert node.dim == 2
-    assert node.evaluate(values, node.sample_noise(N, np.random.default_rng(0))).shape == (N, 2)
+    assert node.evaluate(latents, node.sample_noise(N, np.random.default_rng(0))).shape == (N, 2)
 
 
-def test_lookup_effects_share_the_level_binning(values):
-    levels = bin_levels(values["s"], PROBABILITIES)
-    lookup = LookupEffect("s", (10.0, 20.0, 30.0), PROBABILITIES).apply(values["s"])
+def test_lookup_effects_share_the_level_binning(latents):
+    levels = bin_levels(latents["s"], PROBABILITIES)
+    lookup = LookupEffect("s", (10.0, 20.0, 30.0), PROBABILITIES).apply(latents["s"])
     np.testing.assert_array_equal(lookup, np.asarray([10.0, 20.0, 30.0])[levels])
     assert set(np.unique(levels)) == {0, 1, 2}
 
 
-def test_interactions_are_product_nodes(values):
+def test_interactions_are_product_nodes(latents):
     zeros = np.zeros((N, 1))
     product = Combine((LinearEffect("x"), LinearEffect("y")), op="product")
-    interaction = product.evaluate(values, zeros)
-    np.testing.assert_allclose(interaction, values["x"] * values["y"])
+    interaction = product.evaluate(latents, zeros)
+    np.testing.assert_allclose(interaction, latents["x"] * latents["y"])
     target = Combine((LinearEffect("x", 2.0), LinearEffect("h", -0.5)))
-    out = target.evaluate({**values, "h": interaction}, zeros)
-    np.testing.assert_allclose(out, 2.0 * values["x"] - 0.5 * values["x"] * values["y"])
+    out = target.evaluate({**latents, "h": interaction}, zeros)
+    np.testing.assert_allclose(out, 2.0 * latents["x"] - 0.5 * latents["x"] * latents["y"])
     assert target.parents == ("x", "h")
 
 
-def test_softmax_is_a_gumbel_argmax_over_the_combined_scores(values):
+def test_softmax_is_a_gumbel_argmax_over_the_combined_scores(latents):
     softmax = EXAMPLES["softmax"]
     assert softmax.dim == 3 and softmax.parents == ("x", "y")
-    one_hot = softmax.evaluate(values, np.zeros((N, 3)))
-    scores = np.concatenate([values["x"], -values["x"], 2.0 * values["y"]], axis=1)
+    one_hot = softmax.evaluate(latents, np.zeros((N, 3)))
+    scores = np.concatenate([latents["x"], -latents["x"], 2.0 * latents["y"]], axis=1)
     assert (one_hot.sum(1) == 1).all()
     np.testing.assert_array_equal(one_hot.argmax(1), scores.argmax(1))
     marginal = Softmax(biases=tuple(np.log(PROBABILITIES)))
@@ -160,16 +160,16 @@ def test_nested_levels_are_a_softmax_over_masked_logits():
         assert set(cities[countries.argmax(1) == code].argmax(1)) <= set(subset)
 
 
-def test_nearest_effect_one_hot_encodes_the_closest_center(values):
-    one_hot = NearestEffect("h", CENTERS).apply(values["h"])
+def test_nearest_effect_one_hot_encodes_the_closest_center(latents):
+    one_hot = NearestEffect("h", CENTERS).apply(latents["h"])
     assert (one_hot.sum(1) == 1).all()
-    np.testing.assert_array_equal(one_hot.argmax(1), values["h"].argmax(1))
+    np.testing.assert_array_equal(one_hot.argmax(1), latents["h"].argmax(1))
     table = np.arange(9.0).reshape(3, 3)
     np.testing.assert_array_equal(MatrixEffect("c", table).apply(one_hot), table[one_hot.argmax(1)])
 
 
-def test_mlp_effect_places_activations_between_layers(values):
-    h = values["h"]
+def test_mlp_effect_places_activations_between_layers(latents):
+    h = latents["h"]
     w1, w2 = MLP.weights
     np.testing.assert_allclose(MLP.apply(h), h @ w1 @ w2)
     hidden = MLPEffect("h", (w1, w2), activations=("identity", "tanh", "identity"))
@@ -180,8 +180,8 @@ def test_mlp_effect_places_activations_between_layers(values):
         MLPEffect("h", (w1,), activations=("tanh",))
 
 
-def test_tree_effect_averages_oblivious_tree_leaves(values):
-    h = values["h"]
+def test_tree_effect_averages_oblivious_tree_leaves(latents):
+    h = latents["h"]
     expected = np.zeros((N, 2))
     for tree, (dims, points) in enumerate(zip(TREE.split_dims, TREE.split_points)):
         index = sum((h[:, d] > p).astype(int) << k for k, (d, p) in enumerate(zip(dims, points)))
@@ -189,8 +189,8 @@ def test_tree_effect_averages_oblivious_tree_leaves(values):
     np.testing.assert_allclose(TREE.apply(h), expected / 2)
 
 
-def test_fourier_and_quadratic_effects_match_their_formulas(values):
-    h = values["h"]
+def test_fourier_and_quadratic_effects_match_their_formulas(latents):
+    h = latents["h"]
     features = np.cos(h @ FOURIER.frequencies + FOURIER.phases)
     np.testing.assert_allclose(FOURIER.apply(h), features @ FOURIER.weights)
     ones = np.concatenate([h, np.ones((N, 1))], axis=1)
