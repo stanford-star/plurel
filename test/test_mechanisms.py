@@ -4,13 +4,12 @@ import pytest
 from plurel.distributions import Beta, Mixture, Normal
 from plurel.mechanisms import (
     MECHANISMS,
-    Additive,
-    Aggregate,
+    REDUCTIONS,
+    Combine,
     Linear,
     Lookup,
     LookupScale,
     Mechanism,
-    Multiplicative,
     Noise,
     Product,
     Root,
@@ -29,9 +28,7 @@ TERMS = (
 )
 EXAMPLES = {
     "root": Root(Mixture((Normal(-2.0), Normal(2.0))), dim=3),
-    "additive": Additive(TERMS, Noise(0.5, scale_effects=(Linear("y", 0.3),))),
-    "aggregate": Aggregate(TERMS, Noise(0.0), op="min"),
-    "multiplicative": Multiplicative(TERMS, Noise(0.0), span=1.0),
+    "combine": Combine(TERMS, Noise(0.5, scale_effects=(Linear("y", 0.3),))),
 }
 
 
@@ -51,8 +48,8 @@ def test_every_registered_mechanism_meets_the_contract(parents):
         assert mechanism.evaluate(parents, noise).shape == (N, mechanism.dim)
 
 
-def test_additive_is_the_sum_of_its_contributions(parents):
-    mechanism = Additive(TERMS, Noise(0.0))
+def test_combine_sums_its_contributions(parents):
+    mechanism = Combine(TERMS, Noise(0.0))
     contributions = mechanism.contributions(parents)
     assert set(contributions) == {"x", "s", ("x", "y"), ("s", "y")}
     expected = sum(term.evaluate(parents) for term in TERMS)
@@ -60,14 +57,13 @@ def test_additive_is_the_sum_of_its_contributions(parents):
     np.testing.assert_allclose(sum(contributions.values()), expected)
 
 
-def test_aggregate_and_multiplicative_reduce_the_same_terms(parents):
-    terms = Additive(TERMS, Noise(0.0)).terms(parents, N)
+def test_every_reduction_reduces_the_same_terms(parents):
+    terms = Combine(TERMS, Noise(0.0)).terms(parents, N)
     zeros = np.zeros((N, 1))
-    np.testing.assert_allclose(
-        Aggregate(TERMS, Noise(0.0), op="max").evaluate(parents, zeros), terms.max(0)
-    )
-    clipped = np.expm1(np.clip(terms.sum(0), -1.0, 1.0))
-    np.testing.assert_allclose(EXAMPLES["multiplicative"].evaluate(parents, zeros), clipped)
+    for op, reduce in REDUCTIONS.items():
+        np.testing.assert_allclose(
+            Combine(TERMS, Noise(0.0), op).evaluate(parents, zeros), reduce(terms)
+        )
 
 
 def test_lookup_effects_share_the_level_binning(parents):
@@ -87,7 +83,7 @@ def test_noise_is_heteroscedastic_and_takes_any_distribution(parents):
 
 
 def test_structure_is_exposed_for_the_oracle():
-    mechanism = EXAMPLES["additive"]
+    mechanism = EXAMPLES["combine"]
     assert mechanism.parents == ("x", "s", "y")
     assert mechanism.mean_parents == ("x", "s", "y")
     assert mechanism.noise_parents == ("y",)

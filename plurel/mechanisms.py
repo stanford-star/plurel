@@ -19,6 +19,13 @@ TRANSFORMS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
 }
 TRANSFORM_NAMES = tuple(TRANSFORMS)
 
+REDUCTIONS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
+    "sum": lambda terms: terms.sum(0),
+    "max": lambda terms: terms.max(0),
+    "min": lambda terms: terms.min(0),
+    "product": lambda terms: np.expm1(np.clip(terms.sum(0), -2.5, 2.5)),
+}
+
 
 def apply_transform(transform: Function, values: np.ndarray) -> np.ndarray:
     return transform(values) if callable(transform) else TRANSFORMS[transform](values)
@@ -205,9 +212,14 @@ class Root(Mechanism):
 
 
 @dataclass(frozen=True)
-class Additive(Mechanism):
+class Combine(Mechanism):
     effects: tuple[Effect, ...] = ()
     noise: Noise = field(default_factory=Noise)
+    op: str = "sum"
+
+    def __post_init__(self) -> None:
+        if self.op not in REDUCTIONS:
+            raise ValueError(f"op must be one of {tuple(REDUCTIONS)}")
 
     @property
     def dim(self) -> int:
@@ -246,35 +258,11 @@ class Additive(Mechanism):
         return np.stack(values) if values else np.zeros((1, n, 1))
 
     def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
-        return self.terms(parents, len(noise)).sum(0) + self.noise.apply(parents, noise)
-
-
-@dataclass(frozen=True)
-class Aggregate(Additive):
-    op: str = "max"
-
-    def __post_init__(self) -> None:
-        if self.op not in ("max", "min"):
-            raise ValueError("op must be max or min")
-
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
-        terms = self.terms(parents, len(noise))
-        mean = terms.max(0) if self.op == "max" else terms.min(0)
+        mean = REDUCTIONS[self.op](self.terms(parents, len(noise)))
         return mean + self.noise.apply(parents, noise)
-
-
-@dataclass(frozen=True)
-class Multiplicative(Additive):
-    span: float = 2.5
-
-    def evaluate(self, parents: dict[str, np.ndarray], noise: np.ndarray) -> np.ndarray:
-        total = np.clip(self.terms(parents, len(noise)).sum(0), -self.span, self.span)
-        return np.expm1(total) + self.noise.apply(parents, noise)
 
 
 MECHANISMS: dict[str, type] = {
     "root": Root,
-    "additive": Additive,
-    "aggregate": Aggregate,
-    "multiplicative": Multiplicative,
+    "combine": Combine,
 }
