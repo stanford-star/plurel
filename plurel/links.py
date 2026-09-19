@@ -5,7 +5,7 @@ import numpy as np
 
 from plurel.distributions import Distribution
 
-CHUNK_BYTES = 100_000_000
+CHUNK_BYTES = 20_000_000
 
 
 @runtime_checkable
@@ -44,7 +44,15 @@ def clusters(n: int, counts: tuple[int, ...], shares: np.ndarray | None = None) 
 class RandomLink:
     def sample(self, n_child: int, n_parent: int, rng: np.random.Generator) -> np.ndarray:
         _check_sizes(n_child, n_parent)
-        return rng.integers(0, max(n_parent, 1), n_child)
+        if n_child == 0:
+            return np.empty(0, dtype=np.int64)
+        return rng.integers(0, n_parent, n_child)
+
+
+def _draw(log_p: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    cdf = np.cumsum(np.exp(log_p - log_p.max(axis=0, keepdims=True)), axis=0)
+    draws = rng.uniform(0.0, 1.0, (1, log_p.shape[1])) * cdf[-1]
+    return (cdf > draws).argmax(axis=0)
 
 
 @dataclass(frozen=True)
@@ -67,31 +75,18 @@ class HSBMLink:
         if not 0.0 <= self.inactive < 1.0:
             raise ValueError("inactive must be in [0, 1)")
 
+    def labels(self, n: int, counts: tuple[int, ...], rng: np.random.Generator) -> np.ndarray:
+        if self.cluster_weights is None:
+            return clusters(n, counts)
+        return clusters(n, counts, self.cluster_weights.sample(int(np.prod(counts)), rng))
+
     def affinity(self, parent: int, child: int, rng: np.random.Generator) -> np.ndarray:
         affinity = rng.uniform(*self.between, (parent, child))
         index = np.arange(max(parent, child))
         affinity[index % parent, index % child] = self.within
         return affinity
 
-    def shares(self, counts: tuple[int, ...], rng: np.random.Generator) -> np.ndarray | None:
-        if self.cluster_weights is None:
-            return None
-        return self.cluster_weights.sample(int(np.prod(counts)), rng)
-
-    def sample(self, n_child: int, n_parent: int, rng: np.random.Generator) -> np.ndarray:
-        _check_sizes(n_child, n_parent)
-        if n_child == 0:
-            return np.empty(0, dtype=np.int64)
-        parent_clusters = clusters(
-            n_parent, self.parent_clusters, self.shares(self.parent_clusters, rng)
-        )
-        child_clusters = clusters(
-            n_child, self.child_clusters, self.shares(self.child_clusters, rng)
-        )
-        levels = [
-            np.log(self.affinity(parent, child, rng))
-            for parent, child in zip(self.parent_clusters, self.child_clusters)
-        ]
+    def log_weights(self, n_parent: int, rng: np.random.Generator) -> np.ndarray:
         log_weight = np.zeros(n_parent)
         if self.attractiveness is not None:
             weight = self.attractiveness.sample(n_parent, rng)
@@ -107,19 +102,28 @@ class HSBMLink:
         log_weight[rng.permutation(n_parent)[:n_inactive]] = -np.inf
         if not np.isfinite(log_weight).any():
             raise ValueError("no active parent with positive weight")
+        return log_weight
+
+    def sample(self, n_child: int, n_parent: int, rng: np.random.Generator) -> np.ndarray:
+        _check_sizes(n_child, n_parent)
+        if n_child == 0:
+            return np.empty(0, dtype=np.int64)
+        parent_labels = self.labels(n_parent, self.parent_clusters, rng)
+        child_labels = self.labels(n_child, self.child_clusters, rng)
+        levels = [
+            np.log(self.affinity(parent, child, rng))
+            for parent, child in zip(self.parent_clusters, self.child_clusters)
+        ]
+        log_weight = self.log_weights(n_parent, rng)
         parents = np.empty(n_child, dtype=np.int64)
         chunk = max(1, min(n_child, CHUNK_BYTES // (8 * n_parent)))
         for start in range(0, n_child, chunk):
-            stop = min(start + chunk, n_child)
+            block = child_labels[start : start + chunk]
             log_p = log_weight[:, None] + sum(
-                level[
-                    parent_clusters[:, index][:, None], child_clusters[start:stop, index][None, :]
-                ]
+                level[parent_labels[:, index][:, None], block[:, index][None, :]]
                 for index, level in enumerate(levels)
             )
-            cdf = np.cumsum(np.exp(log_p - log_p.max(axis=0, keepdims=True)), axis=0)
-            draws = rng.uniform(0.0, 1.0, (1, stop - start)) * cdf[-1]
-            parents[start:stop] = (cdf > draws).argmax(axis=0)
+            parents[start : start + chunk] = _draw(log_p, rng)
         return parents
 
 

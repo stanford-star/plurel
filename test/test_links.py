@@ -55,8 +55,8 @@ def test_cluster_shares_set_unequal_sizes():
     link = HSBMLink((4,), (4,), between=(1e-6, 2e-6), cluster_weights=Pareto(1.0))
     parents = link.sample(4000, 400, np.random.default_rng(0))
     draws = np.random.default_rng(0)
-    parent_labels = clusters(400, (4,), link.shares((4,), draws))[:, 0]
-    child_labels = clusters(4000, (4,), link.shares((4,), draws))[:, 0]
+    parent_labels = link.labels(400, (4,), draws)[:, 0]
+    child_labels = link.labels(4000, (4,), draws)[:, 0]
     sizes = np.bincount(parent_labels, minlength=4)
     assert sizes.min() >= 1 and sizes.max() > 3 * sizes.min()
     assert (parent_labels[parents] == child_labels).mean() > 0.95
