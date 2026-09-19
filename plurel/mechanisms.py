@@ -1,6 +1,5 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from itertools import combinations
 from statistics import NormalDist
 
 import numpy as np
@@ -199,20 +198,8 @@ class Combine(Mechanism):
 
     @property
     def parents(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(self.mean_parents + self.noise_parents))
-
-    @property
-    def mean_parents(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(parent for effect in self.effects for parent in effect.parents))
-
-    @property
-    def noise_parents(self) -> tuple[str, ...]:
-        return self.noise.parents
-
-    @property
-    def interaction_pairs(self) -> tuple[tuple[str, str], ...]:
-        pairs = [pair for effect in self.effects for pair in combinations(effect.parents, 2)]
-        return tuple(dict.fromkeys(pairs))
+        effects = (*self.effects, *self.noise.scale_effects)
+        return tuple(dict.fromkeys(p for effect in effects for p in effect.parents))
 
     def contributions(
         self, parents: dict[str, np.ndarray]

@@ -80,11 +80,4 @@ def test_noise_is_heteroscedastic_and_takes_any_distribution(parents):
     assert draw.min() >= -1.0 and draw.max() <= 1.0
     scaled = noise.apply(parents, np.ones((N, 1)))
     np.testing.assert_allclose(scaled, np.exp(np.clip(parents["y"], -3.0, 3.0)))
-
-
-def test_structure_is_exposed_for_the_oracle():
-    mechanism = EXAMPLES["combine"]
-    assert mechanism.parents == ("x", "s", "y")
-    assert mechanism.mean_parents == ("x", "s", "y")
-    assert mechanism.noise_parents == ("y",)
-    assert mechanism.interaction_pairs == (("x", "y"), ("s", "y"))
+    assert Combine(TERMS, noise=noise).parents == ("x", "s", "y")
