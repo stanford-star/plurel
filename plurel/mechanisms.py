@@ -1,10 +1,11 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import reduce
 from statistics import NormalDist
 
 import numpy as np
 
-from plurel.distributions import Distribution, Normal
+from plurel.distributions import Distribution, Gumbel, Normal
 
 Function = str | Callable[[np.ndarray], np.ndarray]
 
@@ -19,11 +20,13 @@ TRANSFORMS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
 }
 TRANSFORM_NAMES = tuple(TRANSFORMS)
 
-REDUCTIONS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
-    "sum": lambda terms: terms.sum(0),
-    "max": lambda terms: terms.max(0),
-    "min": lambda terms: terms.min(0),
-    "product": lambda terms: terms.prod(0),
+REDUCTIONS: dict[str, Callable[[list[np.ndarray]], np.ndarray]] = {
+    "sum": lambda terms: reduce(np.add, terms),
+    "product": lambda terms: reduce(np.multiply, terms),
+    "max": lambda terms: reduce(np.maximum, terms),
+    "min": lambda terms: reduce(np.minimum, terms),
+    "logsumexp": lambda terms: reduce(np.logaddexp, terms),
+    "concat": lambda terms: np.concatenate(terms, axis=1),
 }
 
 
@@ -38,6 +41,15 @@ def _normal_edges(probabilities: tuple[float, ...]) -> np.ndarray:
 
 def bin_levels(latent: np.ndarray, probabilities: tuple[float, ...]) -> np.ndarray:
     return np.digitize(latent, _normal_edges(probabilities))
+
+
+def nested_logits(
+    allowed: tuple[tuple[int, ...], ...], probabilities: tuple[float, ...]
+) -> np.ndarray:
+    mask = np.zeros((len(allowed), len(probabilities)))
+    for code, subset in enumerate(allowed):
+        mask[code, list(subset)] = 1.0
+    return np.log(np.maximum(mask * np.asarray(probabilities), np.finfo(float).tiny))
 
 
 def _check_probabilities(probabilities: tuple[float, ...] | None, size: int) -> None:
@@ -60,6 +72,7 @@ def _draw(distribution: Distribution, n: int, rng: np.random.Generator, dim: int
 @dataclass(frozen=True)
 class Effect:
     parent: str
+    dim = 1
 
     def apply(self, x: np.ndarray) -> np.ndarray:
         raise NotImplementedError
@@ -69,6 +82,7 @@ class Effect:
 class LinearEffect(Effect):
     weight: float = 1.0
     transform: Function = "linear"
+    dim: int = 1
 
     def apply(self, x: np.ndarray) -> np.ndarray:
         return self.weight * apply_transform(self.transform, x)
@@ -87,6 +101,31 @@ class LookupEffect(Effect):
     def apply(self, x: np.ndarray) -> np.ndarray:
         probabilities = self.probabilities or _uniform(len(self.values))
         return np.asarray(self.values)[bin_levels(x, probabilities)]
+
+
+@dataclass(frozen=True)
+class MatrixEffect(Effect):
+    matrix: np.ndarray
+
+    @property
+    def dim(self) -> int:
+        return self.matrix.shape[1]
+
+    def apply(self, x: np.ndarray) -> np.ndarray:
+        return x @ self.matrix
+
+
+@dataclass(frozen=True)
+class NearestEffect(Effect):
+    centers: np.ndarray
+
+    @property
+    def dim(self) -> int:
+        return len(self.centers)
+
+    def apply(self, x: np.ndarray) -> np.ndarray:
+        distances = (self.centers**2).sum(1) - 2.0 * x @ self.centers.T
+        return np.eye(self.dim)[distances.argmin(1)]
 
 
 @dataclass(frozen=True)
@@ -120,15 +159,49 @@ class Combine(Mechanism):
             raise ValueError(f"op must be one of {tuple(REDUCTIONS)}")
 
     @property
+    def dim(self) -> int:
+        dims = [effect.dim for effect in self.effects]
+        return sum(dims) if self.op == "concat" else max(dims, default=1)
+
+    @property
     def parents(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(effect.parent for effect in self.effects))
 
     def evaluate(self, values: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
         terms = [effect.apply(values[effect.parent]) for effect in self.effects]
-        return REDUCTIONS[self.op](np.stack(terms)) + exogenous if terms else exogenous
+        return REDUCTIONS[self.op](terms) + exogenous if terms else exogenous
 
+
+@dataclass(frozen=True)
+class Softmax(Combine):
+    biases: tuple[float, ...] | None = None
+    noise: Distribution = field(default_factory=Gumbel, kw_only=True)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.dim < 2:
+            raise ValueError("at least two classes")
+        if self.biases is not None and len(self.biases) != self.dim:
+            raise ValueError("one bias per class")
+
+    @property
+    def dim(self) -> int:
+        return super().dim if self.effects else len(self.biases or ())
+
+    def evaluate(self, values: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
+        scores = super().evaluate(values, exogenous) + np.asarray(self.biases or 0.0)
+        return np.eye(self.dim)[scores.argmax(1)]
+
+
+EFFECTS: dict[str, type] = {
+    "linear": LinearEffect,
+    "lookup": LookupEffect,
+    "matrix": MatrixEffect,
+    "nearest": NearestEffect,
+}
 
 MECHANISMS: dict[str, type] = {
     "root": Root,
     "combine": Combine,
+    "softmax": Softmax,
 }
