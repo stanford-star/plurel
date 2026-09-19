@@ -17,7 +17,7 @@ from plurel.distributions import (
     Trend,
     Uniform,
 )
-from plurel.links import LINKS, ForestLink, HSBMLink, Link, RandomLink, clusters
+from plurel.links import LINKS, HierarchyLink, HSBMLink, Link, RandomLink, clusters
 from plurel.mechanisms import (
     EFFECTS,
     MECHANISMS,
@@ -61,7 +61,7 @@ __all__ = [
     "Distribution",
     "Effect",
     "Exponential",
-    "ForestLink",
+    "HierarchyLink",
     "FourierEffect",
     "Gumbel",
     "HSBMLink",

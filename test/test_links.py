@@ -3,12 +3,12 @@ import pytest
 
 import plurel.links
 from plurel.distributions import Normal, Pareto
-from plurel.links import LINKS, ForestLink, HSBMLink, Link, RandomLink, clusters
+from plurel.links import LINKS, HierarchyLink, HSBMLink, Link, RandomLink, clusters
 
 EXAMPLES = {
     "random": RandomLink(),
     "hsbm": HSBMLink((2, 3), (2, 2), attractiveness=Pareto(2.5), inactive=0.3),
-    "forest": ForestLink(roots=0.2),
+    "hierarchy": HierarchyLink(roots=0.2),
 }
 
 
@@ -16,7 +16,7 @@ def test_every_registered_link_meets_the_contract():
     assert set(EXAMPLES) == set(LINKS)
     for name, link in EXAMPLES.items():
         assert isinstance(link, Link)
-        n_parent = 1000 if name == "forest" else 400
+        n_parent = 1000 if name == "hierarchy" else 400
         parents = link.sample(1000, n_parent, np.random.default_rng(0))
         np.testing.assert_array_equal(
             parents, link.sample(1000, n_parent, np.random.default_rng(0))
@@ -56,13 +56,13 @@ def test_cluster_shares_set_unequal_sizes():
     assert np.bincount(clusters(3, (2, 2))[:, 0], minlength=2).tolist() == [2, 1]
 
 
-def test_forest_links_point_to_earlier_rows_or_nowhere():
-    parents = ForestLink(roots=0.2).sample(1000, 1000, np.random.default_rng(0))
+def test_hierarchy_links_point_to_earlier_rows_or_nowhere():
+    parents = HierarchyLink(roots=0.2).sample(1000, 1000, np.random.default_rng(0))
     assert parents[0] == -1 and abs((parents == -1).mean() - 0.2) < 0.05
     linked = np.flatnonzero(parents >= 0)
     assert (parents[linked] < linked).all()
     with pytest.raises(ValueError):
-        ForestLink().sample(10, 20, np.random.default_rng(0))
+        HierarchyLink().sample(10, 20, np.random.default_rng(0))
 
 
 def test_links_handle_empty_and_tiny_tables_and_reject_bad_parameters():
@@ -70,16 +70,16 @@ def test_links_handle_empty_and_tiny_tables_and_reject_bad_parameters():
     for name, link in EXAMPLES.items():
         empty = link.sample(0, 0, rng)
         assert empty.shape == (0,) and empty.dtype == np.int64
-        if name != "forest":
+        if name != "hierarchy":
             assert not link.sample(50, 1, rng).any()
             with pytest.raises(ValueError):
                 link.sample(50, 0, rng)
         with pytest.raises(ValueError):
             link.sample(-1, 10, rng)
-    assert (ForestLink(roots=1.0).sample(20, 20, rng) == -1).all()
+    assert (HierarchyLink(roots=1.0).sample(20, 20, rng) == -1).all()
     for kwargs in (
-        {"parent_hierarchy": ()},
-        {"parent_hierarchy": (0,), "child_hierarchy": (1,)},
+        {"parent_clusters": ()},
+        {"parent_clusters": (0,), "child_clusters": (1,)},
         {"within": 0.0},
         {"between": (0.0, 0.1)},
         {"between": (0.2, 0.1)},
@@ -90,7 +90,7 @@ def test_links_handle_empty_and_tiny_tables_and_reject_bad_parameters():
     with pytest.raises(ValueError):
         HSBMLink((2,), (2,), cluster_weights=Normal()).sample(100, 100, rng)
     with pytest.raises(ValueError):
-        ForestLink(roots=0.0)
+        HierarchyLink(roots=0.0)
 
 
 def test_hsbm_draws_do_not_depend_on_chunking(monkeypatch):

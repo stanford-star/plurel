@@ -48,8 +48,8 @@ class RandomLink:
 
 @dataclass(frozen=True)
 class HSBMLink:
-    parent_hierarchy: tuple[int, ...] = (1,)
-    child_hierarchy: tuple[int, ...] = (1,)
+    parent_clusters: tuple[int, ...] = (1,)
+    child_clusters: tuple[int, ...] = (1,)
     within: float = 0.9
     between: tuple[float, float] = (0.001, 0.002)
     cluster_weights: Distribution | None = None
@@ -57,9 +57,9 @@ class HSBMLink:
     inactive: float = 0.0
 
     def __post_init__(self) -> None:
-        _check_hierarchy(self.parent_hierarchy)
-        _check_hierarchy(self.child_hierarchy)
-        if len(self.parent_hierarchy) != len(self.child_hierarchy):
+        _check_hierarchy(self.parent_clusters)
+        _check_hierarchy(self.child_clusters)
+        if len(self.parent_clusters) != len(self.child_clusters):
             raise ValueError("one cluster count per level on both sides")
         if self.within <= 0 or not 0 < self.between[0] <= self.between[1]:
             raise ValueError("within and between affinities must be positive, between ascending")
@@ -80,14 +80,14 @@ class HSBMLink:
     def sample(self, n_child: int, n_parent: int, rng: np.random.Generator) -> np.ndarray:
         _check_sizes(n_child, n_parent)
         parent_clusters = clusters(
-            n_parent, self.parent_hierarchy, self.shares(self.parent_hierarchy, rng)
+            n_parent, self.parent_clusters, self.shares(self.parent_clusters, rng)
         )
         child_clusters = clusters(
-            n_child, self.child_hierarchy, self.shares(self.child_hierarchy, rng)
+            n_child, self.child_clusters, self.shares(self.child_clusters, rng)
         )
         levels = [
             np.log(self.affinity(parent, child, rng))
-            for parent, child in zip(self.parent_hierarchy, self.child_hierarchy)
+            for parent, child in zip(self.parent_clusters, self.child_clusters)
         ]
         log_weight = np.zeros(n_parent)
         if self.attractiveness is not None:
@@ -112,7 +112,7 @@ class HSBMLink:
 
 
 @dataclass(frozen=True)
-class ForestLink:
+class HierarchyLink:
     roots: float = 0.1
 
     def __post_init__(self) -> None:
@@ -122,7 +122,7 @@ class ForestLink:
     def sample(self, n_child: int, n_parent: int, rng: np.random.Generator) -> np.ndarray:
         _check_sizes(n_child, n_parent)
         if n_child != n_parent:
-            raise ValueError("a forest links a table to itself")
+            raise ValueError("a hierarchy links a table to itself")
         parents = np.floor(rng.uniform(0.0, 1.0, n_child) * np.arange(n_child)).astype(np.int64)
         roots = rng.random(n_child) < self.roots
         roots[:1] = True
@@ -132,5 +132,5 @@ class ForestLink:
 LINKS: dict[str, type] = {
     "random": RandomLink,
     "hsbm": HSBMLink,
-    "forest": ForestLink,
+    "hierarchy": HierarchyLink,
 }
