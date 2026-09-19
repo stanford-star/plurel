@@ -159,6 +159,29 @@ META_CONCENTRATION = LogRange(0.1, 10_000.0)
 
 @dataclass(frozen=True)
 class TablePrior:
+    """Random single-table SCM. Ranges and choices are warped once per table, then drawn per use.
+
+    node_count             nodes in the table's DAG
+    node_layouts           DAG generator for the node graph
+    node_width             latent dimensions of a numeric node
+    node_categorical_share probability that a node is categorical, a Softmax
+    node_classes           classes of a categorical node
+    effect_families        effect family per edge; linear only when parent and node widths agree
+    combine_ops            reduction over the effects of a node with several parents
+    combine_noise          standard deviation of the Gaussian noise of a Combine node
+    root_noise             exogenous distribution of a source node
+    mlp_hidden             hidden width of an MLP effect
+    tree_count, tree_depth oblivious trees in a tree effect, and their depth
+    fourier_frequencies    random Fourier features in a Fourier effect
+    column_count           observed columns besides the key
+    column_marginals       marginal a numeric column is rank-mapped onto, None keeps the latent
+    column_binned_share    probability that a numeric column is binned into categories instead
+    column_missing         missing rate of a column that has missingness
+    column_missing_share   probability that a column has missingness
+    time_probability       probability that the table gets a calendar time column
+    time_calendar          calendar the time column is drawn from
+    """
+
     node_count: Range = LogIntegersRange(3, 16)
     node_layouts: Choices = Choices(
         (RandomCauchy(), RandomCauchy(2.0), BarabasiAlbert(2), Layered(3, 0.2))
