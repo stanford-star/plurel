@@ -1,11 +1,7 @@
-from .config import Choices, Config, DAGParams, DatabaseParams, SCMParams
-from .dataset import SyntheticDataset
+"""PluRel: synthetic relational and tabular data from structural causal models.
 
-__all__ = [
-    "Choices",
-    "Config",
-    "DAGParams",
-    "DatabaseParams",
-    "SCMParams",
-    "SyntheticDataset",
-]
+The v2 core is being rebuilt on this branch. Modules land bottom-up:
+distributions, mechanisms, columns, scm, causal, links, layouts, schema, prior, io.
+"""
+
+__all__: list[str] = []

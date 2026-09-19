@@ -1,6 +1,6 @@
 [project]
 name = "plurel"
-version = "1.1.0"
+version = "2.0.0.dev0"
 description = "Synthesize diverse multi-tabular relational databases using Structural Causal Models, enabling scaling laws for Relational Foundation Models."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -36,11 +36,7 @@ dependencies = [
     "networkx",
     "numpy",
     "pandas",
-    "pytorch-frame",
     "relbench>=3.0.0",
-    "sqlalchemy>=2",
-    "torch>=2",
-    "tqdm",
 ]
 
 [project.urls]
@@ -70,16 +66,11 @@ platforms = ["linux-64", "osx-arm64"]
 
 [tool.pixi.pypi-dependencies]
 plurel = { path = ".", editable = true }
-torch = ">=2.8.0"
-matplotlib = ">=3.10.8,<4"
-scikit-learn = "<1.6.0"
 
 [tool.pixi.dependencies]
 pytest = ">=9.0.1,<10"
 pytest-xdist = ">=3.8.0,<4"
 pytest-sugar = ">=1.1.1,<2"
-sqlalchemy = ">=2.0.45,<3"
-pytest-env = ">=1.2.0,<2"
 ipython = ">=9.9.0,<10"
 pip = ">=25.3,<26"
 huggingface_hub = ">=1.3.7,<2"
@@ -100,4 +91,3 @@ quote-style = "double"
 
 [tool.pytest.ini_options]
 testpaths = ["test"]
-env = ["KMP_DUPLICATE_LIB_OK=TRUE"]
