@@ -17,7 +17,7 @@ from plurel.distributions import (
     Trend,
     Uniform,
 )
-from plurel.io import create_database, read_database, write_database
+from plurel.io import create_database, order_by_time, read_database, write_database
 from plurel.layouts import (
     LAYOUTS,
     BarabasiAlbert,
@@ -136,6 +136,7 @@ __all__ = [
     "create_database",
     "generator",
     "nested_logits",
+    "order_by_time",
     "rank_map",
     "read_database",
     "write_database",

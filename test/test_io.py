@@ -1,10 +1,23 @@
 import numpy as np
 import pandas as pd
 import pytest
+from relbench.base import Database, Table
+from relbench.base.table import is_time_sorted
 
-from plurel import DEFAULT_CALENDAR, SCM, Column, Combine, LinearEffect, Normal, Root, Softmax
+from plurel import (
+    DEFAULT_CALENDAR,
+    SCM,
+    Column,
+    Combine,
+    Exponential,
+    LinearEffect,
+    Normal,
+    Root,
+    Softmax,
+    Uniform,
+)
 from plurel.io import create_database, read_database, write_database
-from plurel.links import HSBMLink
+from plurel.links import HSBMLink, TreeLink
 from plurel.schema import FK, Port, Schema
 
 ROWS = {"customers": 40, "orders": 300}
@@ -82,7 +95,9 @@ def test_database_wraps_sampled_tables_with_relbench_metadata(schema):
     assert order_table.df["customer_id"].isna().any()
     assert db.min_timestamp == order_table.df["when"].min()
     assert db.max_timestamp == order_table.df["when"].max()
-    pd.testing.assert_frame_equal(order_table.df, frames["orders"])
+    expected = frames["orders"].sort_values("when", kind="stable").reset_index(drop=True)
+    expected["order_id"] = np.arange(len(expected))
+    pd.testing.assert_frame_equal(order_table.df, expected)
     events = Schema({"customers": customers(), "orders": orders(key=False)}, FKEYS)
     event_table = create_database(events, events.sample(ROWS, seed=0)).table_dict["orders"]
     assert event_table.pkey_col is None and "order_id" not in event_table.df
@@ -141,3 +156,89 @@ def test_write_and_read_round_trip(schema, tmp_path):
         write_database(
             db, tmp_path / "other", name="x", val_timestamp=db.max_timestamp, test_timestamp=split
         )
+    shuffled = db.table_dict["orders"].df.sample(frac=1.0, random_state=0).reset_index(drop=True)
+    unordered = Database({"orders": Table(shuffled, {}, "order_id", "when")})
+    with pytest.raises(ValueError, match="time order"):
+        write_database(
+            unordered, tmp_path / "bad", name="x", val_timestamp=split, test_timestamp=split
+        )
+
+
+def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
+    seconds = Uniform(DEFAULT_CALENDAR.start.timestamp(), DEFAULT_CALENDAR.end.timestamp())
+    customers = SCM(
+        {
+            "signup": Root(noise=seconds),
+            "value": Root(),
+            "n_orders": Port("orders", "amount", aggregate="count"),
+        },
+        {
+            "id": Column(kind="key"),
+            "signup": Column("signup", "timestamp"),
+            "value": Column("value"),
+            "n_orders": Column("n_orders"),
+        },
+        time_column="signup",
+    )
+    orders = SCM(
+        {
+            "signup": Port("customers", "signup"),
+            "when": Combine((LinearEffect("signup"),), noise=Exponential(3600.0)),
+            "value": Port("customers", "value"),
+            "amount": Combine((LinearEffect("value"),), noise=Normal(std=0.1)),
+        },
+        {
+            "id": Column(kind="key"),
+            "when": Column("when", "timestamp", missing=0.1),
+            "value": Column("value"),
+            "amount": Column("amount"),
+        },
+        time_column="when",
+    )
+    employees = SCM(
+        {
+            "joined": Root(),
+            "level": Root(),
+            "manager_level": Port("employees", "level", via="manager_id", fill=0.0),
+        },
+        {
+            "id": Column(kind="key"),
+            "joined": Column("joined", "timestamp", marginal=DEFAULT_CALENDAR),
+            "level": Column("level"),
+            "manager_level": Column("manager_level"),
+        },
+        time_column="joined",
+    )
+    fkeys = (
+        FK("orders", "customer_id", "customers"),
+        FK("employees", "manager_id", "employees", TreeLink(roots=0.2)),
+    )
+    schema = Schema({"customers": customers, "orders": orders, "employees": employees}, fkeys)
+    rows = {"customers": 100, "orders": 1000, "employees": 80}
+    frames = schema.sample(rows, seed=0)
+    assert not frames["customers"]["signup"].is_monotonic_increasing
+    tables = {name: table.df for name, table in create_database(schema, frames).table_dict.items()}
+    for name, scm in schema.tables.items():
+        assert is_time_sorted(tables[name][scm.time_column])
+        np.testing.assert_array_equal(tables[name]["id"], np.arange(rows[name]))
+    keys = tables["orders"]["customer_id"].to_numpy(dtype=int)
+    when = tables["orders"]["when"]
+    known = when.notna().to_numpy()
+    assert 0 < (~known).sum() and known[: known.sum()].all()
+    signup = tables["customers"]["signup"].to_numpy()[keys]
+    assert (when.to_numpy()[known] >= signup[known]).all()
+    np.testing.assert_array_equal(
+        tables["orders"]["value"], tables["customers"]["value"].to_numpy()[keys]
+    )
+    np.testing.assert_array_equal(tables["customers"]["n_orders"], np.bincount(keys, minlength=100))
+    manager = tables["employees"]["manager_id"]
+    roots = manager.isna().to_numpy()
+    bosses = manager.to_numpy(dtype=float, na_value=-1).astype(int)
+    level = tables["employees"]["level"].to_numpy()
+    np.testing.assert_array_equal(
+        tables["employees"]["manager_level"].to_numpy()[~roots], level[bosses[~roots]]
+    )
+    current = bosses
+    for _ in range(rows["employees"]):
+        current = np.where(current >= 0, bosses[current], -1)
+    assert (current == -1).all()
