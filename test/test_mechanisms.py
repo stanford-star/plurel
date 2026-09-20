@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from plurel.distributions import Mixture, Normal
+from plurel.distributions import Gumbel, Mixture, Normal
 from plurel.mechanisms import (
     EFFECTS,
     MECHANISMS,
@@ -15,8 +15,6 @@ from plurel.mechanisms import (
     MLPEffect,
     NearestEffect,
     QuadraticEffect,
-    Root,
-    Softmax,
     TreeEffect,
     bin_levels,
     nested_logits,
@@ -57,9 +55,9 @@ EFFECT_EXAMPLES = {
     "quadratic": QUADRATIC,
 }
 EXAMPLES = {
-    "root": Root(dim=3, noise=Mixture((Normal(-2.0), Normal(2.0)))),
+    "root": Combine(dim=3, noise=Mixture((Normal(-2.0), Normal(2.0)))),
     "combine": Combine(TERMS, noise=Normal(std=0.5)),
-    "softmax": Softmax(SCORES),
+    "onehot": Combine(SCORES, onehot=True, noise=Gumbel()),
 }
 REFERENCE = {
     "sum": lambda t: t.sum(0),
@@ -79,13 +77,36 @@ def latents():
 
 
 def test_every_registered_mechanism_meets_the_contract(latents):
-    assert set(EXAMPLES) == set(MECHANISMS)
+    assert set(MECHANISMS) == {"combine"}
     for mechanism in EXAMPLES.values():
-        assert isinstance(mechanism, Mechanism)
+        assert isinstance(mechanism, Mechanism | MECHANISMS["combine"])
         exogenous = mechanism.sample_noise(N, np.random.default_rng(1))
         again = mechanism.sample_noise(N, np.random.default_rng(1))
         np.testing.assert_array_equal(exogenous, again)
         assert mechanism.evaluate(latents, exogenous).shape == (N, mechanism.dim)
+
+
+def test_one_node_type_covers_roots_combines_and_one_hot_nodes(latents):
+    root = Combine()
+    assert root.dim == 1 and root.parents == () and isinstance(root.noise, Normal)
+    exogenous = root.sample_noise(N, np.random.default_rng(0))
+    np.testing.assert_array_equal(root.evaluate(latents, exogenous), exogenous)
+    assert Combine(dim=4).sample_noise(N, np.random.default_rng(0)).shape == (N, 4)
+    assert Combine(bias=(0.0, 1.0, 2.0)).dim == 3
+    classes = Combine(bias=(0.0, 0.0, 5.0), onehot=True, noise=Gumbel())
+    onehot = classes.evaluate(latents, classes.sample_noise(N, np.random.default_rng(0)))
+    assert onehot.shape == (N, 3) and (onehot.sum(1) == 1).all() and onehot[:, 2].mean() > 0.9
+    scores = Combine(SCORES, bias=(0.0, 0.0, 0.0), onehot=True, noise=None)
+    assert scores.dim == 3 and scores.evaluate(latents, np.zeros((N, 3))).sum() == N
+    for bad in (
+        lambda: Combine(TERMS, dim=2),
+        lambda: Combine(bias=(0.0, 1.0), dim=3),
+        lambda: Combine(TERMS, bias=(0.0, 1.0)),
+        lambda: Combine(onehot=True),
+        lambda: Combine(TERMS, op="median"),
+    ):
+        with pytest.raises(ValueError):
+            bad()
 
 
 def test_every_registered_effect_declares_its_width(latents):
@@ -136,14 +157,14 @@ def test_interactions_are_product_nodes(latents):
     assert target.parents == ("x", "h")
 
 
-def test_softmax_is_a_gumbel_argmax_over_the_combined_scores(latents):
-    softmax = EXAMPLES["softmax"]
+def test_one_hot_node_is_a_gumbel_argmax_over_the_combined_scores(latents):
+    softmax = EXAMPLES["onehot"]
     assert softmax.dim == 3 and softmax.parents == ("x", "y")
     one_hot = softmax.evaluate(latents, np.zeros((N, 3)))
     scores = np.concatenate([latents["x"], -latents["x"], 2.0 * latents["y"]], axis=1)
     assert (one_hot.sum(1) == 1).all()
     np.testing.assert_array_equal(one_hot.argmax(1), scores.argmax(1))
-    marginal = Softmax(biases=tuple(np.log(PROBABILITIES)))
+    marginal = Combine(bias=tuple(np.log(PROBABILITIES)), onehot=True, noise=Gumbel())
     draws = marginal.evaluate({}, marginal.sample_noise(20_000, np.random.default_rng(0)))
     np.testing.assert_allclose(draws.mean(0), PROBABILITIES, atol=0.02)
 
@@ -151,8 +172,10 @@ def test_softmax_is_a_gumbel_argmax_over_the_combined_scores(latents):
 def test_nested_levels_are_a_softmax_over_masked_logits():
     allowed = ((0, 1), (2,), (3, 4))
     rng = np.random.default_rng(0)
-    country = Softmax(biases=(0.0,) * 3)
-    city = Softmax((MatrixEffect("country", nested_logits(allowed, (0.2,) * 5)),))
+    country = Combine(bias=(0.0,) * 3, onehot=True, noise=Gumbel())
+    city = Combine(
+        (MatrixEffect("country", nested_logits(allowed, (0.2,) * 5)),), onehot=True, noise=Gumbel()
+    )
     countries = country.evaluate({}, country.sample_noise(N, rng))
     cities = city.evaluate({"country": countries}, city.sample_noise(N, rng))
     assert city.dim == 5

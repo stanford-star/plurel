@@ -13,13 +13,12 @@ from plurel import (
     MatrixEffect,
     Normal,
     Pareto,
-    Root,
-    Softmax,
     Uniform,
     create_database,
     read_database,
     write_database,
 )
+from plurel.distributions import Gumbel
 from plurel.links import HSBMLink, RandomLink, TreeLink
 from plurel.schema import FK, Port, Schema
 
@@ -32,19 +31,19 @@ def random_schema(rng):
     for t in names:
         roots = [f"r{j}" for j in range(int(rng.integers(1, 4)))]
         for j, root in enumerate(roots):
-            mechanisms[t][root] = Root(noise=rng.choice([Normal(), Uniform(), LogNormal()]))
+            mechanisms[t][root] = Combine(noise=rng.choice([Normal(), Uniform(), LogNormal()]))
             marginal = rng.choice([None, Uniform(), LogNormal(), Pareto(2.0)])
             columns[t][f"c{j}"] = Column(
                 root, marginal=marginal, missing=float(rng.choice([0.0, 0.2]))
             )
         k = int(rng.integers(2, 5))
-        mechanisms[t]["seg"] = Softmax(biases=tuple(rng.normal(size=k)))
+        mechanisms[t]["seg"] = Combine(bias=tuple(rng.normal(size=k)), onehot=True, noise=Gumbel())
         columns[t]["seg"] = Column(
             "seg", "categorical", categories=tuple(f"s{i}" for i in range(k))
         )
-        mechanisms[t]["h"] = Root(dim=int(rng.integers(1, 4)))
+        mechanisms[t]["h"] = Combine(dim=int(rng.integers(1, 4)))
         if rng.random() < 0.5:
-            mechanisms[t]["stamp"] = Root(noise=DEFAULT_CALENDAR)
+            mechanisms[t]["stamp"] = Combine(noise=DEFAULT_CALENDAR)
             mechanisms[t]["later"] = Combine((LinearEffect("stamp"),), noise=Exponential(3600.0))
             columns[t]["stamp"] = Column("stamp", "timestamp")
             columns[t]["later"] = Column("later", "timestamp", after="stamp")

@@ -12,10 +12,9 @@ from plurel import (
     Exponential,
     LinearEffect,
     Normal,
-    Root,
-    Softmax,
     Uniform,
 )
+from plurel.distributions import Gumbel
 from plurel.io import create_database, read_database, split_timestamps, write_database
 from plurel.links import HSBMLink, TreeLink
 from plurel.schema import FK, Port, Schema
@@ -33,7 +32,7 @@ def customers(key=True):
         del columns["customer_id"]
     return SCM(
         {
-            "segment": Softmax(biases=(0.0, 0.0, 0.0)),
+            "segment": Combine(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()),
             "spend": Port("orders", "amount", aggregate="sum"),
         },
         columns,
@@ -51,7 +50,7 @@ def orders(key=True, time_column="when"):
         del columns["order_id"]
     return SCM(
         {
-            "when": Root(),
+            "when": Combine(),
             "value": Port("customers", "spend", fill=np.nan),
             "amount": Combine((LinearEffect("when"),), noise=Normal(std=0.5)),
         },
@@ -76,7 +75,7 @@ def test_tables_declare_their_keys_and_time():
     with pytest.raises(ValueError, match="timestamp"):
         orders(time_column="nothing")
     with pytest.raises(ValueError, match="one key"):
-        SCM({"x": Root()}, {"a": Column(kind="key"), "b": Column(kind="key")})
+        SCM({"x": Combine()}, {"a": Column(kind="key"), "b": Column(kind="key")})
 
 
 def test_database_wraps_sampled_tables_with_relbench_metadata(schema):
@@ -168,8 +167,8 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
     seconds = Uniform(DEFAULT_CALENDAR.start.timestamp(), DEFAULT_CALENDAR.end.timestamp())
     customers = SCM(
         {
-            "signup": Root(noise=seconds),
-            "value": Root(),
+            "signup": Combine(noise=seconds),
+            "value": Combine(),
             "n_orders": Port("orders", "amount", aggregate="count"),
         },
         {
@@ -197,8 +196,8 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
     )
     employees = SCM(
         {
-            "joined": Root(),
-            "level": Root(),
+            "joined": Combine(),
+            "level": Combine(),
             "manager_level": Port("employees", "level", via="manager_id", fill=0.0),
         },
         {

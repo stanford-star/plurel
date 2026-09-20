@@ -6,6 +6,7 @@ from plurel.columns import DEFAULT_CALENDAR, Column
 from plurel.distributions import (
     Calendar,
     Exponential,
+    Gumbel,
     LogNormal,
     Mixture,
     Normal,
@@ -32,8 +33,6 @@ from plurel.mechanisms import (
     Mechanism,
     MLPEffect,
     QuadraticEffect,
-    Root,
-    Softmax,
     TreeEffect,
 )
 from plurel.random import Seed, generator
@@ -189,7 +188,7 @@ class TablePrior:
         node_count: Nodes in the table's DAG.
         node_layouts: DAG generator for the node graph.
         node_width: Latent dimensions of a numeric node.
-        node_categorical_share: Probability that a node is categorical, a Softmax.
+        node_categorical_share: Probability that a node is categorical, a one-hot node.
         node_class_count: Classes of a categorical node.
         effect_families: Effect family per edge; linear only when parent and node widths agree.
         combine_ops: Reduction over the effects of a node with several parents.
@@ -268,7 +267,7 @@ class TablePrior:
             i = int(rng.choice(feature_nodes))
             columns[f"col{c}"] = self.column(i, dims[i], categorical[i], rng)
         if time:
-            mechanisms["time"] = Root(noise=self.time_calendar)
+            mechanisms["time"] = Combine(noise=self.time_calendar)
             columns["time"] = Column("time", "timestamp")
         return SCM(mechanisms, columns, time_column="time" if time else None)
 
@@ -282,9 +281,11 @@ class TablePrior:
     ) -> Mechanism:
         effects = tuple(self.effect(f"n{p}", dims[p], dims[i], categorical, rng) for p in sources)
         if categorical:
-            return Softmax(effects, biases=tuple(rng.normal(0.0, 0.5, dims[i])))
+            return Combine(
+                effects, bias=tuple(rng.normal(0.0, 0.5, dims[i])), onehot=True, noise=Gumbel()
+            )
         if not effects:
-            return Root(dim=dims[i], noise=self.root_noise.draw(rng))
+            return Combine(dim=dims[i], noise=self.root_noise.draw(rng))
         op = self.combine_ops.draw(rng) if len(effects) > 1 else "sum"
         return Combine(effects, op, noise=Normal(std=self.combine_noise_std.draw(rng)))
 
@@ -477,7 +478,7 @@ class SchemaPrior:
                 fk.parent, source, via=fk.column, fill=0.0, dim=parent.mechanisms[source].dim
             )
             target = mechanisms[consumer]
-            block = isinstance(target, Softmax)
+            block = target.onehot
             effect = prior.effect(port, parent.mechanisms[source].dim, target.dim, block, rng)
             mechanisms[consumer] = _consume(target, effect)
         tables[fk.table] = SCM(mechanisms, child.columns, time_column=child.time_column)

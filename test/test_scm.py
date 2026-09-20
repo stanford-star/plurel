@@ -3,8 +3,8 @@ import pandas as pd
 import pytest
 
 from plurel.columns import DEFAULT_CALENDAR, Column
-from plurel.distributions import Exponential, Normal, Uniform
-from plurel.mechanisms import Combine, LinearEffect, MatrixEffect, NearestEffect, Root, Softmax
+from plurel.distributions import Exponential, Gumbel, Normal, Uniform
+from plurel.mechanisms import Combine, LinearEffect, MatrixEffect, NearestEffect
 from plurel.scm import SCM
 
 N = 300
@@ -12,13 +12,15 @@ TABLE = np.arange(6.0).reshape(3, 2)
 MECHANISMS = {
     "y": Combine((LinearEffect("x", 2.0), LinearEffect("xz", -0.5)), noise=Normal(std=0.1)),
     "xz": Combine((LinearEffect("x"), LinearEffect("z")), op="product", noise=None),
-    "x": Root(),
-    "z": Root(),
-    "h": Root(dim=3),
-    "segment": Softmax((MatrixEffect("h", np.eye(3)),)),
+    "x": Combine(),
+    "z": Combine(),
+    "h": Combine(dim=3),
+    "segment": Combine((MatrixEffect("h", np.eye(3)),), onehot=True, noise=Gumbel()),
     "cluster": Combine((NearestEffect("h", np.eye(3)),), noise=None),
     "embedding": Combine((MatrixEffect("segment", TABLE),), noise=None),
-    "hidden": Softmax((MatrixEffect("y", np.array([[0.0, 2.0]])),), biases=(0.0, -1.0)),
+    "hidden": Combine(
+        (MatrixEffect("y", np.array([[0.0, 2.0]])),), bias=(0.0, -1.0), onehot=True, noise=Gumbel()
+    ),
 }
 COLUMNS = {name: Column(name) for name in ("y", "xz", "x", "z")}
 
@@ -67,10 +69,10 @@ def test_construction_rejects_unknown_parents_and_cycles():
 
 
 def test_simulate_rejects_a_node_that_breaks_its_declared_width():
-    scm = SCM({"h": Root(dim=3), "y": Combine((LinearEffect("h"),))}, {})
+    scm = SCM({"h": Combine(dim=3), "y": Combine((LinearEffect("h"),))}, {})
     with pytest.raises(ValueError, match="declared"):
         scm.simulate(N, seed=0)
-    overflow = SCM({"x": Root(), "y": Combine((LinearEffect("x", np.inf),))}, {})
+    overflow = SCM({"x": Combine(), "y": Combine((LinearEffect("x", np.inf),))}, {})
     with pytest.raises(ValueError, match="non-finite"):
         overflow.simulate(N, seed=0)
 
@@ -105,7 +107,7 @@ def test_declared_time_order_is_enforced_on_the_observed_table():
     def table(delay, marginal=None):
         return SCM(
             {
-                "placed": Root(noise=DEFAULT_CALENDAR),
+                "placed": Combine(noise=DEFAULT_CALENDAR),
                 "shipped": Combine((LinearEffect("placed"),), noise=delay),
             },
             {
@@ -124,4 +126,4 @@ def test_declared_time_order_is_enforced_on_the_observed_table():
         table(Exponential(3600.0), marginal=DEFAULT_CALENDAR).sample(N, seed=0)
     for after in ("nothing", "t"):
         with pytest.raises(ValueError, match="another timestamp"):
-            SCM({"t": Root()}, {"t": Column("t", "timestamp", after=after)})
+            SCM({"t": Combine()}, {"t": Column("t", "timestamp", after=after)})

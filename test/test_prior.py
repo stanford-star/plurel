@@ -3,7 +3,7 @@ import pytest
 
 from plurel.io import create_database
 from plurel.links import TreeLink
-from plurel.mechanisms import EFFECTS, Root, Softmax
+from plurel.mechanisms import EFFECTS
 from plurel.prior import (
     FAMILIES,
     Choices,
@@ -68,7 +68,7 @@ def test_table_prior_knobs_are_respected():
     )
     for seed in range(10):
         scm = plain.realize(seed)
-        assert not any(isinstance(m, Softmax) for m in scm.mechanisms.values())
+        assert not any(m.onehot for m in scm.mechanisms.values())
         assert scm.time_column is None
         assert all(c.kind != "categorical" for c in scm.columns.values())
         assert all(c.missing == 0.0 for c in scm.columns.values())
@@ -77,7 +77,7 @@ def test_table_prior_knobs_are_respected():
         TablePrior(effect_families=Choices(("linear",)))
     single = TablePrior(node_count=IntegersRange(1, 1), column_count=IntegersRange(1, 1))
     scm = single.realize(0)
-    assert len(scm.mechanisms) <= 2 and isinstance(scm.mechanisms["n0"], Root | Softmax)
+    assert len(scm.mechanisms) <= 2 and not scm.mechanisms["n0"].parents
     assert scm.sample(5, seed=0).shape[0] == 5
 
 
