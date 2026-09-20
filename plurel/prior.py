@@ -25,13 +25,13 @@ from plurel.layouts import (
 from plurel.links import HSBMLink, Link, RandomLink, TreeLink
 from plurel.mechanisms import (
     TRANSFORM_NAMES,
-    Combine,
     Effect,
     FourierEffect,
     LinearEffect,
     MatrixEffect,
     Mechanism,
     MLPEffect,
+    Node,
     QuadraticEffect,
     TreeEffect,
 )
@@ -191,8 +191,8 @@ class TablePrior:
         node_categorical_share: Probability that a node is categorical, a one-hot node.
         node_class_count: Classes of a categorical node.
         effect_families: Effect family per edge; linear only when parent and node widths agree.
-        combine_ops: Reduction over the effects of a node with several parents.
-        combine_noise_std: Standard deviation of the Gaussian noise of a Combine node.
+        node_ops: Reduction over the effects of a node with several parents.
+        node_noise_std: Standard deviation of the Gaussian noise of a node.
         root_noise: Exogenous distribution of a source node.
         mlp_hidden_width: Hidden width of an MLP effect.
         tree_count: Oblivious trees in a tree effect.
@@ -215,8 +215,8 @@ class TablePrior:
     node_categorical_share: float = 0.3
     node_class_count: Range = IntegersRange(2, 8)
     effect_families: Choices = Choices(FAMILIES)
-    combine_ops: Choices = Choices(("sum", "product", "max", "logsumexp"), (6.0, 1.0, 1.0, 1.0))
-    combine_noise_std: Range = LogRange(0.01, 0.5)
+    node_ops: Choices = Choices(("sum", "product", "max", "logsumexp"), (6.0, 1.0, 1.0, 1.0))
+    node_noise_std: Range = LogRange(0.01, 0.5)
     root_noise: Choices = Choices(
         (Normal(), Uniform(-1.7, 1.7), Mixture((Normal(-1.5, 0.5), Normal(1.5, 0.5))))
     )
@@ -267,7 +267,7 @@ class TablePrior:
             i = int(rng.choice(feature_nodes))
             columns[f"col{c}"] = self.column(i, dims[i], categorical[i], rng)
         if time:
-            mechanisms["time"] = Combine(noise=self.time_calendar)
+            mechanisms["time"] = Node(noise=self.time_calendar)
             columns["time"] = Column("time", "timestamp")
         return SCM(mechanisms, columns, time_column="time" if time else None)
 
@@ -281,13 +281,13 @@ class TablePrior:
     ) -> Mechanism:
         effects = tuple(self.effect(f"n{p}", dims[p], dims[i], categorical, rng) for p in sources)
         if categorical:
-            return Combine(
+            return Node(
                 effects, bias=tuple(rng.normal(0.0, 0.5, dims[i])), onehot=True, noise=Gumbel()
             )
         if not effects:
-            return Combine(dim=dims[i], noise=self.root_noise.draw(rng))
-        op = self.combine_ops.draw(rng) if len(effects) > 1 else "sum"
-        return Combine(effects, op, noise=Normal(std=self.combine_noise_std.draw(rng)))
+            return Node(dim=dims[i], noise=self.root_noise.draw(rng))
+        op = self.node_ops.draw(rng) if len(effects) > 1 else "sum"
+        return Node(effects, op, noise=Normal(std=self.node_noise_std.draw(rng)))
 
     def effect(
         self, parent: str, d_in: int, d_out: int, block: bool, rng: np.random.Generator
@@ -320,7 +320,7 @@ class TablePrior:
         return Column(node, dims=slot, marginal=self.column_marginals.draw(rng), missing=missing)
 
 
-def _consume(mechanism: Combine, effect: Effect) -> Combine:
+def _consume(mechanism: Node, effect: Effect) -> Node:
     return replace(mechanism, effects=mechanism.effects + (effect,))
 
 

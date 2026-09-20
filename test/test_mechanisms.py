@@ -4,9 +4,7 @@ import pytest
 from plurel.distributions import Gumbel, Mixture, Normal
 from plurel.mechanisms import (
     EFFECTS,
-    MECHANISMS,
     REDUCTIONS,
-    Combine,
     FourierEffect,
     LinearEffect,
     LookupEffect,
@@ -14,6 +12,7 @@ from plurel.mechanisms import (
     Mechanism,
     MLPEffect,
     NearestEffect,
+    Node,
     QuadraticEffect,
     TreeEffect,
     bin_levels,
@@ -55,9 +54,9 @@ EFFECT_EXAMPLES = {
     "quadratic": QUADRATIC,
 }
 EXAMPLES = {
-    "root": Combine(dim=3, noise=Mixture((Normal(-2.0), Normal(2.0)))),
-    "combine": Combine(TERMS, noise=Normal(std=0.5)),
-    "onehot": Combine(SCORES, onehot=True, noise=Gumbel()),
+    "root": Node(dim=3, noise=Mixture((Normal(-2.0), Normal(2.0)))),
+    "combine": Node(TERMS, noise=Normal(std=0.5)),
+    "onehot": Node(SCORES, onehot=True, noise=Gumbel()),
 }
 REFERENCE = {
     "sum": lambda t: t.sum(0),
@@ -77,9 +76,8 @@ def latents():
 
 
 def test_every_registered_mechanism_meets_the_contract(latents):
-    assert set(MECHANISMS) == {"combine"}
     for mechanism in EXAMPLES.values():
-        assert isinstance(mechanism, Mechanism | MECHANISMS["combine"])
+        assert isinstance(mechanism, Node) and isinstance(mechanism, Mechanism)
         exogenous = mechanism.sample_noise(N, np.random.default_rng(1))
         again = mechanism.sample_noise(N, np.random.default_rng(1))
         np.testing.assert_array_equal(exogenous, again)
@@ -87,23 +85,23 @@ def test_every_registered_mechanism_meets_the_contract(latents):
 
 
 def test_one_node_type_covers_roots_combines_and_one_hot_nodes(latents):
-    root = Combine()
+    root = Node()
     assert root.dim == 1 and root.parents == () and isinstance(root.noise, Normal)
     exogenous = root.sample_noise(N, np.random.default_rng(0))
     np.testing.assert_array_equal(root.evaluate(latents, exogenous), exogenous)
-    assert Combine(dim=4).sample_noise(N, np.random.default_rng(0)).shape == (N, 4)
-    assert Combine(bias=(0.0, 1.0, 2.0)).dim == 3
-    classes = Combine(bias=(0.0, 0.0, 5.0), onehot=True, noise=Gumbel())
+    assert Node(dim=4).sample_noise(N, np.random.default_rng(0)).shape == (N, 4)
+    assert Node(bias=(0.0, 1.0, 2.0)).dim == 3
+    classes = Node(bias=(0.0, 0.0, 5.0), onehot=True, noise=Gumbel())
     onehot = classes.evaluate(latents, classes.sample_noise(N, np.random.default_rng(0)))
     assert onehot.shape == (N, 3) and (onehot.sum(1) == 1).all() and onehot[:, 2].mean() > 0.9
-    scores = Combine(SCORES, bias=(0.0, 0.0, 0.0), onehot=True, noise=None)
+    scores = Node(SCORES, bias=(0.0, 0.0, 0.0), onehot=True, noise=None)
     assert scores.dim == 3 and scores.evaluate(latents, np.zeros((N, 3))).sum() == N
     for bad in (
-        lambda: Combine(TERMS, dim=2),
-        lambda: Combine(bias=(0.0, 1.0), dim=3),
-        lambda: Combine(TERMS, bias=(0.0, 1.0)),
-        lambda: Combine(onehot=True),
-        lambda: Combine(TERMS, op="median"),
+        lambda: Node(TERMS, dim=2),
+        lambda: Node(bias=(0.0, 1.0), dim=3),
+        lambda: Node(TERMS, bias=(0.0, 1.0)),
+        lambda: Node(onehot=True),
+        lambda: Node(TERMS, op="median"),
     ):
         with pytest.raises(ValueError):
             bad()
@@ -120,7 +118,7 @@ def test_every_reduction_reduces_the_transformed_parents(latents):
     assert set(REFERENCE) == set(REDUCTIONS)
     terms = np.stack([effect.apply(latents[effect.parent]) for effect in TERMS])
     for op, reference in REFERENCE.items():
-        mechanism = Combine(TERMS, op, noise=None)
+        mechanism = Node(TERMS, op, noise=None)
         exogenous = mechanism.sample_noise(N, np.random.default_rng(0))
         assert exogenous.shape == (N, mechanism.dim) and not exogenous.any()
         np.testing.assert_allclose(mechanism.evaluate(latents, exogenous), reference(terms))
@@ -128,13 +126,13 @@ def test_every_reduction_reduces_the_transformed_parents(latents):
 
 def test_block_effects_set_the_width_and_broadcast(latents):
     block = MatrixEffect("h", np.ones((3, 2)))
-    mixed = Combine((block, LinearEffect("x")), noise=None)
+    mixed = Node((block, LinearEffect("x")), noise=None)
     assert mixed.dim == 2
     expected = np.repeat(latents["h"].sum(1, keepdims=True) + latents["x"], 2, axis=1)
     np.testing.assert_allclose(mixed.evaluate(latents, np.zeros((N, 2))), expected)
-    assert Combine((block, LinearEffect("x")), op="concat").dim == 3
-    assert Combine((LinearEffect("h", dim=3),)).dim == 3
-    node = Combine((MLP, TREE), op="logsumexp")
+    assert Node((block, LinearEffect("x")), op="concat").dim == 3
+    assert Node((LinearEffect("h", dim=3),)).dim == 3
+    node = Node((MLP, TREE), op="logsumexp")
     assert node.dim == 2
     assert node.evaluate(latents, node.sample_noise(N, np.random.default_rng(0))).shape == (N, 2)
 
@@ -148,10 +146,10 @@ def test_lookup_effects_share_the_level_binning(latents):
 
 def test_interactions_are_product_nodes(latents):
     zeros = np.zeros((N, 1))
-    product = Combine((LinearEffect("x"), LinearEffect("y")), op="product")
+    product = Node((LinearEffect("x"), LinearEffect("y")), op="product")
     interaction = product.evaluate(latents, zeros)
     np.testing.assert_allclose(interaction, latents["x"] * latents["y"])
-    target = Combine((LinearEffect("x", 2.0), LinearEffect("h", -0.5)))
+    target = Node((LinearEffect("x", 2.0), LinearEffect("h", -0.5)))
     out = target.evaluate({**latents, "h": interaction}, zeros)
     np.testing.assert_allclose(out, 2.0 * latents["x"] - 0.5 * latents["x"] * latents["y"])
     assert target.parents == ("x", "h")
@@ -164,7 +162,7 @@ def test_one_hot_node_is_a_gumbel_argmax_over_the_combined_scores(latents):
     scores = np.concatenate([latents["x"], -latents["x"], 2.0 * latents["y"]], axis=1)
     assert (one_hot.sum(1) == 1).all()
     np.testing.assert_array_equal(one_hot.argmax(1), scores.argmax(1))
-    marginal = Combine(bias=tuple(np.log(PROBABILITIES)), onehot=True, noise=Gumbel())
+    marginal = Node(bias=tuple(np.log(PROBABILITIES)), onehot=True, noise=Gumbel())
     draws = marginal.evaluate({}, marginal.sample_noise(20_000, np.random.default_rng(0)))
     np.testing.assert_allclose(draws.mean(0), PROBABILITIES, atol=0.02)
 
@@ -172,8 +170,8 @@ def test_one_hot_node_is_a_gumbel_argmax_over_the_combined_scores(latents):
 def test_nested_levels_are_a_softmax_over_masked_logits():
     allowed = ((0, 1), (2,), (3, 4))
     rng = np.random.default_rng(0)
-    country = Combine(bias=(0.0,) * 3, onehot=True, noise=Gumbel())
-    city = Combine(
+    country = Node(bias=(0.0,) * 3, onehot=True, noise=Gumbel())
+    city = Node(
         (MatrixEffect("country", nested_logits(allowed, (0.2,) * 5)),), onehot=True, noise=Gumbel()
     )
     countries = country.evaluate({}, country.sample_noise(N, rng))

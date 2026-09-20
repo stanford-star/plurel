@@ -226,7 +226,7 @@ class Mechanism:
 
 
 @dataclass(frozen=True)
-class Combine(Mechanism):
+class Node(Mechanism):
     """The one node type: a reduction over per-parent effects, plus bias and noise.
 
     Without effects the node is a root whose value is its noise, `dim` wide. With `onehot`
@@ -279,5 +279,3 @@ EFFECTS: dict[str, type] = {
     "fourier": FourierEffect,
     "quadratic": QuadraticEffect,
 }
-
-MECHANISMS: dict[str, type] = {"combine": Combine}

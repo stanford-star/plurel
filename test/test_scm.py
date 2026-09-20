@@ -4,21 +4,21 @@ import pytest
 
 from plurel.columns import DEFAULT_CALENDAR, Column
 from plurel.distributions import Exponential, Gumbel, Normal, Uniform
-from plurel.mechanisms import Combine, LinearEffect, MatrixEffect, NearestEffect
+from plurel.mechanisms import LinearEffect, MatrixEffect, NearestEffect, Node
 from plurel.scm import SCM
 
 N = 300
 TABLE = np.arange(6.0).reshape(3, 2)
 MECHANISMS = {
-    "y": Combine((LinearEffect("x", 2.0), LinearEffect("xz", -0.5)), noise=Normal(std=0.1)),
-    "xz": Combine((LinearEffect("x"), LinearEffect("z")), op="product", noise=None),
-    "x": Combine(),
-    "z": Combine(),
-    "h": Combine(dim=3),
-    "segment": Combine((MatrixEffect("h", np.eye(3)),), onehot=True, noise=Gumbel()),
-    "cluster": Combine((NearestEffect("h", np.eye(3)),), noise=None),
-    "embedding": Combine((MatrixEffect("segment", TABLE),), noise=None),
-    "hidden": Combine(
+    "y": Node((LinearEffect("x", 2.0), LinearEffect("xz", -0.5)), noise=Normal(std=0.1)),
+    "xz": Node((LinearEffect("x"), LinearEffect("z")), op="product", noise=None),
+    "x": Node(),
+    "z": Node(),
+    "h": Node(dim=3),
+    "segment": Node((MatrixEffect("h", np.eye(3)),), onehot=True, noise=Gumbel()),
+    "cluster": Node((NearestEffect("h", np.eye(3)),), noise=None),
+    "embedding": Node((MatrixEffect("segment", TABLE),), noise=None),
+    "hidden": Node(
         (MatrixEffect("y", np.array([[0.0, 2.0]])),), bias=(0.0, -1.0), onehot=True, noise=Gumbel()
     ),
 }
@@ -63,16 +63,16 @@ def test_interventions_replace_a_node_and_keep_common_random_numbers(scm):
 
 def test_construction_rejects_unknown_parents_and_cycles():
     with pytest.raises(ValueError):
-        SCM({"y": Combine((LinearEffect("x"),))}, {})
+        SCM({"y": Node((LinearEffect("x"),))}, {})
     with pytest.raises(ValueError):
-        SCM({"a": Combine((LinearEffect("b"),)), "b": Combine((LinearEffect("a"),))}, {})
+        SCM({"a": Node((LinearEffect("b"),)), "b": Node((LinearEffect("a"),))}, {})
 
 
 def test_simulate_rejects_a_node_that_breaks_its_declared_width():
-    scm = SCM({"h": Combine(dim=3), "y": Combine((LinearEffect("h"),))}, {})
+    scm = SCM({"h": Node(dim=3), "y": Node((LinearEffect("h"),))}, {})
     with pytest.raises(ValueError, match="declared"):
         scm.simulate(N, seed=0)
-    overflow = SCM({"x": Combine(), "y": Combine((LinearEffect("x", np.inf),))}, {})
+    overflow = SCM({"x": Node(), "y": Node((LinearEffect("x", np.inf),))}, {})
     with pytest.raises(ValueError, match="non-finite"):
         overflow.simulate(N, seed=0)
 
@@ -107,8 +107,8 @@ def test_declared_time_order_is_enforced_on_the_observed_table():
     def table(delay, marginal=None):
         return SCM(
             {
-                "placed": Combine(noise=DEFAULT_CALENDAR),
-                "shipped": Combine((LinearEffect("placed"),), noise=delay),
+                "placed": Node(noise=DEFAULT_CALENDAR),
+                "shipped": Node((LinearEffect("placed"),), noise=delay),
             },
             {
                 "placed": Column("placed", "timestamp", marginal=marginal),
@@ -126,4 +126,4 @@ def test_declared_time_order_is_enforced_on_the_observed_table():
         table(Exponential(3600.0), marginal=DEFAULT_CALENDAR).sample(N, seed=0)
     for after in ("nothing", "t"):
         with pytest.raises(ValueError, match="another timestamp"):
-            SCM({"t": Combine()}, {"t": Column("t", "timestamp", after=after)})
+            SCM({"t": Node()}, {"t": Column("t", "timestamp", after=after)})

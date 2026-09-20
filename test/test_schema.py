@@ -6,11 +6,11 @@ from plurel import (
     DEFAULT_CALENDAR,
     SCM,
     Column,
-    Combine,
     Exponential,
     LinearEffect,
     LogNormal,
     MatrixEffect,
+    Node,
     Normal,
     generator,
 )
@@ -25,11 +25,11 @@ EMBEDDING = np.arange(9.0).reshape(3, 3)
 def customers():
     return SCM(
         {
-            "segment": Combine(bias=(0.0, 0.5, -0.5), onehot=True, noise=Gumbel()),
-            "value": Combine(),
+            "segment": Node(bias=(0.0, 0.5, -0.5), onehot=True, noise=Gumbel()),
+            "value": Node(),
             "n_orders": Port("orders", "amount", aggregate="count"),
             "spend": Port("orders", "amount", aggregate="sum"),
-            "churn": Combine(
+            "churn": Node(
                 (LinearEffect("spend", -0.1), LinearEffect("value")), noise=Normal(std=0.1)
             ),
         },
@@ -47,8 +47,8 @@ def orders():
         {
             "segment": Port("customers", "segment", dim=3, fill=0.0),
             "value": Port("customers", "value", fill=0.0),
-            "embedding": Combine((MatrixEffect("segment", EMBEDDING),), noise=None),
-            "amount": Combine(
+            "embedding": Node((MatrixEffect("segment", EMBEDDING),), noise=None),
+            "amount": Node(
                 (LinearEffect("value", 2.0), MatrixEffect("embedding", np.ones((3, 1)))),
                 noise=Normal(std=0.5),
             ),
@@ -60,9 +60,9 @@ def orders():
 def employees():
     return SCM(
         {
-            "level": Combine(),
+            "level": Node(),
             "manager_level": Port("employees", "level", via="manager_id", fill=0.0),
-            "pay": Combine(
+            "pay": Node(
                 (LinearEffect("level"), LinearEffect("manager_level", 0.5)), noise=Normal(std=0.1)
             ),
         },
@@ -254,7 +254,7 @@ def test_evaluation_order_within_a_generation_does_not_matter(schema):
 def test_influence_flows_child_to_parent_to_other_child():
     tables = {
         "a": SCM({"total": Port("b", "x", aggregate="sum")}, {"total": Column("total")}),
-        "b": SCM({"x": Combine()}, {"x": Column("x")}),
+        "b": SCM({"x": Node()}, {"x": Column("x")}),
         "c": SCM({"from_a": Port("a", "total")}, {"from_a": Column("from_a")}),
         "d": SCM(
             {"from_b": Port("b", "x"), "from_c": Port("c", "from_a")},
@@ -292,7 +292,7 @@ def test_ports_read_through_the_key_they_name():
     )
     both = SCM(
         {
-            "value": Combine(),
+            "value": Node(),
             "bought": Port("orders", "buyer_value", via="buyer_id", aggregate="count"),
             "sold": Port("orders", "seller_value", via="seller_id", aggregate="count"),
         },
@@ -310,7 +310,7 @@ def test_ports_read_through_the_key_they_name():
     np.testing.assert_array_equal(frames["orders"]["seller_value"], value[seller])
     np.testing.assert_array_equal(frames["customers"]["bought"], np.bincount(buyer, minlength=50))
     np.testing.assert_array_equal(frames["customers"]["sold"], np.bincount(seller, minlength=50))
-    assert Schema({"t": SCM({"x": Combine()}, {"x": Column("x")})}).sample({"t": 5}, seed=0)[
+    assert Schema({"t": SCM({"x": Node()}, {"x": Column("x")})}).sample({"t": 5}, seed=0)[
         "t"
     ].shape == (5, 1)
     assert Schema({"t": SCM({}, {})}).sample({"t": 4}, seed=0)["t"].shape == (4, 0)
@@ -326,7 +326,7 @@ class BadLink:
 
 def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
     customers = SCM(
-        {"segment": Combine(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()), "value": Combine()},
+        {"segment": Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()), "value": Node()},
         {},
     )
     orders = SCM(
@@ -367,7 +367,7 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
     downstream = SCM(
         {
             "value": Port("customers", "value", fill=np.nan),
-            "double": Combine((LinearEffect("value", 2.0),)),
+            "double": Node((LinearEffect("value", 2.0),)),
         },
         {},
     )
@@ -388,13 +388,13 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
 
 def test_child_events_follow_their_parent_events():
     customers = SCM(
-        {"signup": Combine(noise=DEFAULT_CALENDAR)},
+        {"signup": Node(noise=DEFAULT_CALENDAR)},
         {"signup": Column("signup", "timestamp")},
     )
     orders = SCM(
         {
             "signup": Port("customers", "signup", fill=np.nan),
-            "when": Combine((LinearEffect("signup"),), noise=Exponential(30 * 24 * 3600.0)),
+            "when": Node((LinearEffect("signup"),), noise=Exponential(30 * 24 * 3600.0)),
         },
         {"when": Column("when", "timestamp")},
         time_column="when",
