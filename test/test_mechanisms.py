@@ -200,7 +200,7 @@ def test_mlp_edge_places_activations_between_layers(latents):
         MLPEdge("h", (w1,), activations=("tanh",))
 
 
-def test_tree_effect_averages_oblivious_tree_leaves(latents):
+def test_tree_edge_averages_oblivious_tree_leaves(latents):
     h = latents["h"]
     expected = np.zeros((N, 2))
     for tree, (dims, points) in enumerate(zip(TREE.split_dims, TREE.split_points)):
@@ -209,7 +209,7 @@ def test_tree_effect_averages_oblivious_tree_leaves(latents):
     np.testing.assert_allclose(TREE.apply(h), expected / 2)
 
 
-def test_fourier_and_quadratic_effects_match_their_formulas(latents):
+def test_fourier_and_quadratic_edges_match_their_formulas(latents):
     h = latents["h"]
     features = np.cos(h @ FOURIER.frequencies + FOURIER.phases)
     np.testing.assert_allclose(FOURIER.apply(h), features @ FOURIER.weights)
