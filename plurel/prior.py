@@ -486,11 +486,7 @@ class SchemaPrior:
 
     def aggregate(self, tables: dict[str, SCM], fk: FK, rng: np.random.Generator) -> None:
         child, parent = tables[fk.table], tables[fk.parent]
-        sources = [
-            name
-            for name, m in child.mechanisms.items()
-            if m.dim == 1 and not isinstance(m, Port) and name not in child.timestamp_nodes
-        ]
+        sources = [n for n, m in child.mechanisms.items() if m.dim == 1 and not isinstance(m, Port)]
         mechanisms, columns = dict(parent.mechanisms), dict(parent.columns)
         count = min(self.aggregate_count.draw(rng), len(sources))
         for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
