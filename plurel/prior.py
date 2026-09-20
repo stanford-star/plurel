@@ -320,10 +320,8 @@ class TablePrior:
         return Column(node, dims=slot, marginal=self.column_marginals.draw(rng), missing=missing)
 
 
-def _consume(mechanism: Mechanism, effect: Effect) -> Mechanism:
-    if isinstance(mechanism, Combine):
-        return replace(mechanism, effects=mechanism.effects + (effect,))
-    return Combine((effect,), noise=mechanism.noise)
+def _consume(mechanism: Combine, effect: Effect) -> Combine:
+    return replace(mechanism, effects=mechanism.effects + (effect,))
 
 
 @dataclass(frozen=True)
