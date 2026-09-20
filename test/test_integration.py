@@ -20,7 +20,7 @@ from plurel import (
 )
 from plurel.distributions import Gumbel
 from plurel.links import HSBMLink, RandomLink, TreeLink
-from plurel.schema import FK, Port, Schema
+from plurel.schema import COMPLETE, FK, Childless, Foreign, Orphan, Schema, Summary
 
 
 def random_schema(rng):
@@ -70,31 +70,35 @@ def random_schema(rng):
                 HSBMLink((1, 2), (2, 1), popularity=Pareto(2.0), inactive=0.2),
             ]
         )
-        fkeys.append(FK(t, f"{parent}_fk", parent, link, nullable=float(rng.choice([0.0, 0.2]))))
-        fill = float(rng.choice([0.0, np.nan]))
+        key = f"{parent}_fk"
+        fkeys.append(FK(t, key, parent, link, nullable=float(rng.choice([0.0, 0.2])), fill=0.0))
+        observed = bool(rng.random() < 0.5)
         width = mechanisms[parent]["seg"].dim
-        mechanisms[t]["g_r0"] = Port(parent, "r0", fill=fill)
-        mechanisms[t]["g_seg"] = Port(parent, "seg", dim=width, fill=0.0)
+        mechanisms[t]["g_r0"] = Node((LinearEdge(Foreign(key, "r0")),), noise=None)
+        mechanisms[t]["g_seg"] = Node((LinearEdge(Foreign(key, "seg"), dim=width),), noise=None)
         columns[t]["g_seg"] = Column(
             "g_seg", "categorical", categories=tuple(f"p{i}" for i in range(width))
         )
-        if np.isnan(fill):
-            columns[t]["g_r0"] = Column("g_r0", marginal=Uniform())
+        if observed:
+            columns[t]["g_r0"] = Column("g_r0", marginal=Uniform(), missing=Orphan(key))
         else:
             edges = (LinearEdge("g_r0", 2.0), MatrixEdge("g_seg", np.ones((width, 1))))
             mechanisms[t]["z"] = Node(edges, noise=Normal(std=0.1))
             columns[t]["z"] = Column("z")
-        aggregate = str(rng.choice(["count", "sum", "mean", "max"]))
-        fill = None if aggregate in ("count", "sum") else 0.0
-        mechanisms[parent][f"a_{t}"] = Port(t, "y", aggregate=aggregate, fill=fill)
+        how = str(rng.choice(["count", "sum", "mean", "max"]))
+        summary = Summary(t, key, "y", how, fill=None if how in COMPLETE else 0.0)
+        mechanisms[parent][f"a_{t}"] = Node((LinearEdge(summary),), noise=None)
         mechanisms[parent][f"w_{t}"] = Node((LinearEdge(f"a_{t}", 0.5),), noise=Normal())
-        columns[parent][f"a_{t}"] = Column(f"a_{t}")
+        missing = 0.0 if how in COMPLETE else Childless(t, key)
+        columns[parent][f"a_{t}"] = Column(f"a_{t}", missing=missing)
         columns[parent][f"w_{t}"] = Column(f"w_{t}")
     if rng.random() < 0.4:
         t = names[0]
-        fkeys.append(FK(t, "boss", t, TreeLink(roots=0.3)))
-        mechanisms[t]["boss_r0"] = Port(t, "r0", via="boss", fill=0.0)
-        mechanisms[t]["reports"] = Port(t, "r0", via="boss", aggregate="count")
+        fkeys.append(FK(t, "boss", t, TreeLink(roots=0.3), fill=0.0))
+        mechanisms[t]["boss_r0"] = Node((LinearEdge(Foreign("boss", "r0")),), noise=None)
+        mechanisms[t]["reports"] = Node(
+            (LinearEdge(Summary(t, "boss", "r0", "count")),), noise=None
+        )
         columns[t]["reports"] = Column("reports")
     tables = {
         t: SCM(mechanisms[t], columns[t], time_column="stamp" if "stamp" in columns[t] else None)
@@ -117,7 +121,7 @@ def test_random_schemas_sample_wrap_and_round_trip(seed, tmp_path):
         assert len(frames[t]) == rows[t]
         np.testing.assert_array_equal(frames[t][scm.pkey_column], np.arange(rows[t]))
         for name, latent in latents[t].items():
-            assert latent.shape == (rows[t], scm.mechanisms[name].dim)
+            assert latent.shape == (rows[t], scm.nodes[name].dim)
         for name, column in scm.columns.items():
             if column.kind == "categorical":
                 assert frames[t][name].dropna().isin(column.categories).all()
@@ -131,11 +135,12 @@ def test_random_schemas_sample_wrap_and_round_trip(seed, tmp_path):
             assert (linked.to_numpy() < linked.index.to_numpy()).all()
         elif fk.nullable == 0:
             assert keys.notna().all()
-    for (t, name), (port, fk) in schema.ports.items():
-        column = schema.tables[t].columns.get(name)
-        if port.aggregate is None and column is not None and column.kind == "categorical":
+    for fk in schema.fkeys:
+        if fk.table != fk.parent:
             orphan = frames[fk.table][fk.column].isna().to_numpy()
-            assert frames[t][name].isna().to_numpy()[orphan].all()
+            assert frames[fk.table]["g_seg"].isna().to_numpy()[orphan].all()
+            if "g_r0" in frames[fk.table]:
+                assert frames[fk.table]["g_r0"].isna().to_numpy().tolist() == orphan.tolist()
     db = create_database(schema, frames)
     timed = [t for t, scm in schema.tables.items() if scm.time_column and rows[t]]
     if timed:

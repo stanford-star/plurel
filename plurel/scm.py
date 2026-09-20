@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 from plurel.columns import Column
-from plurel.mechanisms import Mechanism
+from plurel.mechanisms import Node
 from plurel.random import Seed, generator
 
 Interventions = Mapping[str, float | np.ndarray]
@@ -21,9 +21,9 @@ def intervention(value: float | np.ndarray, n: int, dim: int) -> np.ndarray:
         raise ValueError(f"intervention of shape {value.shape} does not fit {(n, dim)}") from error
 
 
-def checked(name: str, mechanism: Mechanism, latent: np.ndarray, n: int) -> np.ndarray:
-    if latent.shape != (n, mechanism.dim):
-        raise ValueError(f"{name!r} produced {latent.shape}, declared {(n, mechanism.dim)}")
+def checked(name: str, node: Node, latent: np.ndarray, n: int) -> np.ndarray:
+    if latent.shape != (n, node.dim):
+        raise ValueError(f"{name!r} produced {latent.shape}, declared {(n, node.dim)}")
     if not np.isfinite(latent).all():
         raise ValueError(f"{name!r} produced non-finite values")
     return latent
@@ -44,28 +44,39 @@ def generations[T: Hashable](parents: Mapping[T, tuple[T, ...]]) -> tuple[tuple[
 
 
 class SCM:
+    """A table's DAG. Edge tails and missingness markers that cross keys are `inputs` a Schema
+    supplies; a table with inputs samples only through a Schema."""
+
     def __init__(
         self,
-        mechanisms: Mapping[str, Mechanism],
+        nodes: Mapping[str, Node],
         columns: Mapping[str, Column],
         time_column: str | None = None,
     ) -> None:
-        self.mechanisms = dict(mechanisms)
-        for child, mechanism in self.mechanisms.items():
-            unknown = set(mechanism.parents) - set(self.mechanisms)
-            if unknown:
+        self.nodes = dict(nodes)
+        inputs: set[Hashable] = set()
+        markers: set[Hashable] = set()
+        for child, node in self.nodes.items():
+            local = {parent for parent in node.parents if isinstance(parent, str)}
+            if unknown := local - set(self.nodes):
                 raise ValueError(f"{child!r} refers to unknown parents {sorted(unknown)}")
-        parents = {name: mechanism.parents for name, mechanism in self.mechanisms.items()}
+            inputs |= set(node.parents) - local
+        parents = {
+            name: tuple(parent for parent in node.parents if isinstance(parent, str))
+            for name, node in self.nodes.items()
+        }
         self.generations = generations(parents)
         self.order = tuple(name for generation in self.generations for name in generation)
         self.columns = dict(columns)
         for name, column in self.columns.items():
             if column.kind == "key":
                 continue
-            nodes = (
-                {column.node, column.missing} if isinstance(column.missing, str) else {column.node}
-            )
-            if unknown := nodes - set(self.mechanisms):
+            needed = {column.node}
+            if isinstance(column.missing, str):
+                needed.add(column.missing)
+            elif not isinstance(column.missing, int | float):
+                markers.add(column.missing)
+            if unknown := needed - set(self.nodes):
                 raise ValueError(f"column {name!r} refers to unknown nodes {sorted(unknown)}")
         kinds = {name: column.kind for name, column in self.columns.items()}
         for name, column in self.columns.items():
@@ -83,27 +94,31 @@ class SCM:
         self.timestamp_nodes = frozenset(
             column.node for column in self.columns.values() if column.kind == "timestamp"
         )
+        self.markers = frozenset(markers)
+        self.inputs = frozenset(inputs) | self.markers
 
     def evaluate(
         self,
         name: str,
         n: int,
-        latents: dict[str, np.ndarray],
+        latents: Mapping[Hashable, np.ndarray],
         stream: np.random.Generator,
         interventions: Interventions,
     ) -> np.ndarray:
-        mechanism = self.mechanisms[name]
+        node = self.nodes[name]
         if name in interventions:
-            return intervention(interventions[name], n, mechanism.dim)
-        parents = {parent: latents[parent] for parent in mechanism.parents}
-        exogenous = mechanism.sample_noise(n, stream)
-        return checked(name, mechanism, mechanism.evaluate(parents, exogenous), n)
+            return intervention(interventions[name], n, node.dim)
+        parents = {parent: latents[parent] for parent in node.parents}
+        exogenous = node.sample_noise(n, stream)
+        return checked(name, node, node.evaluate(parents, exogenous), n)
 
     def simulate(
         self, n: int, *, seed: Seed = None, interventions: Interventions | None = None
     ) -> dict[str, np.ndarray]:
+        if self.inputs:
+            raise ValueError("the table reads through keys; sample it through a Schema")
         interventions = dict(interventions or {})
-        if unknown := set(interventions) - set(self.mechanisms):
+        if unknown := set(interventions) - set(self.nodes):
             raise ValueError(f"interventions on unknown nodes {sorted(unknown)}")
         streams = dict(zip(self.order, generator(seed).spawn(len(self.order))))
         latents: dict[str, np.ndarray] = {}
@@ -113,8 +128,10 @@ class SCM:
         return latents
 
     def observe(
-        self, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
+        self, latents: Mapping[Hashable, np.ndarray], rng: np.random.Generator, n: int
     ) -> pd.DataFrame:
+        if unsupplied := self.markers - set(latents):
+            raise ValueError(f"markers {sorted(map(str, unsupplied))} must come from a Schema")
         observed = {name: column.observe(latents, rng, n) for name, column in self.columns.items()}
         frame = pd.DataFrame(observed, index=range(n))
         for name, column in self.columns.items():

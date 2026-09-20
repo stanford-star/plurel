@@ -9,7 +9,6 @@ from plurel.mechanisms import (
     LinearEdge,
     LookupEdge,
     MatrixEdge,
-    Mechanism,
     MLPEdge,
     NearestEdge,
     Node,
@@ -77,7 +76,7 @@ def latents():
 
 def test_every_registered_mechanism_meets_the_contract(latents):
     for mechanism in EXAMPLES.values():
-        assert isinstance(mechanism, Node) and isinstance(mechanism, Mechanism)
+        assert isinstance(mechanism, Node)
         exogenous = mechanism.sample_noise(N, np.random.default_rng(1))
         again = mechanism.sample_noise(N, np.random.default_rng(1))
         np.testing.assert_array_equal(exogenous, again)

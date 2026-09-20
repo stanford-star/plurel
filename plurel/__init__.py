@@ -45,7 +45,6 @@ from plurel.mechanisms import (
     LinearEdge,
     LookupEdge,
     MatrixEdge,
-    Mechanism,
     MLPEdge,
     NearestEdge,
     Node,
@@ -66,7 +65,7 @@ from plurel.prior import (
     TablePrior,
 )
 from plurel.random import Seed, generator
-from plurel.schema import AGGREGATES, FK, Port, Schema
+from plurel.schema import AGGREGATES, FK, Childless, Foreign, Orphan, Schema, Summary
 from plurel.scm import SCM, Interventions
 
 __all__ = [
@@ -86,6 +85,7 @@ __all__ = [
     "BarabasiAlbert",
     "Beta",
     "Calendar",
+    "Childless",
     "Choices",
     "Column",
     "Node",
@@ -95,6 +95,7 @@ __all__ = [
     "ErdosRenyi",
     "Exponential",
     "FK",
+    "Foreign",
     "FourierEdge",
     "Gumbel",
     "HSBMLink",
@@ -109,14 +110,13 @@ __all__ = [
     "LogRange",
     "LookupEdge",
     "MatrixEdge",
-    "Mechanism",
     "Mixture",
     "MLPEdge",
     "NearestEdge",
     "Normal",
+    "Orphan",
     "Pareto",
     "Poisson",
-    "Port",
     "QuadraticEdge",
     "RandomCauchy",
     "RandomLink",
@@ -124,6 +124,7 @@ __all__ = [
     "Range",
     "ReverseRandomTree",
     "Seed",
+    "Summary",
     "TablePrior",
     "TimeSeries",
     "TreeEdge",

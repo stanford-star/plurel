@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
 from functools import reduce
 from statistics import NormalDist
@@ -71,7 +71,9 @@ def _draw(distribution: Distribution, n: int, rng: np.random.Generator, dim: int
 
 @dataclass(frozen=True)
 class Edge:
-    parent: str
+    """One parent's contribution to a node; the tail is a node name or a crossing reference."""
+
+    parent: Hashable
     dim = 1
 
     def apply(self, x: np.ndarray) -> np.ndarray:
@@ -213,20 +215,7 @@ class QuadraticEdge(Edge):
 
 
 @dataclass(frozen=True)
-class Mechanism:
-    noise: Distribution | None = field(default_factory=Normal, kw_only=True)
-    dim = 1
-    parents = ()
-
-    def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
-        return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, self.dim))
-
-    def evaluate(self, latents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
-        raise NotImplementedError
-
-
-@dataclass(frozen=True)
-class Node(Mechanism):
+class Node:
     """The one node type: a reduction over per-parent edges, plus bias and noise.
 
     Without edges the node is a root whose value is its noise, `dim` wide. With `onehot`
@@ -239,6 +228,7 @@ class Node(Mechanism):
     bias: tuple[float, ...] | None = None
     onehot: bool = False
     dim: int | None = None
+    noise: Distribution | None = field(default_factory=Normal, kw_only=True)
 
     def __post_init__(self) -> None:
         if self.op not in REDUCTIONS:
@@ -258,10 +248,13 @@ class Node(Mechanism):
             raise ValueError("a one-hot node needs at least two classes")
 
     @property
-    def parents(self) -> tuple[str, ...]:
+    def parents(self) -> tuple[Hashable, ...]:
         return tuple(dict.fromkeys(edge.parent for edge in self.edges))
 
-    def evaluate(self, latents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
+    def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, self.dim))
+
+    def evaluate(self, latents: Mapping[Hashable, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
         terms = [edge.apply(latents[edge.parent]) for edge in self.edges]
         value = REDUCTIONS[self.op](terms) + exogenous if terms else exogenous
         if self.bias is not None:

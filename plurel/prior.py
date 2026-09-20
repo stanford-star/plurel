@@ -29,14 +29,13 @@ from plurel.mechanisms import (
     FourierEdge,
     LinearEdge,
     MatrixEdge,
-    Mechanism,
     MLPEdge,
     Node,
     QuadraticEdge,
     TreeEdge,
 )
 from plurel.random import Seed, generator
-from plurel.schema import FK, Port, Schema
+from plurel.schema import COMPLETE, FK, Childless, Foreign, Schema, Summary
 from plurel.scm import SCM
 
 ACTIVATIONS = tuple(name for name in TRANSFORM_NAMES if name != "identity")
@@ -256,7 +255,7 @@ class TablePrior:
             self.node_class_count.draw(rng) if categorical[i] else self.node_width.draw(rng)
             for i in range(n)
         ]
-        mechanisms = {
+        nodes = {
             f"n{i}": self.mechanism(parents[i], dims, i, categorical[i], rng) for i in range(n)
         }
         columns = {"id": Column(kind="key")}
@@ -265,9 +264,9 @@ class TablePrior:
             i = int(rng.choice(feature_nodes))
             columns[f"col{c}"] = self.column(i, dims[i], categorical[i], rng)
         if time:
-            mechanisms["time"] = Node(noise=self.time_calendar)
+            nodes["time"] = Node(noise=self.time_calendar)
             columns["time"] = Column("time", "timestamp")
-        return SCM(mechanisms, columns, time_column="time" if time else None)
+        return SCM(nodes, columns, time_column="time" if time else None)
 
     def mechanism(
         self,
@@ -276,7 +275,7 @@ class TablePrior:
         i: int,
         categorical: bool,
         rng: np.random.Generator,
-    ) -> Mechanism:
+    ) -> Node:
         edges = tuple(self.edge(f"n{p}", dims[p], dims[i], categorical, rng) for p in sources)
         if categorical:
             return Node(
@@ -318,8 +317,17 @@ class TablePrior:
         return Column(node, dims=slot, marginal=self.column_marginals.draw(rng), missing=missing)
 
 
-def _consume(mechanism: Node, edge: Edge) -> Node:
-    return replace(mechanism, edges=mechanism.edges + (edge,))
+def _consume(node: Node, edge: Edge) -> Node:
+    return replace(node, edges=node.edges + (edge,))
+
+
+def _plain(scm: SCM) -> list[str]:
+    """Nodes that neither are summaries nor read them, the ones keys may cross."""
+    return [
+        name
+        for name, node in scm.nodes.items()
+        if not any(isinstance(tail, Summary) for tail in node.parents)
+    ]
 
 
 @dataclass(frozen=True)
@@ -419,6 +427,7 @@ class SchemaPrior:
                     "parent_id",
                     f"t{i}",
                     TreeLink(self.self_reference_root_share.draw(rng)),
+                    fill=0.0,
                 )
                 fkeys.append(fk)
                 self.gather(tables, fk, priors[i], rng)
@@ -450,44 +459,39 @@ class SchemaPrior:
 
     def fkey(self, child: str, parent: str, rng: np.random.Generator) -> FK:
         nullable = self.fk_nullable_rate.draw(rng) if rng.random() < self.fk_nullable_share else 0.0
-        return FK(child, f"{parent}_id", parent, self.link(rng), nullable=nullable)
+        return FK(child, f"{parent}_id", parent, self.link(rng), nullable=nullable, fill=0.0)
 
     def gather(
         self, tables: dict[str, SCM], fk: FK, prior: TablePrior, rng: np.random.Generator
     ) -> None:
+        """Give drawn parent nodes to drawn child nodes as edges crossing the key."""
         child, parent = tables[fk.table], tables[fk.parent]
-        sources = [name for name, m in parent.mechanisms.items() if not isinstance(m, Port)]
-        consumers = [
-            name
-            for name, m in child.mechanisms.items()
-            if not isinstance(m, Port) and name not in child.timestamp_nodes
-        ]
+        sources = [name for name in _plain(parent) if name not in parent.timestamp_nodes]
+        consumers = [name for name in _plain(child) if name not in child.timestamp_nodes]
         if fk.table == fk.parent:
-            sources = [name for name in sources if not parent.mechanisms[name].parents]
-            consumers = [name for name in consumers if child.mechanisms[name].parents]
-        mechanisms = dict(child.mechanisms)
+            sources = [name for name in sources if not parent.nodes[name].parents]
+            consumers = [name for name in consumers if child.nodes[name].parents]
+        nodes = dict(child.nodes)
         count = min(self.gather_count.draw(rng), len(sources), len(consumers))
         for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
             consumer = str(rng.choice(consumers))
-            port = f"{fk.column}_{source}"
-            mechanisms[port] = Port(
-                fk.parent, source, via=fk.column, fill=0.0, dim=parent.mechanisms[source].dim
-            )
-            target = mechanisms[consumer]
-            block = target.onehot
-            edge = prior.edge(port, parent.mechanisms[source].dim, target.dim, block, rng)
-            mechanisms[consumer] = _consume(target, edge)
-        tables[fk.table] = SCM(mechanisms, child.columns, time_column=child.time_column)
+            target = nodes[consumer]
+            tail = Foreign(fk.column, source)
+            edge = prior.edge(tail, parent.nodes[source].dim, target.dim, target.onehot, rng)
+            nodes[consumer] = _consume(target, edge)
+        tables[fk.table] = SCM(nodes, child.columns, time_column=child.time_column)
 
     def aggregate(self, tables: dict[str, SCM], fk: FK, rng: np.random.Generator) -> None:
+        """Summarize drawn child nodes into new observed nodes of the parent."""
         child, parent = tables[fk.table], tables[fk.parent]
-        sources = [n for n, m in child.mechanisms.items() if m.dim == 1 and not isinstance(m, Port)]
-        mechanisms, columns = dict(parent.mechanisms), dict(parent.columns)
+        sources = [name for name in _plain(child) if child.nodes[name].dim == 1]
+        nodes, columns = dict(parent.nodes), dict(parent.columns)
         count = min(self.aggregate_count.draw(rng), len(sources))
         for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
             how = self.aggregates.draw(rng)
             name = f"{fk.table}_{source}_{how}"
-            fill = None if how in ("count", "sum") else np.nan
-            mechanisms[name] = Port(fk.table, source, via=fk.column, aggregate=how, fill=fill)
-            columns[name] = Column(name)
-        tables[fk.parent] = SCM(mechanisms, columns, time_column=parent.time_column)
+            tail = Summary(fk.table, fk.column, source, how, fill=None if how in COMPLETE else 0.0)
+            nodes[name] = Node((LinearEdge(tail),), noise=None)
+            missing = 0.0 if how in COMPLETE else Childless(fk.table, fk.column)
+            columns[name] = Column(name, missing=missing)
+        tables[fk.parent] = SCM(nodes, columns, time_column=parent.time_column)

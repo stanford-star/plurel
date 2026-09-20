@@ -7,6 +7,7 @@ from plurel import (
     SCM,
     Column,
     Exponential,
+    Gumbel,
     LinearEdge,
     LogNormal,
     MatrixEdge,
@@ -14,12 +15,15 @@ from plurel import (
     Normal,
     generator,
 )
-from plurel.distributions import Gumbel
 from plurel.links import HSBMLink, RandomLink, TreeLink
-from plurel.schema import AGGREGATES, FK, Port, Schema
+from plurel.schema import AGGREGATES, FK, Childless, Foreign, Orphan, Schema, Summary
 
 ROWS = {"customers": 300, "orders": 2000, "employees": 150}
 EMBEDDING = np.arange(9.0).reshape(3, 3)
+
+
+def copy(tail, dim=1):
+    return Node((LinearEdge(tail, dim=dim),), noise=None)
 
 
 def customers():
@@ -27,8 +31,8 @@ def customers():
         {
             "segment": Node(bias=(0.0, 0.5, -0.5), onehot=True, noise=Gumbel()),
             "value": Node(),
-            "n_orders": Port("orders", "amount", aggregate="count"),
-            "spend": Port("orders", "amount", aggregate="sum"),
+            "n_orders": copy(Summary("orders", "customer_id", "amount", "count")),
+            "spend": copy(Summary("orders", "customer_id", "amount", "sum")),
             "churn": Node((LinearEdge("spend", -0.1), LinearEdge("value")), noise=Normal(std=0.1)),
         },
         {
@@ -43,8 +47,8 @@ def customers():
 def orders():
     return SCM(
         {
-            "segment": Port("customers", "segment", dim=3, fill=0.0),
-            "value": Port("customers", "value", fill=0.0),
+            "segment": copy(Foreign("customer_id", "segment"), dim=3),
+            "value": copy(Foreign("customer_id", "value")),
             "embedding": Node((MatrixEdge("segment", EMBEDDING),), noise=None),
             "amount": Node(
                 (LinearEdge("value", 2.0), MatrixEdge("embedding", np.ones((3, 1)))),
@@ -59,7 +63,7 @@ def employees():
     return SCM(
         {
             "level": Node(),
-            "manager_level": Port("employees", "level", via="manager_id", fill=0.0),
+            "manager_level": copy(Foreign("manager_id", "level")),
             "pay": Node(
                 (LinearEdge("level"), LinearEdge("manager_level", 0.5)), noise=Normal(std=0.1)
             ),
@@ -69,8 +73,8 @@ def employees():
 
 
 FKEYS = (
-    FK("orders", "customer_id", "customers", HSBMLink((2,), (2,)), nullable=0.1),
-    FK("employees", "manager_id", "employees", TreeLink(roots=0.2)),
+    FK("orders", "customer_id", "customers", HSBMLink((2,), (2,)), nullable=0.1, fill=0.0),
+    FK("employees", "manager_id", "employees", TreeLink(roots=0.2), fill=0.0),
 )
 
 
@@ -132,7 +136,8 @@ def test_sampling_is_deterministic_and_interventions_keep_common_random_numbers(
     linked = frames["orders"]["customer_id"].notna().to_numpy()
     expected = np.tile(EMBEDDING[2], (linked.sum(), 1))
     np.testing.assert_array_equal(latents_ported["orders"]["embedding"][linked], expected)
-    assert orders().sample(50, seed=0).shape == (50, 2)
+    with pytest.raises(ValueError, match="Schema"):
+        orders().sample(50, seed=0)
 
 
 def test_aggregates_handle_empty_groups():
@@ -149,20 +154,31 @@ def test_aggregates_handle_empty_groups():
     assert set(expected) == set(AGGREGATES)
     for name, aggregate in AGGREGATES.items():
         np.testing.assert_array_equal(aggregate(values, index, 3), expected[name])
-    port = Port("orders", "amount", aggregate="mean")
+    schema = Schema(
+        {"a": SCM({"x": Node()}, {}), "b": SCM({"x": Node(dim=2)}, {})},
+        (FK("b", "a_id", "a", nullable=0.5),),
+    )
+    rows, latents = {"a": 3, "b": 3}, {"a": {"x": values[:, :1]}, "b": {"x": values}}
+    links = {("b", "a_id"): index}
     with pytest.raises(ValueError, match="fill"):
-        port.resolve(values, index, 3)
+        schema.resolve("a", Summary("b", "a_id", "x", "mean"), rows, latents, links)
     np.testing.assert_array_equal(
-        Port("orders", "amount", aggregate="mean", fill=-1.0).resolve(values, index, 3)[1],
+        schema.resolve("a", Summary("b", "a_id", "x", "mean", fill=-1.0), rows, latents, links)[1],
         [-1.0, -1.0],
     )
     np.testing.assert_array_equal(
-        Port("orders", "amount", aggregate="sum").resolve(values, index, 3), expected["sum"]
+        schema.resolve("a", Summary("b", "a_id", "x", "sum"), rows, latents, links),
+        expected["sum"],
     )
     with pytest.raises(ValueError, match="fill"):
-        Port("customers", "value").resolve(values[:, :1], np.array([0, -1]), 2)
+        schema.resolve(
+            "b", Foreign("a_id", "x"), rows, latents, {("b", "a_id"): np.array([0, -1, 2])}
+        )
     np.testing.assert_array_equal(
-        Port("customers", "value").resolve(values[:, :1], np.array([2, 0]), 2), [[5.0], [1.0]]
+        schema.resolve(
+            "b", Foreign("a_id", "x"), rows, latents, {("b", "a_id"): np.array([2, 0, 1])}
+        ),
+        [[5.0], [1.0], [3.0]],
     )
 
 
@@ -174,50 +190,51 @@ def test_schema_validation():
         Schema(tables, (FK("orders", "amount", "customers"),))
     with pytest.raises(ValueError):
         Schema(tables, FKEYS + (FK("orders", "customer_id", "customers"),))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="no key column"):
         Schema(tables, FKEYS[1:])
     twice = FKEYS + (FK("orders", "referrer_id", "customers", RandomLink()),)
-    with pytest.raises(ValueError):
-        Schema(tables, twice)
-    via = {
-        "customers": SCM(
-            {
-                **customers().mechanisms,
-                "n_orders": Port("orders", "amount", via="customer_id", aggregate="count"),
-                "spend": Port("orders", "amount", via="customer_id", aggregate="sum"),
-            },
-            customers().columns,
-        ),
-        "orders": SCM(
-            {
-                **orders().mechanisms,
-                "segment": Port("customers", "segment", via="customer_id", dim=3),
-                "value": Port("customers", "value", via="referrer_id"),
-            },
-            orders().columns,
-        ),
-    }
-    assert Schema({**tables, **via}, twice).ports[("orders", "value")][1].column == "referrer_id"
-    for bad in (
-        {"segment": Port("customers", "segment")},
-        {"value": Port("customers", "nothing")},
-        {"value": Port("customers", "value", aggregate="sum")},
+    referred = SCM(
+        {**orders().nodes, "value": copy(Foreign("referrer_id", "value"))}, orders().columns
+    )
+    schema = Schema({**tables, "orders": referred}, twice)
+    assert schema.source("orders", Foreign("referrer_id", "value")) == ("customers", "value")
+    for bad, message in (
+        ({"value": copy(Foreign("nothing", "value"))}, "no key column"),
+        ({"value": copy(Foreign("customer_id", "nothing"))}, "unknown node"),
+        ({"value": copy(Summary("orders", "customer_id", "amount", "sum"))}, "does not point"),
+        ({"value": copy(("customers", "value"))}, "not a node name"),
     ):
-        with pytest.raises(ValueError):
-            Schema(
-                {**tables, "orders": SCM({**orders().mechanisms, **bad}, orders().columns)}, FKEYS
-            )
+        with pytest.raises(ValueError, match=message):
+            Schema({**tables, "orders": SCM({**orders().nodes, **bad}, orders().columns)}, FKEYS)
+    with pytest.raises(ValueError, match="marker"):
+        Schema(
+            {**tables, "orders": SCM(orders().nodes, {"amount": Column("amount", missing=("x",))})},
+            FKEYS,
+        )
+    with pytest.raises(ValueError, match="does not point"):
+        Schema(
+            {
+                **tables,
+                "orders": SCM(
+                    orders().nodes,
+                    {"amount": Column("amount", missing=Childless("orders", "customer_id"))},
+                ),
+            },
+            FKEYS,
+        )
     with pytest.raises(ValueError):
-        Port("orders", "amount", aggregate="count", dim=3)
+        Summary("orders", "customer_id", "amount", "median")
     with pytest.raises(ValueError):
-        Port("orders", "amount", aggregate="median")
+        Summary("orders", "customer_id", "amount", "count", fill=0.0)
     with pytest.raises(ValueError):
         FK("orders", "customer_id", "customers", nullable=1.0)
+    with pytest.raises(ValueError):
+        FK("orders", "customer_id", "customers", fill=np.inf)
     looped = SCM(
-        {**customers().mechanisms, "value": Port("orders", "value", aggregate="mean")},
+        {**customers().nodes, "value": copy(Summary("orders", "customer_id", "value", "mean"))},
         customers().columns,
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="acyclic"):
         Schema({**tables, "customers": looped}, FKEYS)
     schema = Schema(tables, FKEYS)
     with pytest.raises(ValueError):
@@ -241,8 +258,10 @@ def test_evaluation_order_within_a_generation_does_not_matter(schema):
     latents = {table: {} for table in ROWS}
     for generation in schema.generations:
         for table, name in reversed(generation):
-            node = (table, name)
-            latents[table][name] = schema.evaluate(node, ROWS, latents, links, streams[node], {})
+            location = (table, name)
+            latents[table][name] = schema.evaluate(
+                location, ROWS, latents, links, streams[location], {}
+            )
     for table in ROWS:
         assert set(latents[table]) == set(expected[table])
         for name, latent in latents[table].items():
@@ -251,19 +270,19 @@ def test_evaluation_order_within_a_generation_does_not_matter(schema):
 
 def test_influence_flows_child_to_parent_to_other_child():
     tables = {
-        "a": SCM({"total": Port("b", "x", aggregate="sum")}, {"total": Column("total")}),
+        "a": SCM({"total": copy(Summary("b", "a_id", "x", "sum"))}, {"total": Column("total")}),
         "b": SCM({"x": Node()}, {"x": Column("x")}),
-        "c": SCM({"from_a": Port("a", "total")}, {"from_a": Column("from_a")}),
+        "c": SCM({"from_a": copy(Foreign("a_id", "total"))}, {"from_a": Column("from_a")}),
         "d": SCM(
-            {"from_b": Port("b", "x"), "from_c": Port("c", "from_a")},
+            {"from_b": copy(Foreign("b_id", "x")), "from_c": copy(Foreign("c_id", "from_a"))},
             {"from_b": Column("from_b"), "from_c": Column("from_c")},
         ),
     }
     fkeys = (FK("b", "a_id", "a"), FK("c", "a_id", "a"), FK("d", "b_id", "b"), FK("d", "c_id", "c"))
     schema = Schema(tables, fkeys)
     positions = [
-        schema.order.index(node)
-        for node in (("b", "x"), ("a", "total"), ("c", "from_a"), ("d", "from_c"))
+        schema.order.index(location)
+        for location in (("b", "x"), ("a", "total"), ("c", "from_a"), ("d", "from_c"))
     ]
     assert positions == sorted(positions)
     rows = {"a": 20, "b": 500, "c": 100, "d": 1000}
@@ -280,19 +299,19 @@ def test_influence_flows_child_to_parent_to_other_child():
     )
 
 
-def test_ports_read_through_the_key_they_name():
+def test_edges_read_through_the_key_they_name():
     buyer_seller = SCM(
         {
-            "buyer_value": Port("customers", "value", via="buyer_id"),
-            "seller_value": Port("customers", "value", via="seller_id"),
+            "buyer_value": copy(Foreign("buyer_id", "value")),
+            "seller_value": copy(Foreign("seller_id", "value")),
         },
         {"buyer_value": Column("buyer_value"), "seller_value": Column("seller_value")},
     )
     both = SCM(
         {
             "value": Node(),
-            "bought": Port("orders", "buyer_value", via="buyer_id", aggregate="count"),
-            "sold": Port("orders", "seller_value", via="seller_id", aggregate="count"),
+            "bought": copy(Summary("orders", "buyer_id", "buyer_value", "count")),
+            "sold": copy(Summary("orders", "seller_id", "seller_value", "count")),
         },
         {"bought": Column("bought"), "sold": Column("sold")},
     )
@@ -324,20 +343,19 @@ class BadLink:
 
 def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
     customers = SCM(
-        {"segment": Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()), "value": Node()},
-        {},
+        {"segment": Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()), "value": Node()}, {}
     )
     orders = SCM(
         {
-            "segment": Port("customers", "segment", dim=3, fill=0.0),
-            "value": Port("customers", "value", fill=np.nan),
+            "segment": copy(Foreign("customer_id", "segment"), dim=3),
+            "value": copy(Foreign("customer_id", "value")),
         },
         {
             "segment": Column("segment", "categorical", categories=("a", "b", "c")),
-            "amount": Column("value", marginal=LogNormal()),
+            "amount": Column("value", marginal=LogNormal(), missing=Orphan("customer_id")),
         },
     )
-    fkeys = (FK("orders", "customer_id", "customers", nullable=0.3),)
+    fkeys = (FK("orders", "customer_id", "customers", nullable=0.3, fill=0.0),)
     schema = Schema({"customers": customers, "orders": orders}, fkeys)
     frames = schema.sample({"customers": 20, "orders": 1000}, seed=0)
     orphan = frames["orders"]["customer_id"].isna()
@@ -347,38 +365,34 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
     assert (frames["orders"]["amount"].dropna() > 0).all()
     with pytest.raises(ValueError, match="integers"):
         schema.sample({"customers": 20.0, "orders": 10}, seed=0)
-    unfilled = SCM({"value": Port("customers", "value")}, {"value": Column("value")})
+    unfilled = (FK("orders", "customer_id", "customers", nullable=0.3),)
     with pytest.raises(ValueError, match="fill"):
-        Schema({"customers": customers, "orders": unfilled}, fkeys).sample(
+        Schema({"customers": customers, "orders": orders}, unfilled).sample(
             {"customers": 20, "orders": 10}, seed=0
         )
+    complete = (FK("orders", "customer_id", "customers"),)
     assert (
-        Schema(
-            {"customers": customers, "orders": unfilled},
-            (FK("orders", "customer_id", "customers"),),
-        )
+        Schema({"customers": customers, "orders": orders}, complete)
         .sample({"customers": 20, "orders": 10}, seed=0)["orders"]
         .notna()
         .all()
         .all()
     )
-    downstream = SCM(
-        {
-            "value": Port("customers", "value", fill=np.nan),
-            "double": Node((LinearEdge("value", 2.0),)),
-        },
-        {},
+    childless = SCM(
+        {**customers.nodes, "mean": copy(Summary("orders", "customer_id", "value", "mean"))}, {}
     )
-    with pytest.raises(ValueError, match="non-finite"):
-        Schema({"customers": customers, "orders": downstream}, fkeys).sample(
+    with pytest.raises(ValueError, match="fill"):
+        Schema({"customers": childless, "orders": orders}, complete).sample(
             {"customers": 20, "orders": 10}, seed=0
         )
+    with pytest.raises(ValueError, match="Schema"):
+        orders.observe({"segment": np.zeros((2, 3)), "value": np.zeros((2, 1))}, generator(0), 2)
     with pytest.raises(ValueError):
         FK("orders", "customer_id", "customers", TreeLink())
     for bad in (np.zeros(10), np.zeros(9, dtype=int), np.full(10, 20), np.full(10, -2)):
         broken = Schema(
             {"customers": customers, "orders": orders},
-            (FK("orders", "customer_id", "customers", BadLink(bad)),),
+            (FK("orders", "customer_id", "customers", BadLink(bad), fill=0.0),),
         )
         with pytest.raises(ValueError, match="link"):
             broken.sample({"customers": 20, "orders": 10}, seed=0)
@@ -391,7 +405,7 @@ def test_child_events_follow_their_parent_events():
     )
     orders = SCM(
         {
-            "signup": Port("customers", "signup", fill=np.nan),
+            "signup": copy(Foreign("customer_id", "signup")),
             "when": Node((LinearEdge("signup"),), noise=Exponential(30 * 24 * 3600.0)),
         },
         {"when": Column("when", "timestamp")},
