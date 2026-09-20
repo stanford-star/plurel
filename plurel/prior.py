@@ -336,8 +336,9 @@ class SchemaPrior:
 
     Tables nothing references hold events and get a time column; referenced tables are static,
     so no key ever points into the future and cutting a database at any time leaves every key
-    valid. Aggregates summarize only static children into their static parents: a parent row
-    summarizing later events would leak the future.
+    valid. Self-referential tree keys go only on static tables, and aggregates summarize only
+    static children into their static parents: a parent row summarizing later events would
+    leak the future.
 
     Attributes:
         table_count: Tables in the database.
@@ -355,7 +356,8 @@ class SchemaPrior:
         link_random_share: Probability that a key uses a uniform link instead of an HSBM link.
         fk_nullable_share: Probability that a foreign key has null values.
         fk_nullable_rate: Null rate of a nullable foreign key.
-        self_reference_probability: Probability that a table gets a self-referential tree key.
+        self_reference_probability: Probability that a static table gets a self-referential tree
+            key.
         self_reference_root_share: Share of roots in a self-referential tree.
         gather_count: Parent nodes gathered into the child per foreign key.
         aggregate_count: Child nodes aggregated into the parent per foreign key between static
@@ -413,7 +415,7 @@ class SchemaPrior:
                 self.gather(tables, fk, priors[i], rng)
                 if tables[fk.table].time_column is None:
                     self.aggregate(tables, fk, rng)
-        for i in range(n):
+        for i in sorted(referenced):
             if rng.random() < self.self_reference_probability:
                 fk = FK(
                     f"t{i}",
@@ -457,11 +459,7 @@ class SchemaPrior:
         self, tables: dict[str, SCM], fk: FK, prior: TablePrior, rng: np.random.Generator
     ) -> None:
         child, parent = tables[fk.table], tables[fk.parent]
-        sources = [
-            name
-            for name, m in parent.mechanisms.items()
-            if not isinstance(m, Port) and name not in parent.timestamp_nodes
-        ]
+        sources = [name for name, m in parent.mechanisms.items() if not isinstance(m, Port)]
         consumers = [
             name
             for name, m in child.mechanisms.items()

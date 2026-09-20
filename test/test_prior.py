@@ -136,6 +136,7 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
                 assert schema.tables[table].time_column is None
             if isinstance(fk.link, TreeLink):
                 seen.add("self")
+                assert schema.tables[fk.table].time_column is None
             if port.aggregate in ("mean", "max", "min"):
                 keys = frames[fk.table][fk.column].dropna().astype(int)
                 childless = ~np.isin(np.arange(rows[table]), keys)
@@ -168,19 +169,21 @@ def test_schema_prior_edge_cases():
     single = SchemaPrior(**SMALL, table_count=IntegersRange(1, 1), self_reference_probability=1.0)
     for seed in range(6):
         schema = single.realize(seed)
-        assert len(schema.tables) == 1 and all(fk.table == fk.parent for fk in schema.fkeys)
+        assert len(schema.tables) == 1 and not schema.fkeys
+        assert schema.tables["t0"].time_column is not None
         schema.sample(single.rows(schema, seed), seed=seed)
     tiny = SchemaPrior(
         **SMALL,
-        table_count=IntegersRange(1, 1),
+        table_count=IntegersRange(2, 2),
         table_prior=TablePrior(node_count=IntegersRange(1, 2)),
         self_reference_probability=1.0,
         gather_count=IntegersRange(3, 3),
     )
     for seed in range(12):
         schema = tiny.realize(seed)
+        assert sum(fk.table == fk.parent for fk in schema.fkeys) == 1
         for (table, name), (port, fk) in schema.ports.items():
-            assert name != port.node and fk.table == fk.parent
+            assert name != port.node
         schema.sample(tiny.rows(schema, seed), seed=seed)
     with pytest.raises(ValueError, match="clusters"):
         SchemaPrior(entity_row_count=IntegersRange(5, 10), activity_row_count=IntegersRange(5, 10))
