@@ -14,6 +14,7 @@ from plurel.prior import (
     SchemaPrior,
     TablePrior,
 )
+from plurel.schema import Port
 
 
 def test_choices_and_ranges_draw_within_their_declarations():
@@ -81,6 +82,26 @@ def test_table_prior_knobs_are_respected():
     assert scm.sample(5, seed=0).shape[0] == 5
 
 
+def test_build_reads_copies_from_every_non_root_node():
+    rng = np.random.default_rng(3)
+    prior = TablePrior(node_count=IntegersRange(6, 6), key_copy_count=IntegersRange(2, 2))
+    copies = {"a_id_x": Port("a", "x", via="a_id", fill=0.0, dim=2)}
+    scm = prior.build(rng, time=True, copies=copies, self_key="parent_id", name="t")
+    assert scm.mechanisms["a_id_x"] is copies["a_id_x"]
+    own = [n for n, m in scm.mechanisms.items() if isinstance(m, Port) and m.table == "t"]
+    assert len(own) == 2 and all(not scm.mechanisms[scm.mechanisms[n].node].parents for n in own)
+    ports = set(own) | {"a_id_x"}
+    for node, m in scm.mechanisms.items():
+        if node in ports or node == "time":
+            assert not m.parents
+        elif set(m.parents) - ports:
+            assert ports <= set(m.parents)
+        else:
+            assert isinstance(m, Root | Softmax) and not m.parents
+    with pytest.raises(ValueError, match="name"):
+        prior.build(rng, time=False, self_key="parent_id")
+
+
 def test_warping_gives_each_realization_its_own_style():
     rng = np.random.default_rng(0)
     tight = Range(0.0, 1.0, shape=(1000.0, 1000.0))
@@ -131,6 +152,17 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
         assert all(len(frames[t]) == n for t, n in rows.items())
         for (table, name), (port, fk) in schema.ports.items():
             seen.add("aggregate" if port.aggregate else "gather")
+            scm, source = schema.tables[table], schema.tables[port.table]
+            if port.aggregate is None:
+                if fk.table == fk.parent:
+                    assert not source.mechanisms[port.node].parents
+                else:
+                    assert port.node in {c.node for c in source.columns.values()}
+                copies = {n for n, m in scm.mechanisms.items() if isinstance(m, Port)}
+                for node, m in scm.mechanisms.items():
+                    if node not in copies and node not in scm.timestamp_nodes:
+                        local = set(m.parents) - copies
+                        assert (name in m.parents) == bool(local)
             if port.aggregate:
                 assert schema.tables[fk.table].time_column is None
                 assert schema.tables[table].time_column is None
@@ -152,7 +184,7 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
 def test_schema_prior_knobs_switch_cross_table_structure_off():
     quiet = SchemaPrior(
         **SMALL,
-        gather_count=IntegersRange(0, 0),
+        table_prior=TablePrior(key_copy_count=IntegersRange(0, 0)),
         aggregate_count=IntegersRange(0, 0),
         self_reference_probability=0.0,
         fk_nullable_share=0.0,
@@ -175,9 +207,8 @@ def test_schema_prior_edge_cases():
     tiny = SchemaPrior(
         **SMALL,
         table_count=IntegersRange(2, 2),
-        table_prior=TablePrior(node_count=IntegersRange(1, 2)),
+        table_prior=TablePrior(node_count=IntegersRange(1, 2), key_copy_count=IntegersRange(3, 3)),
         self_reference_probability=1.0,
-        gather_count=IntegersRange(3, 3),
     )
     for seed in range(12):
         schema = tiny.realize(seed)

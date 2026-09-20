@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
 
 import numpy as np
@@ -191,6 +192,7 @@ class TablePrior:
         node_width: Latent dimensions of a numeric node.
         node_categorical_share: Probability that a node is categorical, a Softmax.
         node_class_count: Classes of a categorical node.
+        key_copy_count: Nodes copied from a parent row per key, read by every non-root node.
         effect_families: Effect family per edge; linear only when parent and node widths agree.
         combine_ops: Reduction over the effects of a node with several parents.
         combine_noise_std: Standard deviation of the Gaussian noise of a Combine node.
@@ -215,6 +217,7 @@ class TablePrior:
     node_width: Range = LogIntegersRange(1, 4)
     node_categorical_share: float = 0.3
     node_class_count: Range = IntegersRange(2, 8)
+    key_copy_count: Range = IntegersRange(0, 3)
     effect_families: Choices = Choices(FAMILIES)
     combine_ops: Choices = Choices(("sum", "product", "max", "logsumexp"), (6.0, 1.0, 1.0, 1.0))
     combine_noise_std: Range = LogRange(0.01, 0.5)
@@ -251,22 +254,53 @@ class TablePrior:
         rng = generator(seed)
         return self.warp(rng).build(rng, time=time)
 
-    def build(self, rng: np.random.Generator, time: bool) -> SCM:
-        n = self.node_count.draw(rng)
-        parents = self.node_layouts.draw(rng).sample(n, rng)
-        categorical = rng.random(n) < self.node_categorical_share
-        dims = [
-            self.node_class_count.draw(rng) if categorical[i] else self.node_width.draw(rng)
-            for i in range(n)
-        ]
-        mechanisms = {
-            f"n{i}": self.mechanism(parents[i], dims, i, categorical[i], rng) for i in range(n)
+    def build(
+        self,
+        rng: np.random.Generator,
+        time: bool,
+        *,
+        copies: Mapping[str, Port] | None = None,
+        self_key: str | None = None,
+        name: str | None = None,
+    ) -> SCM:
+        """Build the table's SCM.
+
+        Args:
+            rng: Random stream.
+            time: Whether the table gets a calendar time column.
+            copies: Nodes copied from parent rows; every non-root node reads all of them.
+            self_key: Column of a self-referential tree key; the table then copies a few of
+                its own roots through it, read by every non-root node as well.
+            name: The table's name, needed for the self-referential copies.
+        """
+        copies = dict(copies or {})
+        nodes = [f"n{i}" for i in range(self.node_count.draw(rng))]
+        layout = self.node_layouts.draw(rng).sample(len(nodes), rng)
+        parents = {node: tuple(nodes[p] for p in layout[i]) for i, node in enumerate(nodes)}
+        categorical = {node: rng.random() < self.node_categorical_share for node in nodes}
+        dims = {
+            node: (self.node_class_count if categorical[node] else self.node_width).draw(rng)
+            for node in nodes
         }
+        if self_key is not None:
+            if name is None:
+                raise ValueError("self-referential copies need the table's name")
+            roots = [node for node in nodes if not parents[node]]
+            count = min(self.key_copy_count.draw(rng), len(roots))
+            for root in map(str, rng.choice(roots, count, replace=False)) if count else ():
+                copies[f"{self_key}_{root}"] = Port(
+                    name, root, via=self_key, fill=0.0, dim=dims[root]
+                )
+        dims.update({copy: port.dim for copy, port in copies.items()})
+        mechanisms: dict[str, Mechanism] = dict(copies)
+        for node in nodes:
+            inputs = parents[node] + (tuple(copies) if parents[node] else ())
+            mechanisms[node] = self.mechanism(inputs, dims, node, categorical[node], rng)
         columns = {"id": Column(kind="key")}
-        feature_nodes = rng.permutation(n)[: rng.integers(1, n + 1)]
+        observed = rng.permutation(nodes)[: rng.integers(1, len(nodes) + 1)]
         for c in range(self.column_count.draw(rng)):
-            i = int(rng.choice(feature_nodes))
-            columns[f"col{c}"] = self.column(i, dims[i], categorical[i], rng)
+            node = str(rng.choice(observed))
+            columns[f"col{c}"] = self.column(node, dims[node], categorical[node], rng)
         if time:
             mechanisms["time"] = Root(noise=self.time_calendar)
             columns["time"] = Column("time", "timestamp")
@@ -274,17 +308,17 @@ class TablePrior:
 
     def mechanism(
         self,
-        sources: tuple[int, ...],
-        dims: list[int],
-        i: int,
+        parents: tuple[str, ...],
+        dims: Mapping[str, int],
+        node: str,
         categorical: bool,
         rng: np.random.Generator,
     ) -> Mechanism:
-        effects = tuple(self.effect(f"n{p}", dims[p], dims[i], categorical, rng) for p in sources)
+        effects = tuple(self.effect(p, dims[p], dims[node], categorical, rng) for p in parents)
         if categorical:
-            return Softmax(effects, biases=tuple(rng.normal(0.0, 0.5, dims[i])))
+            return Softmax(effects, biases=tuple(rng.normal(0.0, 0.5, dims[node])))
         if not effects:
-            return Root(dim=dims[i], noise=self.root_noise.draw(rng))
+            return Root(dim=dims[node], noise=self.root_noise.draw(rng))
         op = self.combine_ops.draw(rng) if len(effects) > 1 else "sum"
         return Combine(effects, op, noise=Normal(std=self.combine_noise_std.draw(rng)))
 
@@ -295,8 +329,7 @@ class TablePrior:
         families = self.effect_families if preserving else self.effect_families.without(PRESERVING)
         return BUILDERS[families.draw(rng)](self, parent, d_in, d_out, rng)
 
-    def column(self, i: int, dim: int, categorical: bool, rng: np.random.Generator) -> Column:
-        node = f"n{i}"
+    def column(self, node: str, dim: int, categorical: bool, rng: np.random.Generator) -> Column:
         missing = (
             self.column_missing_rate.draw(rng) if rng.random() < self.column_missing_share else 0.0
         )
@@ -319,20 +352,16 @@ class TablePrior:
         return Column(node, dims=slot, marginal=self.column_marginals.draw(rng), missing=missing)
 
 
-def _consume(mechanism: Mechanism, effect: Effect) -> Mechanism:
-    if isinstance(mechanism, Combine):
-        return replace(mechanism, effects=mechanism.effects + (effect,))
-    return Combine((effect,), noise=mechanism.noise)
-
-
 @dataclass(frozen=True)
 class SchemaPrior:
     """Random multi-table schema prior.
 
     A table's parents in the table graph are the tables it references. Each table is a fresh
-    warp of `table_prior`. Gathered parent nodes become extra effects on existing child nodes;
-    aggregated child nodes become new observed nodes of the parent, so the node graph across
-    tables stays acyclic by construction.
+    warp of `table_prior`. Through each key a table copies a few of the parent's column nodes,
+    and every non-root node of the table reads every copy; a self-referential tree copies a few
+    of the table's own roots the same way. A static parent also gets summaries of a static
+    child's nodes as new observed columns that feed nothing, so the node graph across tables
+    stays acyclic by construction.
 
     Tables nothing references hold events and get a time column; referenced tables are static,
     so no key ever points into the future and cutting a database at any time leaves every key
@@ -359,7 +388,6 @@ class SchemaPrior:
         self_reference_probability: Probability that a static table gets a self-referential tree
             key.
         self_reference_root_share: Share of roots in a self-referential tree.
-        gather_count: Parent nodes gathered into the child per foreign key.
         aggregate_count: Child nodes aggregated into the parent per foreign key between static
             tables.
         aggregates: Aggregation of an aggregate port.
@@ -391,7 +419,6 @@ class SchemaPrior:
     fk_nullable_rate: Range = Range(0.01, 0.3)
     self_reference_probability: float = 0.3
     self_reference_root_share: Range = Range(0.05, 0.5)
-    gather_count: Range = IntegersRange(0, 3)
     aggregate_count: Range = IntegersRange(0, 2)
     aggregates: Choices = Choices(("count", "sum", "mean", "max", "min"))
 
@@ -406,26 +433,49 @@ class SchemaPrior:
         parents = self.table_layouts.draw(rng).sample(n, rng)
         referenced = {p for references in parents for p in references}
         priors = [self.table_prior.warp(rng) for _ in range(n)]
-        tables = {f"t{i}": priors[i].build(rng, time=i not in referenced) for i in range(n)}
-        fkeys = []
+        tables, fkeys = {}, []
         for i, references in enumerate(parents):
-            for p in references:
-                fk = self.fkey(f"t{i}", f"t{p}", rng)
-                fkeys.append(fk)
-                self.gather(tables, fk, priors[i], rng)
-                if tables[fk.table].time_column is None:
+            table = f"t{i}"
+            keys = [self.fkey(table, f"t{p}", rng) for p in references]
+            copies = {}
+            for fk in keys:
+                copies.update(self.copies(tables[fk.parent], fk, priors[i], rng))
+            tree = i in referenced and rng.random() < self.self_reference_probability
+            if tree:
+                link = TreeLink(self.self_reference_root_share.draw(rng))
+                keys.append(FK(table, "parent_id", table, link))
+            tables[table] = priors[i].build(
+                rng,
+                time=i not in referenced,
+                copies=copies,
+                self_key="parent_id" if tree else None,
+                name=table,
+            )
+            for fk in keys:
+                if fk.parent != table and tables[table].time_column is None:
                     self.aggregate(tables, fk, rng)
-        for i in sorted(referenced):
-            if rng.random() < self.self_reference_probability:
-                fk = FK(
-                    f"t{i}",
-                    "parent_id",
-                    f"t{i}",
-                    TreeLink(self.self_reference_root_share.draw(rng)),
-                )
-                fkeys.append(fk)
-                self.gather(tables, fk, priors[i], rng)
+            fkeys.extend(keys)
         return Schema(tables, tuple(fkeys))
+
+    def copies(
+        self, parent: SCM, fk: FK, prior: TablePrior, rng: np.random.Generator
+    ) -> dict[str, Port]:
+        """Copies of drawn column nodes of the parent, read through the key."""
+        sources = sorted(
+            {
+                column.node
+                for column in parent.columns.values()
+                if column.node is not None and not isinstance(parent.mechanisms[column.node], Port)
+            }
+        )
+        count = min(prior.key_copy_count.draw(rng), len(sources))
+        chosen = map(str, rng.choice(sources, count, replace=False)) if count else ()
+        return {
+            f"{fk.column}_{source}": Port(
+                fk.parent, source, via=fk.column, fill=0.0, dim=parent.mechanisms[source].dim
+            )
+            for source in chosen
+        }
 
     def rows(self, schema: Schema, seed: Seed = None) -> dict[str, int]:
         _, rng = generator(seed).spawn(2)
@@ -454,33 +504,6 @@ class SchemaPrior:
     def fkey(self, child: str, parent: str, rng: np.random.Generator) -> FK:
         nullable = self.fk_nullable_rate.draw(rng) if rng.random() < self.fk_nullable_share else 0.0
         return FK(child, f"{parent}_id", parent, self.link(rng), nullable=nullable)
-
-    def gather(
-        self, tables: dict[str, SCM], fk: FK, prior: TablePrior, rng: np.random.Generator
-    ) -> None:
-        child, parent = tables[fk.table], tables[fk.parent]
-        sources = [name for name, m in parent.mechanisms.items() if not isinstance(m, Port)]
-        consumers = [
-            name
-            for name, m in child.mechanisms.items()
-            if not isinstance(m, Port) and name not in child.timestamp_nodes
-        ]
-        if fk.table == fk.parent:
-            sources = [name for name in sources if not parent.mechanisms[name].parents]
-            consumers = [name for name in consumers if child.mechanisms[name].parents]
-        mechanisms = dict(child.mechanisms)
-        count = min(self.gather_count.draw(rng), len(sources), len(consumers))
-        for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
-            consumer = str(rng.choice(consumers))
-            port = f"{fk.column}_{source}"
-            mechanisms[port] = Port(
-                fk.parent, source, via=fk.column, fill=0.0, dim=parent.mechanisms[source].dim
-            )
-            target = mechanisms[consumer]
-            block = isinstance(target, Softmax)
-            effect = prior.effect(port, parent.mechanisms[source].dim, target.dim, block, rng)
-            mechanisms[consumer] = _consume(target, effect)
-        tables[fk.table] = SCM(mechanisms, child.columns, time_column=child.time_column)
 
     def aggregate(self, tables: dict[str, SCM], fk: FK, rng: np.random.Generator) -> None:
         child, parent = tables[fk.table], tables[fk.parent]
