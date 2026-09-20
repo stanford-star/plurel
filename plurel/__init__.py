@@ -17,7 +17,13 @@ from plurel.distributions import (
     Trend,
     Uniform,
 )
-from plurel.io import create_database, order_by_time, read_database, write_database
+from plurel.io import (
+    create_database,
+    order_by_time,
+    read_database,
+    split_timestamps,
+    write_database,
+)
 from plurel.layouts import (
     LAYOUTS,
     BarabasiAlbert,
@@ -139,5 +145,6 @@ __all__ = [
     "order_by_time",
     "rank_map",
     "read_database",
+    "split_timestamps",
     "write_database",
 ]
