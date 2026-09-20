@@ -80,9 +80,14 @@ class SCM:
             raise ValueError(f"time column {time_column!r} must be a timestamp column")
         self.pkey_column = keys[0] if keys else None
         self.time_column = time_column
-        self.timestamp_nodes = frozenset(
-            column.node for column in self.columns.values() if column.kind == "timestamp"
-        )
+        timed = {column.node for column in self.columns.values() if column.kind == "timestamp"}
+        frontier = list(timed)
+        while frontier:
+            for parent in self.mechanisms[frontier.pop()].parents:
+                if parent not in timed:
+                    timed.add(parent)
+                    frontier.append(parent)
+        self.timestamp_nodes = frozenset(timed)
 
     def evaluate(
         self,

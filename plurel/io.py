@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 from relbench.base import Database, Table
+from relbench.base.table import is_time_sorted
 from relbench.load import load_dataset
 from relbench.manifest import DatasetManifest, TableSpec
 
@@ -27,6 +28,8 @@ def create_database(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> Datab
             raise ValueError(f"frame of {name!r} lacks its declared key or time column")
         if scm.time_column and not pd.api.types.is_datetime64_any_dtype(frame[scm.time_column]):
             raise ValueError(f"time column of {name!r} is not a datetime column")
+        if scm.time_column and not is_time_sorted(frame[scm.time_column]):
+            raise ValueError(f"rows of {name!r} must be in time order with missing times last")
         fkeys = {fk.column: fk.parent for fk in schema.fkeys if fk.table == name}
         table = Table(frame.reset_index(drop=True), fkeys, scm.pkey_column, scm.time_column)
         tables[name] = table

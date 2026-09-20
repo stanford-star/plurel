@@ -99,6 +99,13 @@ def test_database_wraps_sampled_tables_with_relbench_metadata(schema):
         create_database(schema, {**frames, "orders": frames["orders"].drop(columns="order_id")})
     with pytest.raises(ValueError, match="datetime"):
         create_database(schema, {**frames, "orders": frames["orders"].assign(when=0.0)})
+    shuffled = frames["orders"].sample(frac=1.0, random_state=0).reset_index(drop=True)
+    with pytest.raises(ValueError, match="time order"):
+        create_database(schema, {**frames, "orders": shuffled})
+    gap = frames["orders"].copy()
+    gap.loc[0, "when"] = pd.NaT
+    with pytest.raises(ValueError, match="time order"):
+        create_database(schema, {**frames, "orders": gap})
 
 
 def test_write_and_read_round_trip(schema, tmp_path):

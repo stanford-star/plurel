@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from relbench.base.table import is_time_sorted
 
 from plurel import (
     DEFAULT_CALENDAR,
@@ -14,6 +15,7 @@ from plurel import (
     Normal,
     Root,
     Softmax,
+    Uniform,
     generator,
 )
 from plurel.links import HSBMLink, RandomLink, TreeLink
@@ -405,3 +407,87 @@ def test_child_events_follow_their_parent_events():
     when = frames["orders"]["when"].to_numpy()
     assert (when >= signup).all() and frames["orders"]["when"].dtype == "datetime64[ns]"
     assert frames["customers"]["signup"].is_monotonic_increasing
+
+
+def test_temporal_tables_are_in_time_order_with_keys_as_positions():
+    seconds = Uniform(DEFAULT_CALENDAR.start.timestamp(), DEFAULT_CALENDAR.end.timestamp())
+    customers = SCM(
+        {
+            "signup": Root(noise=seconds),
+            "value": Root(),
+            "n_orders": Port("orders", "amount", aggregate="count"),
+        },
+        {
+            "id": Column(kind="key"),
+            "signup": Column("signup", "timestamp"),
+            "value": Column("value"),
+            "n_orders": Column("n_orders"),
+        },
+        time_column="signup",
+    )
+    orders = SCM(
+        {
+            "signup": Port("customers", "signup"),
+            "when": Combine((LinearEffect("signup"),), noise=Exponential(3600.0)),
+            "value": Port("customers", "value"),
+            "amount": Combine((LinearEffect("value"),), noise=Normal(std=0.1)),
+        },
+        {
+            "id": Column(kind="key"),
+            "when": Column("when", "timestamp", missing=0.1),
+            "amount": Column("amount"),
+        },
+        time_column="when",
+    )
+    employees = SCM(
+        {
+            "joined": Root(),
+            "level": Root(),
+            "manager_level": Port("employees", "level", via="manager_id", fill=0.0),
+        },
+        {
+            "id": Column(kind="key"),
+            "joined": Column("joined", "timestamp", marginal=DEFAULT_CALENDAR),
+            "level": Column("level"),
+        },
+        time_column="joined",
+    )
+    fkeys = (
+        FK("orders", "customer_id", "customers"),
+        FK("employees", "manager_id", "employees", TreeLink(roots=0.2)),
+    )
+    schema = Schema({"customers": customers, "orders": orders, "employees": employees}, fkeys)
+    rows = {"customers": 100, "orders": 1000, "employees": 80}
+    frames, latents = schema.sample_with_latents(rows, seed=0)
+    for table, scm in schema.tables.items():
+        assert is_time_sorted(frames[table][scm.time_column])
+        np.testing.assert_array_equal(frames[table]["id"], np.arange(rows[table]))
+    observed = frames["customers"]["signup"].to_numpy()
+    strict = observed[1:] > observed[:-1]
+    assert strict.sum() > 50 and (np.diff(latents["customers"]["signup"][:, 0])[strict] > 0).all()
+    keys = frames["orders"]["customer_id"].to_numpy(dtype=int)
+    when = frames["orders"]["when"]
+    known = when.notna().to_numpy()
+    assert 0 < (~known).sum() and known[: known.sum()].all()
+    signup = frames["customers"]["signup"].to_numpy()[keys]
+    assert (when.to_numpy()[known] >= signup[known]).all()
+    np.testing.assert_array_equal(
+        latents["orders"]["value"][:, 0], latents["customers"]["value"][keys, 0]
+    )
+    np.testing.assert_array_equal(frames["customers"]["n_orders"], np.bincount(keys, minlength=100))
+    manager = frames["employees"]["manager_id"]
+    roots = manager.isna().to_numpy()
+    bosses = manager.to_numpy(dtype=float, na_value=-1).astype(int)
+    np.testing.assert_array_equal(
+        latents["employees"]["manager_level"][~roots, 0],
+        latents["employees"]["level"][bosses[~roots], 0],
+    )
+    current = bosses
+    for _ in range(rows["employees"]):
+        current = np.where(current >= 0, bosses[current], -1)
+    assert (current == -1).all()
+    forced, _ = schema.sample_with_latents(
+        rows, seed=0, interventions={"customers": {"value": 0.0}}
+    )
+    pd.testing.assert_series_equal(forced["orders"]["customer_id"], frames["orders"]["customer_id"])
+    pd.testing.assert_series_equal(forced["customers"]["signup"], frames["customers"]["signup"])

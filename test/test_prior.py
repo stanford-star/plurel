@@ -101,7 +101,12 @@ def test_warping_gives_each_realization_its_own_style():
     ]
     flat = [
         np.mean(
-            [m.dim for m in TablePrior().build(np.random.default_rng(seed)).mechanisms.values()]
+            [
+                m.dim
+                for m in TablePrior()
+                .build(np.random.default_rng(seed), time=False)
+                .mechanisms.values()
+            ]
         )
         for seed in range(60)
     ]
@@ -122,25 +127,38 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
         for table, count in rows.items():
             low, high = (60, 120) if table in referenced else (300, 600)
             assert low <= count <= high
+            assert table in referenced or schema.tables[table].time_column is not None
+        for fk in schema.fkeys:
+            child, parent = schema.tables[fk.table], schema.tables[fk.parent]
+            if fk.table != fk.parent and child.time_column and parent.time_column:
+                assert f"{fk.column}_time" in child.mechanisms
         frames, latents = schema.sample_with_latents(rows, seed=seed)
         assert all(len(frames[t]) == n for t, n in rows.items())
         for (table, name), (port, fk) in schema.ports.items():
             seen.add("aggregate" if port.aggregate else "gather")
             if isinstance(fk.link, TreeLink):
                 seen.add("self")
+                time = schema.tables[table].mechanisms.get("time")
+                assert time is None or isinstance(time, Root)
             if name.endswith("_time"):
-                seen.add("follow")
-                assert port.fill is None and fk.nullable == 0.0
-                child_time = frames[fk.table][schema.tables[fk.table].time_column]
-                parent_time = frames[fk.parent][schema.tables[fk.parent].time_column]
-                keys = frames[fk.table][fk.column].to_numpy(dtype=int)
-                assert (child_time.to_numpy() >= parent_time.to_numpy()[keys]).all()
+                seen.add("schedule" if "schedule" in schema.tables[table].mechanisms else "tied")
+                assert (port.fill is None) == (fk.nullable == 0.0)
+                child_time = frames[fk.table][schema.tables[fk.table].time_column].to_numpy()
+                parent_time = frames[fk.parent][schema.tables[fk.parent].time_column].to_numpy()
+                keys = frames[fk.table][fk.column]
+                linked = keys.notna().to_numpy()
+                index = keys.to_numpy(dtype=float, na_value=-1).astype(int)
+                assert (child_time[linked] >= parent_time[index[linked]]).all()
             if port.aggregate in ("mean", "max", "min"):
                 keys = frames[fk.table][fk.column].dropna().astype(int)
                 childless = ~np.isin(np.arange(rows[table]), keys)
                 assert frames[table][name].isna().to_numpy().tolist() == childless.tolist()
-        create_database(schema, frames)
-    assert seen == {"gather", "aggregate", "self", "follow"}
+        db = create_database(schema, frames)
+        cut = db.upto(db.min_timestamp + (db.max_timestamp - db.min_timestamp) / 2)
+        for table in cut.table_dict.values():
+            for column, parent in table.fkey_col_to_pkey_table.items():
+                assert table.df[column].dropna().lt(len(cut.table_dict[parent].df)).all()
+    assert seen == {"gather", "aggregate", "self", "tied", "schedule"}
 
 
 def test_schema_prior_knobs_switch_cross_table_structure_off():
@@ -149,7 +167,7 @@ def test_schema_prior_knobs_switch_cross_table_structure_off():
         gather_count=IntegersRange(0, 0),
         aggregate_count=IntegersRange(0, 0),
         self_reference_probability=0.0,
-        time_follow_probability=0.0,
+        table_prior=TablePrior(time_probability=0.0),
         fk_nullable_share=0.0,
     )
     for seed in range(8):

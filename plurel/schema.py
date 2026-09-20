@@ -203,16 +203,31 @@ class Schema:
         latents: dict[str, dict[str, np.ndarray]],
         links: Links,
         rng: np.random.Generator,
-    ) -> dict[str, pd.DataFrame]:
-        frames = {}
-        for (table, scm), stream in zip(self.tables.items(), rng.spawn(len(self.tables))):
-            frame = scm.observe(latents[table], stream, rows[table])
-            for fk in self.fkeys:
-                if fk.table == table:
-                    indices = links[table, fk.column]
-                    frame[fk.column] = pd.Series(indices, dtype="Int64").mask(indices < 0)
-            frames[table] = frame
-        return frames
+    ) -> tuple[dict[str, pd.DataFrame], dict[str, dict[str, np.ndarray]]]:
+        """Observe every table; temporal tables end up in time order, keys as row positions."""
+        frames = {
+            table: scm.observe(latents[table], stream, rows[table])
+            for (table, scm), stream in zip(self.tables.items(), rng.spawn(len(self.tables)))
+        }
+        orders = {
+            table: np.argsort(frames[table][scm.time_column].to_numpy(), kind="stable")
+            for table, scm in self.tables.items()
+            if scm.time_column is not None
+        }
+        for table, order in orders.items():
+            frames[table] = frames[table].iloc[order].reset_index(drop=True)
+            if (key := self.tables[table].pkey_column) is not None:
+                frames[table][key] = np.arange(len(order))
+            latents[table] = {name: latent[order] for name, latent in latents[table].items()}
+        for fk in self.fkeys:
+            indices = links[fk.table, fk.column]
+            if fk.table in orders:
+                indices = indices[orders[fk.table]]
+            if fk.parent in orders:
+                indices, linked = indices.copy(), indices >= 0
+                indices[linked] = np.argsort(orders[fk.parent])[indices[linked]]
+            frames[fk.table][fk.column] = pd.Series(indices, dtype="Int64").mask(indices < 0)
+        return frames, latents
 
     def sample(
         self,
@@ -245,4 +260,4 @@ class Schema:
         linking, noise, observation = generator(seed).spawn(3)
         links = self.links(rows, linking)
         latents = self.propagate(rows, links, noise, interventions)
-        return self.observe(rows, latents, links, observation), latents
+        return self.observe(rows, latents, links, observation)

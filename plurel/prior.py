@@ -204,7 +204,7 @@ class TablePrior:
         column_bin_count: Categories of a binned column.
         column_missing_rate: Missing rate of a column that has missingness.
         column_missing_share: Probability that a column has missingness.
-        time_probability: Probability that the table gets a calendar time column.
+        time_probability: Probability that a realized table gets a calendar time column.
         time_calendar: Calendar the time column is drawn from.
     """
 
@@ -250,9 +250,10 @@ class TablePrior:
 
     def realize(self, seed: Seed = None) -> SCM:
         rng = generator(seed)
-        return self.warp(rng).build(rng)
+        prior = self.warp(rng)
+        return prior.build(rng, time=rng.random() < prior.time_probability)
 
-    def build(self, rng: np.random.Generator) -> SCM:
+    def build(self, rng: np.random.Generator, time: bool) -> SCM:
         n = self.node_count.draw(rng)
         parents = self.node_layouts.draw(rng).sample(n, rng)
         categorical = rng.random(n) < self.node_categorical_share
@@ -268,12 +269,10 @@ class TablePrior:
         for c in range(self.column_count.draw(rng)):
             i = int(rng.choice(feature_nodes))
             columns[f"col{c}"] = self.column(i, dims[i], categorical[i], rng)
-        time_column = None
-        if rng.random() < self.time_probability:
+        if time:
             mechanisms["time"] = Root(noise=self.time_calendar)
             columns["time"] = Column("time", "timestamp")
-            time_column = "time"
-        return SCM(mechanisms, columns, time_column=time_column)
+        return SCM(mechanisms, columns, time_column="time" if time else None)
 
     def mechanism(
         self,
@@ -337,6 +336,15 @@ class SchemaPrior:
     aggregated child nodes become new observed nodes of the parent, so the node graph across
     tables stays acyclic by construction.
 
+    Tables nothing references hold events and always get a time column, and a table that
+    references a temporal table is temporal too; other referenced tables get a time column with
+    the table prior's `time_probability`. A temporal table waits for the events its keys
+    reference: its events happen a drawn delay after the latest referenced event, either tied
+    to it or, when the table keeps its own schedule, no earlier than that schedule. Keys with
+    nulls always keep their own schedule. Only tables that do not wait get a self-referential
+    tree key, so a tree parent is always the earlier row. Cutting a database at any time thus
+    leaves no key pointing past the cut.
+
     Attributes:
         table_count: Tables in the database.
         table_layouts: DAG generator for the table graph.
@@ -358,8 +366,9 @@ class SchemaPrior:
         gather_count: Parent nodes gathered into the child per foreign key.
         aggregate_count: Child nodes aggregated into the parent per foreign key.
         aggregates: Aggregation of an aggregate port.
-        time_follow_probability: Probability that a child's time follows its parent's time.
-        time_delay: Mean delay in seconds of a child event after its parent event.
+        time_tied_probability: Probability that a waiting table ties its events to the events
+            it references instead of keeping its own schedule.
+        time_delay: Mean delay in seconds of an event after the latest event it references.
     """
 
     table_count: Range = LogIntegersRange(2, 8)
@@ -391,7 +400,7 @@ class SchemaPrior:
     gather_count: Range = IntegersRange(0, 3)
     aggregate_count: Range = IntegersRange(0, 2)
     aggregates: Choices = Choices(("count", "sum", "mean", "max", "min"))
-    time_follow_probability: float = 0.7
+    time_tied_probability: float = 0.5
     time_delay: Range = LogRange(3600.0, 90 * 24 * 3600.0)
 
     def __post_init__(self) -> None:
@@ -403,19 +412,24 @@ class SchemaPrior:
         rng, _ = generator(seed).spawn(2)
         n = self.table_count.draw(rng)
         parents = self.table_layouts.draw(rng).sample(n, rng)
+        referenced = {p for references in parents for p in references}
         priors = [self.table_prior.warp(rng) for _ in range(n)]
-        tables = {f"t{i}": priors[i].build(rng) for i in range(n)}
-        fkeys, following = [], set()
+        tables = {}
         for i, references in enumerate(parents):
-            for p in references:
-                fk = self.fkey(f"t{i}", f"t{p}", rng)
-                fkeys.append(fk)
+            timed = i not in referenced or any(tables[f"t{p}"].time_column for p in references)
+            timed = timed or rng.random() < priors[i].time_probability
+            tables[f"t{i}"] = priors[i].build(rng, time=timed)
+        fkeys, waiting = [], set()
+        for i, references in enumerate(parents):
+            keys = [self.fkey(f"t{i}", f"t{p}", rng) for p in references]
+            for fk in keys:
                 self.gather(tables, fk, priors[i], rng)
                 self.aggregate(tables, fk, rng)
-                if not fk.nullable and fk.table not in following and self.follow(tables, fk, rng):
-                    following.add(fk.table)
+            if self.follow(tables, f"t{i}", keys, rng):
+                waiting.add(f"t{i}")
+            fkeys.extend(keys)
         for i in range(n):
-            if rng.random() < self.self_reference_probability:
+            if f"t{i}" not in waiting and rng.random() < self.self_reference_probability:
                 fk = FK(
                     f"t{i}",
                     "parent_id",
@@ -502,18 +516,31 @@ class SchemaPrior:
             columns[name] = Column(name)
         tables[fk.parent] = SCM(mechanisms, columns, time_column=parent.time_column)
 
-    def follow(self, tables: dict[str, SCM], fk: FK, rng: np.random.Generator) -> bool:
-        child, parent = tables[fk.table], tables[fk.parent]
-        if child.time_column is None or parent.time_column is None:
+    def follow(
+        self, tables: dict[str, SCM], table: str, fkeys: list[FK], rng: np.random.Generator
+    ) -> bool:
+        """Make the table's events wait for the events its keys reference.
+
+        Returns:
+            Whether the table's time now depends on its parents.
+        """
+        child = tables[table]
+        fkeys = [fk for fk in fkeys if fk.parent != table and tables[fk.parent].time_column]
+        if child.time_column is None or not fkeys:
             return False
-        if rng.random() >= self.time_follow_probability:
-            return False
-        source = parent.columns[parent.time_column].node
         target = child.columns[child.time_column].node
-        port = f"{fk.column}_{source}"
-        mechanisms = dict(child.mechanisms)
-        mechanisms[port] = Port(fk.parent, source, via=fk.column)
+        mechanisms, effects = dict(child.mechanisms), []
+        if any(fk.nullable for fk in fkeys) or rng.random() >= self.time_tied_probability:
+            mechanisms["schedule"] = mechanisms[target]
+            effects.append(LinearEffect("schedule"))
+        for fk in fkeys:
+            parent = tables[fk.parent]
+            source = parent.columns[parent.time_column].node
+            port = f"{fk.column}_{source}"
+            fill = -np.inf if fk.nullable else None
+            mechanisms[port] = Port(fk.parent, source, via=fk.column, fill=fill)
+            effects.append(LinearEffect(port))
         delay = Exponential(self.time_delay.draw(rng))
-        mechanisms[target] = Combine((LinearEffect(port),), noise=delay)
-        tables[fk.table] = SCM(mechanisms, child.columns, time_column=child.time_column)
+        mechanisms[target] = Combine(tuple(effects), "max", noise=delay)
+        tables[table] = SCM(mechanisms, child.columns, time_column=child.time_column)
         return True
