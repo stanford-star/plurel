@@ -106,7 +106,7 @@ def test_one_node_type_covers_roots_combines_and_one_hot_nodes(latents):
             bad()
 
 
-def test_every_registered_effect_declares_its_width(latents):
+def test_every_registered_edge_declares_its_width(latents):
     assert set(EDGE_EXAMPLES) == set(EDGES)
     for edge in EDGE_EXAMPLES.values():
         x = latents[edge.parent]
@@ -123,7 +123,7 @@ def test_every_reduction_reduces_the_transformed_parents(latents):
         np.testing.assert_allclose(mechanism.evaluate(latents, exogenous), reference(terms))
 
 
-def test_block_effects_set_the_width_and_broadcast(latents):
+def test_block_edges_set_the_width_and_broadcast(latents):
     block = MatrixEdge("h", np.ones((3, 2)))
     mixed = Node((block, LinearEdge("x")), noise=None)
     assert mixed.dim == 2
@@ -136,7 +136,7 @@ def test_block_effects_set_the_width_and_broadcast(latents):
     assert node.evaluate(latents, node.sample_noise(N, np.random.default_rng(0))).shape == (N, 2)
 
 
-def test_lookup_effects_share_the_level_binning(latents):
+def test_lookup_edges_share_the_level_binning(latents):
     levels = bin_levels(latents["s"], PROBABILITIES)
     lookup = LookupEdge("s", (10.0, 20.0, 30.0), PROBABILITIES).apply(latents["s"])
     np.testing.assert_array_equal(lookup, np.asarray([10.0, 20.0, 30.0])[levels])
@@ -180,7 +180,7 @@ def test_nested_levels_are_a_softmax_over_masked_logits():
         assert set(cities[countries.argmax(1) == code].argmax(1)) <= set(subset)
 
 
-def test_nearest_effect_one_hot_encodes_the_closest_center(latents):
+def test_nearest_edge_one_hot_encodes_the_closest_center(latents):
     one_hot = NearestEdge("h", CENTERS).apply(latents["h"])
     assert (one_hot.sum(1) == 1).all()
     np.testing.assert_array_equal(one_hot.argmax(1), latents["h"].argmax(1))
@@ -188,7 +188,7 @@ def test_nearest_effect_one_hot_encodes_the_closest_center(latents):
     np.testing.assert_array_equal(MatrixEdge("c", table).apply(one_hot), table[one_hot.argmax(1)])
 
 
-def test_mlp_effect_places_activations_between_layers(latents):
+def test_mlp_edge_places_activations_between_layers(latents):
     h = latents["h"]
     w1, w2 = MLP.weights
     np.testing.assert_allclose(MLP.apply(h), h @ w1 @ w2)
