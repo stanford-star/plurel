@@ -343,7 +343,9 @@ class SchemaPrior:
     to it or, when the table keeps its own schedule, no earlier than that schedule. Keys with
     nulls always keep their own schedule. Only tables that do not wait get a self-referential
     tree key, so a tree parent is always the earlier row. Cutting a database at any time thus
-    leaves no key pointing past the cut.
+    leaves no key pointing past the cut. Aggregates summarize only static children into their
+    static parents: a parent row summarizing events that happen after it would leak the future,
+    whereas a gather is safe on every key because the child waits for what it reads.
 
     Attributes:
         table_count: Tables in the database.
@@ -364,7 +366,7 @@ class SchemaPrior:
         self_reference_probability: Probability that a table gets a self-referential tree key.
         self_reference_root_share: Share of roots in a self-referential tree.
         gather_count: Parent nodes gathered into the child per foreign key.
-        aggregate_count: Child nodes aggregated into the parent per foreign key.
+        aggregate_count: Child nodes aggregated into the parent per foreign key of a static table.
         aggregates: Aggregation of an aggregate port.
         time_tied_probability: Probability that a waiting table ties its events to the events
             it references instead of keeping its own schedule.
@@ -424,7 +426,8 @@ class SchemaPrior:
             keys = [self.fkey(f"t{i}", f"t{p}", rng) for p in references]
             for fk in keys:
                 self.gather(tables, fk, priors[i], rng)
-                self.aggregate(tables, fk, rng)
+                if tables[fk.table].time_column is None:
+                    self.aggregate(tables, fk, rng)
             if self.follow(tables, f"t{i}", keys, rng):
                 waiting.add(f"t{i}")
             fkeys.extend(keys)

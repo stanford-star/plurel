@@ -117,7 +117,7 @@ SMALL = dict(entity_row_count=IntegersRange(60, 120), activity_row_count=Integer
 
 
 def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
-    prior = SchemaPrior(**SMALL)
+    prior = SchemaPrior(**SMALL, table_prior=TablePrior(time_probability=0.2))
     seen = set()
     for seed in range(25):
         schema = prior.realize(seed)
@@ -136,6 +136,9 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
         assert all(len(frames[t]) == n for t, n in rows.items())
         for (table, name), (port, fk) in schema.ports.items():
             seen.add("aggregate" if port.aggregate else "gather")
+            if port.aggregate:
+                assert schema.tables[fk.table].time_column is None
+                assert schema.tables[table].time_column is None
             if isinstance(fk.link, TreeLink):
                 seen.add("self")
                 time = schema.tables[table].mechanisms.get("time")
