@@ -111,3 +111,18 @@ def write_database(
 
 def read_database(path: str | Path) -> Database:
     return load_dataset(Path(path)).get_db(upto_test_timestamp=False)
+
+
+def split_timestamps(
+    db: Database, val_share: float = 0.1, test_share: float = 0.1
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Timestamps leaving `val_share` then `test_share` of the timestamped rows after them."""
+    if min(val_share, test_share) <= 0.0 or val_share + test_share >= 1.0:
+        raise ValueError("val_share and test_share must be positive and sum to less than one")
+    times = [
+        table.df[table.time_col].dropna() for table in db.table_dict.values() if table.time_col
+    ]
+    pooled = pd.concat(times, ignore_index=True) if times else pd.Series(dtype="datetime64[ns]")
+    if pooled.empty:
+        raise ValueError("a time split needs timestamped rows")
+    return pooled.quantile(1.0 - val_share - test_share), pooled.quantile(1.0 - test_share)

@@ -16,7 +16,7 @@ from plurel import (
     Softmax,
     Uniform,
 )
-from plurel.io import create_database, read_database, write_database
+from plurel.io import create_database, read_database, split_timestamps, write_database
 from plurel.links import HSBMLink, TreeLink
 from plurel.schema import FK, Port, Schema
 
@@ -242,3 +242,16 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
     for _ in range(rows["employees"]):
         current = np.where(current >= 0, bosses[current], -1)
     assert (current == -1).all()
+
+
+def test_split_timestamps_follow_the_pooled_time_columns(schema):
+    db = create_database(schema, schema.sample(ROWS, seed=0))
+    val, test = split_timestamps(db, 0.2, 0.1)
+    when = db.table_dict["orders"].df["when"]
+    assert val < test and abs((when < val).mean() - 0.7) < 0.02
+    assert abs((when < test).mean() - 0.9) < 0.02
+    with pytest.raises(ValueError, match="timestamped"):
+        split_timestamps(Database({"customers": db.table_dict["customers"]}))
+    for bad in ((0.0, 0.1), (0.5, 0.5), (-0.1, 0.2)):
+        with pytest.raises(ValueError, match="share"):
+            split_timestamps(db, *bad)
