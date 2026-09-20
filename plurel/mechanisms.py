@@ -70,7 +70,7 @@ def _draw(distribution: Distribution, n: int, rng: np.random.Generator, dim: int
 
 
 @dataclass(frozen=True)
-class Effect:
+class Edge:
     parent: str
     dim = 1
 
@@ -79,7 +79,7 @@ class Effect:
 
 
 @dataclass(frozen=True)
-class LinearEffect(Effect):
+class LinearEdge(Edge):
     weight: float = 1.0
     transform: Function = "identity"
     dim: int = 1
@@ -89,7 +89,7 @@ class LinearEffect(Effect):
 
 
 @dataclass(frozen=True)
-class LookupEffect(Effect):
+class LookupEdge(Edge):
     values: tuple[float, ...]
     probabilities: tuple[float, ...] | None = None
 
@@ -104,7 +104,7 @@ class LookupEffect(Effect):
 
 
 @dataclass(frozen=True)
-class MatrixEffect(Effect):
+class MatrixEdge(Edge):
     matrix: np.ndarray
 
     @property
@@ -116,7 +116,7 @@ class MatrixEffect(Effect):
 
 
 @dataclass(frozen=True)
-class NearestEffect(Effect):
+class NearestEdge(Edge):
     centers: np.ndarray
 
     @property
@@ -129,7 +129,7 @@ class NearestEffect(Effect):
 
 
 @dataclass(frozen=True)
-class MLPEffect(Effect):
+class MLPEdge(Edge):
     weights: tuple[np.ndarray, ...]
     biases: tuple[np.ndarray, ...] | None = None
     activations: tuple[Function, ...] | None = None
@@ -157,7 +157,7 @@ class MLPEffect(Effect):
 
 
 @dataclass(frozen=True)
-class TreeEffect(Effect):
+class TreeEdge(Edge):
     split_dims: np.ndarray
     split_points: np.ndarray
     leaves: np.ndarray
@@ -178,7 +178,7 @@ class TreeEffect(Effect):
 
 
 @dataclass(frozen=True)
-class FourierEffect(Effect):
+class FourierEdge(Edge):
     frequencies: np.ndarray
     phases: np.ndarray
     weights: np.ndarray
@@ -196,7 +196,7 @@ class FourierEffect(Effect):
 
 
 @dataclass(frozen=True)
-class QuadraticEffect(Effect):
+class QuadraticEdge(Edge):
     tensor: np.ndarray
 
     def __post_init__(self) -> None:
@@ -227,14 +227,14 @@ class Mechanism:
 
 @dataclass(frozen=True)
 class Node(Mechanism):
-    """The one node type: a reduction over per-parent effects, plus bias and noise.
+    """The one node type: a reduction over per-parent edges, plus bias and noise.
 
-    Without effects the node is a root whose value is its noise, `dim` wide. With `onehot`
+    Without edges the node is a root whose value is its noise, `dim` wide. With `onehot`
     the node emits the one-hot argmax of its scores; with Gumbel noise that samples the
     class from the softmax of the scores.
     """
 
-    effects: tuple[Effect, ...] = ()
+    edges: tuple[Edge, ...] = ()
     op: str = "sum"
     bias: tuple[float, ...] | None = None
     onehot: bool = False
@@ -243,7 +243,7 @@ class Node(Mechanism):
     def __post_init__(self) -> None:
         if self.op not in REDUCTIONS:
             raise ValueError(f"op must be one of {tuple(REDUCTIONS)}")
-        dims = [effect.dim for effect in self.effects]
+        dims = [edge.dim for edge in self.edges]
         if dims:
             derived = sum(dims) if self.op == "concat" else max(dims)
         else:
@@ -251,7 +251,7 @@ class Node(Mechanism):
         if self.dim is None:
             object.__setattr__(self, "dim", derived)
         elif self.dim != derived:
-            raise ValueError(f"dim {self.dim} does not match the effects or bias, {derived}")
+            raise ValueError(f"dim {self.dim} does not match the edges or bias, {derived}")
         if self.bias is not None and len(self.bias) != self.dim:
             raise ValueError("one bias per dimension")
         if self.onehot and self.dim < 2:
@@ -259,23 +259,23 @@ class Node(Mechanism):
 
     @property
     def parents(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(effect.parent for effect in self.effects))
+        return tuple(dict.fromkeys(edge.parent for edge in self.edges))
 
     def evaluate(self, latents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
-        terms = [effect.apply(latents[effect.parent]) for effect in self.effects]
+        terms = [edge.apply(latents[edge.parent]) for edge in self.edges]
         value = REDUCTIONS[self.op](terms) + exogenous if terms else exogenous
         if self.bias is not None:
             value = value + np.asarray(self.bias)
         return np.eye(self.dim)[value.argmax(1)] if self.onehot else value
 
 
-EFFECTS: dict[str, type] = {
-    "linear": LinearEffect,
-    "lookup": LookupEffect,
-    "matrix": MatrixEffect,
-    "nearest": NearestEffect,
-    "mlp": MLPEffect,
-    "tree": TreeEffect,
-    "fourier": FourierEffect,
-    "quadratic": QuadraticEffect,
+EDGES: dict[str, type] = {
+    "linear": LinearEdge,
+    "lookup": LookupEdge,
+    "matrix": MatrixEdge,
+    "nearest": NearestEdge,
+    "mlp": MLPEdge,
+    "tree": TreeEdge,
+    "fourier": FourierEdge,
+    "quadratic": QuadraticEdge,
 }

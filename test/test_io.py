@@ -9,7 +9,7 @@ from plurel import (
     SCM,
     Column,
     Exponential,
-    LinearEffect,
+    LinearEdge,
     Node,
     Normal,
     Uniform,
@@ -52,7 +52,7 @@ def orders(key=True, time_column="when"):
         {
             "when": Node(),
             "value": Port("customers", "spend", fill=np.nan),
-            "amount": Node((LinearEffect("when"),), noise=Normal(std=0.5)),
+            "amount": Node((LinearEdge("when"),), noise=Normal(std=0.5)),
         },
         columns,
         time_column=time_column,
@@ -182,9 +182,9 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
     orders = SCM(
         {
             "signup": Port("customers", "signup"),
-            "when": Node((LinearEffect("signup"),), noise=Exponential(3600.0)),
+            "when": Node((LinearEdge("signup"),), noise=Exponential(3600.0)),
             "value": Port("customers", "value"),
-            "amount": Node((LinearEffect("value"),), noise=Normal(std=0.1)),
+            "amount": Node((LinearEdge("value"),), noise=Normal(std=0.1)),
         },
         {
             "id": Column(kind="key"),

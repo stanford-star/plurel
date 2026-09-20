@@ -25,15 +25,15 @@ from plurel.layouts import (
 from plurel.links import HSBMLink, Link, RandomLink, TreeLink
 from plurel.mechanisms import (
     TRANSFORM_NAMES,
-    Effect,
-    FourierEffect,
-    LinearEffect,
-    MatrixEffect,
+    Edge,
+    FourierEdge,
+    LinearEdge,
+    MatrixEdge,
     Mechanism,
-    MLPEffect,
+    MLPEdge,
     Node,
-    QuadraticEffect,
-    TreeEffect,
+    QuadraticEdge,
+    TreeEdge,
 )
 from plurel.random import Seed, generator
 from plurel.schema import FK, Port, Schema
@@ -42,46 +42,44 @@ from plurel.scm import SCM
 ACTIVATIONS = tuple(name for name in TRANSFORM_NAMES if name != "identity")
 
 
-def _linear(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
-    return LinearEffect(parent, float(rng.normal()), str(rng.choice(TRANSFORM_NAMES)), dim=d_in)
+def _linear(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
+    return LinearEdge(parent, float(rng.normal()), str(rng.choice(TRANSFORM_NAMES)), dim=d_in)
 
 
-def _matrix(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
-    return MatrixEffect(parent, rng.normal(0.0, 1.0 / np.sqrt(d_in), (d_in, d_out)))
+def _matrix(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
+    return MatrixEdge(parent, rng.normal(0.0, 1.0 / np.sqrt(d_in), (d_in, d_out)))
 
 
-def _mlp(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+def _mlp(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
     hidden = prior.mlp_hidden_width.draw(rng)
     weights = (
         rng.normal(0.0, 1.0 / np.sqrt(d_in), (d_in, hidden)),
         rng.normal(0.0, 1.0 / np.sqrt(hidden), (hidden, d_out)),
     )
     biases = (rng.normal(0.0, 0.5, hidden), np.zeros(d_out))
-    return MLPEffect(
-        parent, weights, biases, ("identity", str(rng.choice(ACTIVATIONS)), "identity")
-    )
+    return MLPEdge(parent, weights, biases, ("identity", str(rng.choice(ACTIVATIONS)), "identity"))
 
 
-def _tree(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+def _tree(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
     trees, depth = prior.tree_count.draw(rng), prior.tree_depth.draw(rng)
     splits = rng.integers(0, d_in, (trees, depth))
-    return TreeEffect(
+    return TreeEdge(
         parent, splits, rng.normal(size=(trees, depth)), rng.normal(size=(trees, 2**depth, d_out))
     )
 
 
-def _fourier(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+def _fourier(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
     frequencies = rng.normal(size=(d_in, prior.fourier_frequency_count)) * rng.uniform(0.5, 3.0)
     phases = rng.uniform(0.0, 2.0 * np.pi, prior.fourier_frequency_count)
     weights = rng.normal(
         0.0, 1.0 / np.sqrt(prior.fourier_frequency_count), (prior.fourier_frequency_count, d_out)
     )
-    return FourierEffect(parent, frequencies, phases, weights)
+    return FourierEdge(parent, frequencies, phases, weights)
 
 
-def _quadratic(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+def _quadratic(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
     scale = 1.0 / (np.sqrt(d_in) * (d_in + 1))
-    return QuadraticEffect(parent, rng.normal(0.0, scale, (d_out, d_in + 1, d_in + 1)))
+    return QuadraticEdge(parent, rng.normal(0.0, scale, (d_out, d_in + 1, d_in + 1)))
 
 
 BUILDERS = {
@@ -190,14 +188,14 @@ class TablePrior:
         node_width: Latent dimensions of a numeric node.
         node_categorical_share: Probability that a node is categorical, a one-hot node.
         node_class_count: Classes of a categorical node.
-        effect_families: Effect family per edge; linear only when parent and node widths agree.
-        node_ops: Reduction over the effects of a node with several parents.
+        edge_families: Edge family per edge; linear only when parent and node widths agree.
+        node_ops: Reduction over the edges of a node with several parents.
         node_noise_std: Standard deviation of the Gaussian noise of a node.
         root_noise: Exogenous distribution of a source node.
-        mlp_hidden_width: Hidden width of an MLP effect.
-        tree_count: Oblivious trees in a tree effect.
+        mlp_hidden_width: Hidden width of an MLP edge.
+        tree_count: Oblivious trees in a tree edge.
         tree_depth: Depth of each oblivious tree.
-        fourier_frequency_count: Random Fourier features in a Fourier effect.
+        fourier_frequency_count: Random Fourier features in a Fourier edge.
         column_count: Observed columns besides the key.
         column_marginals: Marginal a numeric column is rank-mapped onto; None keeps the latent.
         column_binned_share: Probability that a numeric column is binned into categories instead.
@@ -214,7 +212,7 @@ class TablePrior:
     node_width: Range = LogIntegersRange(1, 4)
     node_categorical_share: float = 0.3
     node_class_count: Range = IntegersRange(2, 8)
-    effect_families: Choices = Choices(FAMILIES)
+    edge_families: Choices = Choices(FAMILIES)
     node_ops: Choices = Choices(("sum", "product", "max", "logsumexp"), (6.0, 1.0, 1.0, 1.0))
     node_noise_std: Range = LogRange(0.01, 0.5)
     root_noise: Choices = Choices(
@@ -235,8 +233,8 @@ class TablePrior:
     time_calendar: Calendar = DEFAULT_CALENDAR
 
     def __post_init__(self) -> None:
-        if set(self.effect_families.values) <= set(PRESERVING):
-            raise ValueError("effect_families needs a family that can change width")
+        if set(self.edge_families.values) <= set(PRESERVING):
+            raise ValueError("edge_families needs a family that can change width")
 
     def warp(self, rng: np.random.Generator) -> "TablePrior":
         knobs = {
@@ -279,21 +277,21 @@ class TablePrior:
         categorical: bool,
         rng: np.random.Generator,
     ) -> Mechanism:
-        effects = tuple(self.effect(f"n{p}", dims[p], dims[i], categorical, rng) for p in sources)
+        edges = tuple(self.edge(f"n{p}", dims[p], dims[i], categorical, rng) for p in sources)
         if categorical:
             return Node(
-                effects, bias=tuple(rng.normal(0.0, 0.5, dims[i])), onehot=True, noise=Gumbel()
+                edges, bias=tuple(rng.normal(0.0, 0.5, dims[i])), onehot=True, noise=Gumbel()
             )
-        if not effects:
+        if not edges:
             return Node(dim=dims[i], noise=self.root_noise.draw(rng))
-        op = self.node_ops.draw(rng) if len(effects) > 1 else "sum"
-        return Node(effects, op, noise=Normal(std=self.node_noise_std.draw(rng)))
+        op = self.node_ops.draw(rng) if len(edges) > 1 else "sum"
+        return Node(edges, op, noise=Normal(std=self.node_noise_std.draw(rng)))
 
-    def effect(
+    def edge(
         self, parent: str, d_in: int, d_out: int, block: bool, rng: np.random.Generator
-    ) -> Effect:
+    ) -> Edge:
         preserving = d_in == d_out and not block
-        families = self.effect_families if preserving else self.effect_families.without(PRESERVING)
+        families = self.edge_families if preserving else self.edge_families.without(PRESERVING)
         return BUILDERS[families.draw(rng)](self, parent, d_in, d_out, rng)
 
     def column(self, i: int, dim: int, categorical: bool, rng: np.random.Generator) -> Column:
@@ -320,8 +318,8 @@ class TablePrior:
         return Column(node, dims=slot, marginal=self.column_marginals.draw(rng), missing=missing)
 
 
-def _consume(mechanism: Node, effect: Effect) -> Node:
-    return replace(mechanism, effects=mechanism.effects + (effect,))
+def _consume(mechanism: Node, edge: Edge) -> Node:
+    return replace(mechanism, edges=mechanism.edges + (edge,))
 
 
 @dataclass(frozen=True)
@@ -329,7 +327,7 @@ class SchemaPrior:
     """Random multi-table schema prior.
 
     A table's parents in the table graph are the tables it references. Each table is a fresh
-    warp of `table_prior`. Gathered parent nodes become extra effects on existing child nodes;
+    warp of `table_prior`. Gathered parent nodes become extra edges on existing child nodes;
     aggregated child nodes become new observed nodes of the parent, so the node graph across
     tables stays acyclic by construction.
 
@@ -477,8 +475,8 @@ class SchemaPrior:
             )
             target = mechanisms[consumer]
             block = target.onehot
-            effect = prior.effect(port, parent.mechanisms[source].dim, target.dim, block, rng)
-            mechanisms[consumer] = _consume(target, effect)
+            edge = prior.edge(port, parent.mechanisms[source].dim, target.dim, block, rng)
+            mechanisms[consumer] = _consume(target, edge)
         tables[fk.table] = SCM(mechanisms, child.columns, time_column=child.time_column)
 
     def aggregate(self, tables: dict[str, SCM], fk: FK, rng: np.random.Generator) -> None:

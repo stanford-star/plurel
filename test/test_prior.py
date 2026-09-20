@@ -3,7 +3,7 @@ import pytest
 
 from plurel.io import create_database
 from plurel.links import TreeLink
-from plurel.mechanisms import EFFECTS
+from plurel.mechanisms import EDGES
 from plurel.prior import (
     FAMILIES,
     Choices,
@@ -54,9 +54,9 @@ def test_table_prior_realizes_valid_diverse_tables():
         assert 3 <= sum(name.startswith("n") for name in scm.mechanisms) <= 16
         for mechanism in scm.mechanisms.values():
             assert 1 <= mechanism.dim <= 8
-            families.update(type(effect) for effect in getattr(mechanism, "effects", ()))
+            families.update(type(edge) for edge in getattr(mechanism, "edges", ()))
         kinds.update(column.kind for column in scm.columns.values())
-    assert families == {EFFECTS[name] for name in FAMILIES}
+    assert families == {EDGES[name] for name in FAMILIES}
     assert kinds == {"key", "numeric", "categorical", "timestamp"}
 
 
@@ -74,7 +74,7 @@ def test_table_prior_knobs_are_respected():
         assert all(c.missing == 0.0 for c in scm.columns.values())
         assert not scm.sample(50, seed=seed).isna().any().any()
     with pytest.raises(ValueError, match="change width"):
-        TablePrior(effect_families=Choices(("linear",)))
+        TablePrior(edge_families=Choices(("linear",)))
     single = TablePrior(node_count=IntegersRange(1, 1), column_count=IntegersRange(1, 1))
     scm = single.realize(0)
     assert len(scm.mechanisms) <= 2 and not scm.mechanisms["n0"].parents
@@ -92,7 +92,7 @@ def test_warping_gives_each_realization_its_own_style():
     choices = Choices(("a", "b", "c"), (1.0, 1.0, 0.0)).warp(rng)
     assert choices.values == ("a", "b", "c") and choices.weights[2] == 0.0
     prior = TablePrior().warp(rng)
-    assert prior.node_count.shape is not None and prior.effect_families.weights is not None
+    assert prior.node_count.shape is not None and prior.edge_families.weights is not None
     assert prior.node_categorical_share == TablePrior().node_categorical_share
     meta = [
         np.mean([m.dim for m in TablePrior().realize(seed).mechanisms.values()])

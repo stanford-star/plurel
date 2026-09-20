@@ -7,9 +7,9 @@ from plurel import (
     SCM,
     Column,
     Exponential,
-    LinearEffect,
+    LinearEdge,
     LogNormal,
-    MatrixEffect,
+    MatrixEdge,
     Node,
     Normal,
     generator,
@@ -29,9 +29,7 @@ def customers():
             "value": Node(),
             "n_orders": Port("orders", "amount", aggregate="count"),
             "spend": Port("orders", "amount", aggregate="sum"),
-            "churn": Node(
-                (LinearEffect("spend", -0.1), LinearEffect("value")), noise=Normal(std=0.1)
-            ),
+            "churn": Node((LinearEdge("spend", -0.1), LinearEdge("value")), noise=Normal(std=0.1)),
         },
         {
             "segment": Column("segment", "categorical", categories=("a", "b", "c")),
@@ -47,9 +45,9 @@ def orders():
         {
             "segment": Port("customers", "segment", dim=3, fill=0.0),
             "value": Port("customers", "value", fill=0.0),
-            "embedding": Node((MatrixEffect("segment", EMBEDDING),), noise=None),
+            "embedding": Node((MatrixEdge("segment", EMBEDDING),), noise=None),
             "amount": Node(
-                (LinearEffect("value", 2.0), MatrixEffect("embedding", np.ones((3, 1)))),
+                (LinearEdge("value", 2.0), MatrixEdge("embedding", np.ones((3, 1)))),
                 noise=Normal(std=0.5),
             ),
         },
@@ -63,7 +61,7 @@ def employees():
             "level": Node(),
             "manager_level": Port("employees", "level", via="manager_id", fill=0.0),
             "pay": Node(
-                (LinearEffect("level"), LinearEffect("manager_level", 0.5)), noise=Normal(std=0.1)
+                (LinearEdge("level"), LinearEdge("manager_level", 0.5)), noise=Normal(std=0.1)
             ),
         },
         {"level": Column("level"), "pay": Column("pay")},
@@ -367,7 +365,7 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
     downstream = SCM(
         {
             "value": Port("customers", "value", fill=np.nan),
-            "double": Node((LinearEffect("value", 2.0),)),
+            "double": Node((LinearEdge("value", 2.0),)),
         },
         {},
     )
@@ -394,7 +392,7 @@ def test_child_events_follow_their_parent_events():
     orders = SCM(
         {
             "signup": Port("customers", "signup", fill=np.nan),
-            "when": Node((LinearEffect("signup"),), noise=Exponential(30 * 24 * 3600.0)),
+            "when": Node((LinearEdge("signup"),), noise=Exponential(30 * 24 * 3600.0)),
         },
         {"when": Column("when", "timestamp")},
         time_column="when",

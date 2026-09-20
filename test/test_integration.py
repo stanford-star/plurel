@@ -7,9 +7,9 @@ from plurel import (
     SCM,
     Column,
     Exponential,
-    LinearEffect,
+    LinearEdge,
     LogNormal,
-    MatrixEffect,
+    MatrixEdge,
     Node,
     Normal,
     Pareto,
@@ -44,11 +44,11 @@ def random_schema(rng):
         mechanisms[t]["h"] = Node(dim=int(rng.integers(1, 4)))
         if rng.random() < 0.5:
             mechanisms[t]["stamp"] = Node(noise=DEFAULT_CALENDAR)
-            mechanisms[t]["later"] = Node((LinearEffect("stamp"),), noise=Exponential(3600.0))
+            mechanisms[t]["later"] = Node((LinearEdge("stamp"),), noise=Exponential(3600.0))
             columns[t]["stamp"] = Column("stamp", "timestamp")
             columns[t]["later"] = Column("later", "timestamp", after="stamp")
         terms = tuple(
-            LinearEffect(root, float(rng.normal()), str(rng.choice(["identity", "tanh", "square"])))
+            LinearEdge(root, float(rng.normal()), str(rng.choice(["identity", "tanh", "square"])))
             for root in roots
         )
         mechanisms[t]["y"] = Node(terms, noise=Normal(std=0.3))
@@ -81,13 +81,13 @@ def random_schema(rng):
         if np.isnan(fill):
             columns[t]["g_r0"] = Column("g_r0", marginal=Uniform())
         else:
-            effects = (LinearEffect("g_r0", 2.0), MatrixEffect("g_seg", np.ones((width, 1))))
-            mechanisms[t]["z"] = Node(effects, noise=Normal(std=0.1))
+            edges = (LinearEdge("g_r0", 2.0), MatrixEdge("g_seg", np.ones((width, 1))))
+            mechanisms[t]["z"] = Node(edges, noise=Normal(std=0.1))
             columns[t]["z"] = Column("z")
         aggregate = str(rng.choice(["count", "sum", "mean", "max"]))
         fill = None if aggregate in ("count", "sum") else 0.0
         mechanisms[parent][f"a_{t}"] = Port(t, "y", aggregate=aggregate, fill=fill)
-        mechanisms[parent][f"w_{t}"] = Node((LinearEffect(f"a_{t}", 0.5),), noise=Normal())
+        mechanisms[parent][f"w_{t}"] = Node((LinearEdge(f"a_{t}", 0.5),), noise=Normal())
         columns[parent][f"a_{t}"] = Column(f"a_{t}")
         columns[parent][f"w_{t}"] = Column(f"w_{t}")
     if rng.random() < 0.4:
