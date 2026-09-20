@@ -46,8 +46,8 @@ def test_table_prior_realizes_valid_diverse_tables():
     prior = TablePrior()
     families, kinds = set(), set()
     for seed in range(40):
-        scm = prior.realize(seed)
-        assert prior.realize(seed).order == scm.order
+        scm = prior.realize(seed, time=seed % 2 == 1)
+        assert prior.realize(seed, time=seed % 2 == 1).order == scm.order
         frame = scm.sample(200, seed=seed)
         assert frame.equals(scm.sample(200, seed=seed)) and len(frame) == 200
         assert scm.pkey_column == "id" and 4 <= len(frame.columns) <= 14
@@ -63,7 +63,6 @@ def test_table_prior_realizes_valid_diverse_tables():
 def test_table_prior_knobs_are_respected():
     plain = TablePrior(
         node_categorical_share=0.0,
-        time_probability=0.0,
         column_binned_share=0.0,
         column_missing_share=0.0,
     )
@@ -174,7 +173,7 @@ def test_schema_prior_edge_cases():
     tiny = SchemaPrior(
         **SMALL,
         table_count=IntegersRange(1, 1),
-        table_prior=TablePrior(node_count=IntegersRange(1, 2), time_probability=0.0),
+        table_prior=TablePrior(node_count=IntegersRange(1, 2)),
         self_reference_probability=1.0,
         gather_count=IntegersRange(3, 3),
     )

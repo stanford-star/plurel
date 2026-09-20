@@ -182,7 +182,8 @@ def _open_unit(rng: np.random.Generator) -> float:
 class TablePrior:
     """Random single-table SCM prior.
 
-    Ranges and choices are warped once per table, then drawn per use.
+    Ranges and choices are warped once per table, then drawn per use. A calendar time column
+    is added only on request; a schema prior decides it by table role.
 
     Attributes:
         node_count: Nodes in the table's DAG.
@@ -204,7 +205,6 @@ class TablePrior:
         column_bin_count: Categories of a binned column.
         column_missing_rate: Missing rate of a column that has missingness.
         column_missing_share: Probability that a column has missingness.
-        time_probability: Probability that a realized table gets a calendar time column.
         time_calendar: Calendar the time column is drawn from.
     """
 
@@ -233,7 +233,6 @@ class TablePrior:
     column_bin_count: Range = IntegersRange(2, 8)
     column_missing_rate: Range = Range(0.01, 0.1)
     column_missing_share: float = 0.3
-    time_probability: float = 0.5
     time_calendar: Calendar = DEFAULT_CALENDAR
 
     def __post_init__(self) -> None:
@@ -248,10 +247,9 @@ class TablePrior:
         }
         return replace(self, **knobs)
 
-    def realize(self, seed: Seed = None) -> SCM:
+    def realize(self, seed: Seed = None, *, time: bool = False) -> SCM:
         rng = generator(seed)
-        prior = self.warp(rng)
-        return prior.build(rng, time=rng.random() < prior.time_probability)
+        return self.warp(rng).build(rng, time=time)
 
     def build(self, rng: np.random.Generator, time: bool) -> SCM:
         n = self.node_count.draw(rng)
@@ -336,11 +334,10 @@ class SchemaPrior:
     aggregated child nodes become new observed nodes of the parent, so the node graph across
     tables stays acyclic by construction.
 
-    Tables nothing references hold events and get a time column; referenced tables are static
-    regardless of the table prior's `time_probability`, so no key ever points into the future
-    and cutting a database at any time leaves every key valid. Aggregates summarize only static
-    children into their static parents: a parent row summarizing later events would leak the
-    future.
+    Tables nothing references hold events and get a time column; referenced tables are static,
+    so no key ever points into the future and cutting a database at any time leaves every key
+    valid. Aggregates summarize only static children into their static parents: a parent row
+    summarizing later events would leak the future.
 
     Attributes:
         table_count: Tables in the database.
