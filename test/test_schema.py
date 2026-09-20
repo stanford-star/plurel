@@ -62,7 +62,7 @@ def employees():
     return SCM(
         {
             "level": Root(),
-            "manager_level": Port("employees", "level", via="manager_id", fill=0.0),
+            "manager_level": Port(None, "level", via="manager_id", fill=0.0),
             "pay": Combine(
                 (LinearEffect("level"), LinearEffect("manager_level", 0.5)), noise=Normal(std=0.1)
             ),

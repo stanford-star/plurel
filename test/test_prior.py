@@ -86,9 +86,9 @@ def test_build_reads_copies_from_every_non_root_node():
     rng = np.random.default_rng(3)
     prior = TablePrior(node_count=IntegersRange(6, 6), key_copy_count=IntegersRange(2, 2))
     copies = {"a_id_x": Port("a", "x", via="a_id", fill=0.0, dim=2)}
-    scm = prior.build(rng, time=True, copies=copies, self_key="parent_id", name="t")
+    scm = prior.build(rng, time=True, copies=copies, self_key="parent_id")
     assert scm.mechanisms["a_id_x"] is copies["a_id_x"]
-    own = [n for n, m in scm.mechanisms.items() if isinstance(m, Port) and m.table == "t"]
+    own = [n for n, m in scm.mechanisms.items() if isinstance(m, Port) and m.table is None]
     assert len(own) == 2 and all(not scm.mechanisms[scm.mechanisms[n].node].parents for n in own)
     ports = set(own) | {"a_id_x"}
     for node, m in scm.mechanisms.items():
@@ -98,8 +98,6 @@ def test_build_reads_copies_from_every_non_root_node():
             assert ports <= set(m.parents)
         else:
             assert isinstance(m, Root | Softmax) and not m.parents
-    with pytest.raises(ValueError, match="name"):
-        prior.build(rng, time=False, self_key="parent_id")
 
 
 def test_warping_gives_each_realization_its_own_style():
@@ -152,7 +150,7 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
         assert all(len(frames[t]) == n for t, n in rows.items())
         for (table, name), (port, fk) in schema.ports.items():
             seen.add("aggregate" if port.aggregate else "gather")
-            scm, source = schema.tables[table], schema.tables[port.table]
+            scm, source = schema.tables[table], schema.tables[schema.source(table, port)]
             if port.aggregate is None:
                 if fk.table == fk.parent:
                     assert not source.mechanisms[port.node].parents

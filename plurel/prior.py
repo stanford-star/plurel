@@ -261,7 +261,6 @@ class TablePrior:
         *,
         copies: Mapping[str, Port] | None = None,
         self_key: str | None = None,
-        name: str | None = None,
     ) -> SCM:
         """Build the table's SCM.
 
@@ -271,7 +270,6 @@ class TablePrior:
             copies: Nodes copied from parent rows; every non-root node reads all of them.
             self_key: Column of a self-referential tree key; the table then copies a few of
                 its own roots through it, read by every non-root node as well.
-            name: The table's name, needed for the self-referential copies.
         """
         copies = dict(copies or {})
         nodes = [f"n{i}" for i in range(self.node_count.draw(rng))]
@@ -283,13 +281,11 @@ class TablePrior:
             for node in nodes
         }
         if self_key is not None:
-            if name is None:
-                raise ValueError("self-referential copies need the table's name")
             roots = [node for node in nodes if not parents[node]]
             count = min(self.key_copy_count.draw(rng), len(roots))
             for root in map(str, rng.choice(roots, count, replace=False)) if count else ():
                 copies[f"{self_key}_{root}"] = Port(
-                    name, root, via=self_key, fill=0.0, dim=dims[root]
+                    None, root, via=self_key, fill=0.0, dim=dims[root]
                 )
         dims.update({copy: port.dim for copy, port in copies.items()})
         mechanisms: dict[str, Mechanism] = dict(copies)
@@ -449,7 +445,6 @@ class SchemaPrior:
                 time=i not in referenced,
                 copies=copies,
                 self_key="parent_id" if tree else None,
-                name=table,
             )
             for fk in keys:
                 if fk.parent != table and tables[table].time_column is None:

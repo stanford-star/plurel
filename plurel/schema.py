@@ -64,7 +64,9 @@ class FK:
 
 @dataclass(frozen=True)
 class Port(Mechanism):
-    table: str
+    """A node read from another table's rows through a key; `table` None means this table."""
+
+    table: str | None
     node: str
     via: str | None = None
     aggregate: str | None = None
@@ -121,15 +123,23 @@ class Schema:
         for table, scm in self.tables.items():
             for name, mechanism in scm.mechanisms.items():
                 local = tuple((table, parent) for parent in mechanism.parents)
-                source = ((mechanism.table, mechanism.node),) if isinstance(mechanism, Port) else ()
+                source = (
+                    ((self.source(table, mechanism), mechanism.node),)
+                    if isinstance(mechanism, Port)
+                    else ()
+                )
                 parents[table, name] = local + source
         self.generations = generations(parents)
         self.order = tuple(node for generation in self.generations for node in generation)
 
+    def source(self, table: str, port: Port) -> str:
+        return table if port.table is None else port.table
+
     def _fkey(self, table: str, name: str, port: Port) -> FK:
-        if port.table not in self.tables or port.node not in self.tables[port.table].mechanisms:
-            raise ValueError(f"port {name!r} refers to unknown node {port.table}.{port.node}")
-        child, parent = (port.table, table) if port.aggregate else (table, port.table)
+        origin = self.source(table, port)
+        if origin not in self.tables or port.node not in self.tables[origin].mechanisms:
+            raise ValueError(f"port {name!r} refers to unknown node {origin}.{port.node}")
+        child, parent = (origin, table) if port.aggregate else (table, origin)
         matches = [
             fk
             for fk in self.fkeys
@@ -139,7 +149,7 @@ class Schema:
             raise ValueError(
                 f"port {name!r} needs exactly one foreign key from {child} to {parent}"
             )
-        source = self.tables[port.table].mechanisms[port.node].dim
+        source = self.tables[origin].mechanisms[port.node].dim
         if port.dim != (1 if port.aggregate == "count" else source):
             raise ValueError(f"port {name!r} declares dim {port.dim}, source has {source}")
         return matches[0]
@@ -170,7 +180,7 @@ class Schema:
         table, name = node
         if node in self.ports and name not in interventions.get(table, {}):
             port, fk = self.ports[node]
-            source = latents[port.table][port.node]
+            source = latents[self.source(table, port)][port.node]
             indices = links[fk.table, fk.column]
             latent = port.resolve(source, indices, rows[table])
             if latent.shape != (rows[table], port.dim):
