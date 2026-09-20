@@ -117,7 +117,7 @@ SMALL = dict(entity_row_count=IntegersRange(60, 120), activity_row_count=Integer
 
 
 def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
-    prior = SchemaPrior(**SMALL, table_prior=TablePrior(time_probability=0.2))
+    prior = SchemaPrior(**SMALL)
     seen = set()
     for seed in range(25):
         schema = prior.realize(seed)
@@ -127,11 +127,7 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
         for table, count in rows.items():
             low, high = (60, 120) if table in referenced else (300, 600)
             assert low <= count <= high
-            assert table in referenced or schema.tables[table].time_column is not None
-        for fk in schema.fkeys:
-            child, parent = schema.tables[fk.table], schema.tables[fk.parent]
-            if fk.table != fk.parent and child.time_column and parent.time_column:
-                assert f"{fk.column}_time" in child.mechanisms
+            assert (table in referenced) == (schema.tables[table].time_column is None)
         frames, latents = schema.sample_with_latents(rows, seed=seed)
         assert all(len(frames[t]) == n for t, n in rows.items())
         for (table, name), (port, fk) in schema.ports.items():
@@ -141,17 +137,6 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
                 assert schema.tables[table].time_column is None
             if isinstance(fk.link, TreeLink):
                 seen.add("self")
-                time = schema.tables[table].mechanisms.get("time")
-                assert time is None or isinstance(time, Root)
-            if name.endswith("_time"):
-                seen.add("schedule" if "schedule" in schema.tables[table].mechanisms else "tied")
-                assert (port.fill is None) == (fk.nullable == 0.0)
-                child_time = frames[fk.table][schema.tables[fk.table].time_column].to_numpy()
-                parent_time = frames[fk.parent][schema.tables[fk.parent].time_column].to_numpy()
-                keys = frames[fk.table][fk.column]
-                linked = keys.notna().to_numpy()
-                index = keys.to_numpy(dtype=float, na_value=-1).astype(int)
-                assert (child_time[linked] >= parent_time[index[linked]]).all()
             if port.aggregate in ("mean", "max", "min"):
                 keys = frames[fk.table][fk.column].dropna().astype(int)
                 childless = ~np.isin(np.arange(rows[table]), keys)
@@ -161,7 +146,7 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
         for table in cut.table_dict.values():
             for column, parent in table.fkey_col_to_pkey_table.items():
                 assert table.df[column].dropna().lt(len(cut.table_dict[parent].df)).all()
-    assert seen == {"gather", "aggregate", "self", "tied", "schedule"}
+    assert seen == {"gather", "aggregate", "self"}
 
 
 def test_schema_prior_knobs_switch_cross_table_structure_off():
@@ -170,7 +155,6 @@ def test_schema_prior_knobs_switch_cross_table_structure_off():
         gather_count=IntegersRange(0, 0),
         aggregate_count=IntegersRange(0, 0),
         self_reference_probability=0.0,
-        table_prior=TablePrior(time_probability=0.0),
         fk_nullable_share=0.0,
     )
     for seed in range(8):

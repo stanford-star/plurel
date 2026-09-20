@@ -336,16 +336,11 @@ class SchemaPrior:
     aggregated child nodes become new observed nodes of the parent, so the node graph across
     tables stays acyclic by construction.
 
-    Tables nothing references hold events and always get a time column, and a table that
-    references a temporal table is temporal too; other referenced tables get a time column with
-    the table prior's `time_probability`. A temporal table waits for the events its keys
-    reference: its events happen a drawn delay after the latest referenced event, either tied
-    to it or, when the table keeps its own schedule, no earlier than that schedule. Keys with
-    nulls always keep their own schedule. Only tables that do not wait get a self-referential
-    tree key, so a tree parent is always the earlier row. Cutting a database at any time thus
-    leaves no key pointing past the cut. Aggregates summarize only static children into their
-    static parents: a parent row summarizing events that happen after it would leak the future,
-    whereas a gather is safe on every key because the child waits for what it reads.
+    Tables nothing references hold events and get a time column; referenced tables are static
+    regardless of the table prior's `time_probability`, so no key ever points into the future
+    and cutting a database at any time leaves every key valid. Aggregates summarize only static
+    children into their static parents: a parent row summarizing later events would leak the
+    future.
 
     Attributes:
         table_count: Tables in the database.
@@ -366,11 +361,9 @@ class SchemaPrior:
         self_reference_probability: Probability that a table gets a self-referential tree key.
         self_reference_root_share: Share of roots in a self-referential tree.
         gather_count: Parent nodes gathered into the child per foreign key.
-        aggregate_count: Child nodes aggregated into the parent per foreign key of a static table.
+        aggregate_count: Child nodes aggregated into the parent per foreign key between static
+            tables.
         aggregates: Aggregation of an aggregate port.
-        time_tied_probability: Probability that a waiting table ties its events to the events
-            it references instead of keeping its own schedule.
-        time_delay: Mean delay in seconds of an event after the latest event it references.
     """
 
     table_count: Range = LogIntegersRange(2, 8)
@@ -402,8 +395,6 @@ class SchemaPrior:
     gather_count: Range = IntegersRange(0, 3)
     aggregate_count: Range = IntegersRange(0, 2)
     aggregates: Choices = Choices(("count", "sum", "mean", "max", "min"))
-    time_tied_probability: float = 0.5
-    time_delay: Range = LogRange(3600.0, 90 * 24 * 3600.0)
 
     def __post_init__(self) -> None:
         clusters = self.link_cluster_count.high**self.link_level_count.high
@@ -416,23 +407,17 @@ class SchemaPrior:
         parents = self.table_layouts.draw(rng).sample(n, rng)
         referenced = {p for references in parents for p in references}
         priors = [self.table_prior.warp(rng) for _ in range(n)]
-        tables = {}
+        tables = {f"t{i}": priors[i].build(rng, time=i not in referenced) for i in range(n)}
+        fkeys = []
         for i, references in enumerate(parents):
-            timed = i not in referenced or any(tables[f"t{p}"].time_column for p in references)
-            timed = timed or rng.random() < priors[i].time_probability
-            tables[f"t{i}"] = priors[i].build(rng, time=timed)
-        fkeys, waiting = [], set()
-        for i, references in enumerate(parents):
-            keys = [self.fkey(f"t{i}", f"t{p}", rng) for p in references]
-            for fk in keys:
+            for p in references:
+                fk = self.fkey(f"t{i}", f"t{p}", rng)
+                fkeys.append(fk)
                 self.gather(tables, fk, priors[i], rng)
                 if tables[fk.table].time_column is None:
                     self.aggregate(tables, fk, rng)
-            if self.follow(tables, f"t{i}", keys, rng):
-                waiting.add(f"t{i}")
-            fkeys.extend(keys)
         for i in range(n):
-            if f"t{i}" not in waiting and rng.random() < self.self_reference_probability:
+            if rng.random() < self.self_reference_probability:
                 fk = FK(
                     f"t{i}",
                     "parent_id",
@@ -518,32 +503,3 @@ class SchemaPrior:
             mechanisms[name] = Port(fk.table, source, via=fk.column, aggregate=how, fill=fill)
             columns[name] = Column(name)
         tables[fk.parent] = SCM(mechanisms, columns, time_column=parent.time_column)
-
-    def follow(
-        self, tables: dict[str, SCM], table: str, fkeys: list[FK], rng: np.random.Generator
-    ) -> bool:
-        """Make the table's events wait for the events its keys reference.
-
-        Returns:
-            Whether the table's time now depends on its parents.
-        """
-        child = tables[table]
-        fkeys = [fk for fk in fkeys if fk.parent != table and tables[fk.parent].time_column]
-        if child.time_column is None or not fkeys:
-            return False
-        target = child.columns[child.time_column].node
-        mechanisms, effects = dict(child.mechanisms), []
-        if any(fk.nullable for fk in fkeys) or rng.random() >= self.time_tied_probability:
-            mechanisms["schedule"] = mechanisms[target]
-            effects.append(LinearEffect("schedule"))
-        for fk in fkeys:
-            parent = tables[fk.parent]
-            source = parent.columns[parent.time_column].node
-            port = f"{fk.column}_{source}"
-            fill = -np.inf if fk.nullable else None
-            mechanisms[port] = Port(fk.parent, source, via=fk.column, fill=fill)
-            effects.append(LinearEffect(port))
-        delay = Exponential(self.time_delay.draw(rng))
-        mechanisms[target] = Combine(tuple(effects), "max", noise=delay)
-        tables[table] = SCM(mechanisms, child.columns, time_column=child.time_column)
-        return True

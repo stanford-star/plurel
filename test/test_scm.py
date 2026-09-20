@@ -118,10 +118,6 @@ def test_declared_time_order_is_enforced_on_the_observed_table():
     frame = table(Exponential(3600.0)).sample(N, seed=0)
     assert (frame["shipped"] >= frame["placed"]).all()
     assert table(Exponential(3600.0)).timestamp_nodes == {"placed", "shipped"}
-    delayed = SCM(
-        {"x": Root(), "t": Combine((LinearEffect("x"),))}, {"t": Column("t", "timestamp")}
-    )
-    assert delayed.timestamp_nodes == {"t", "x"}
     with pytest.raises(ValueError, match="precedes"):
         table(Normal(std=3600.0)).sample(N, seed=0)
     with pytest.raises(ValueError, match="precedes"):
