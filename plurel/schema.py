@@ -7,7 +7,7 @@ import pandas as pd
 
 from plurel.links import Link, RandomLink, TreeLink
 from plurel.random import Seed, generator
-from plurel.scm import SCM, Interventions, generations
+from plurel.scm import SCM, Interventions, topological
 
 Links = dict[tuple[str, str], np.ndarray]
 
@@ -128,8 +128,7 @@ class Schema:
             for column in scm.columns.values():
                 if column.kind != "key" and not isinstance(column.missing, int | float | str):
                     self.check_marker(table, column.missing)
-        self.generations = generations(parents)
-        self.order = tuple(node for generation in self.generations for node in generation)
+        self.order = topological(parents)
 
     def key(self, table: str, column: str) -> FK:
         if (table, column) not in self.keys:
@@ -222,24 +221,6 @@ class Schema:
             missing = np.bincount(indices[indices >= 0], minlength=rows[table]) == 0
         return np.eye(2)[missing.astype(int)]
 
-    def evaluate(
-        self,
-        node: tuple[str, str],
-        rows: Mapping[str, int],
-        latents: dict[str, dict[str, np.ndarray]],
-        links: Links,
-        stream: np.random.Generator,
-        interventions: Mapping[str, Interventions],
-    ) -> np.ndarray:
-        table, name = node
-        scm, forced = self.tables[table], interventions.get(table, {})
-        inputs = {}
-        if name not in forced:
-            for tail in scm.nodes[name].parents:
-                if not isinstance(tail, str):
-                    inputs[tail] = self.resolve(table, tail, rows, latents, links)
-        return scm.evaluate(name, rows[table], {**latents[table], **inputs}, stream, forced)
-
     def propagate(
         self,
         rows: Mapping[str, int],
@@ -247,13 +228,18 @@ class Schema:
         rng: np.random.Generator,
         interventions: Mapping[str, Interventions],
     ) -> dict[str, dict[str, np.ndarray]]:
-        streams = dict(zip(self.order, rng.spawn(len(self.order))))
+        """Evaluate every node of every table in one topological order, each with its own
+        noise stream, resolving the tails that cross keys as it goes."""
         latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
-        for generation in self.generations:
-            for table, name in generation:
-                latents[table][name] = self.evaluate(
-                    (table, name), rows, latents, links, streams[table, name], interventions
-                )
+        for (table, name), stream in zip(self.order, rng.spawn(len(self.order))):
+            scm, forced = self.tables[table], interventions.get(table, {})
+            crossing = {
+                tail: self.resolve(table, tail, rows, latents, links)
+                for tail in scm.nodes[name].parents
+                if not isinstance(tail, str) and name not in forced
+            }
+            inputs = {**latents[table], **crossing}
+            latents[table][name] = scm.evaluate(name, rows[table], inputs, stream, forced)
         return latents
 
     def observe(

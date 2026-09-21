@@ -29,18 +29,11 @@ def checked(name: str, node: Node, latent: np.ndarray, n: int) -> np.ndarray:
     return latent
 
 
-def generations[T: Hashable](parents: Mapping[T, tuple[T, ...]]) -> tuple[tuple[T, ...], ...]:
-    sorter = TopologicalSorter(parents)
+def topological[T: Hashable](parents: Mapping[T, tuple[T, ...]]) -> tuple[T, ...]:
     try:
-        sorter.prepare()
+        return tuple(TopologicalSorter(parents).static_order())
     except CycleError as error:
         raise ValueError("nodes must form a directed acyclic graph") from error
-    levels = []
-    while sorter.is_active():
-        ready = tuple(sorter.get_ready())
-        levels.append(ready)
-        sorter.done(*ready)
-    return tuple(levels)
 
 
 class SCM:
@@ -65,8 +58,7 @@ class SCM:
             name: tuple(parent for parent in node.parents if isinstance(parent, str))
             for name, node in self.nodes.items()
         }
-        self.generations = generations(parents)
-        self.order = tuple(name for generation in self.generations for name in generation)
+        self.order = topological(parents)
         self.columns = dict(columns)
         for name, column in self.columns.items():
             if column.kind == "key":
@@ -120,11 +112,9 @@ class SCM:
         interventions = dict(interventions or {})
         if unknown := set(interventions) - set(self.nodes):
             raise ValueError(f"interventions on unknown nodes {sorted(unknown)}")
-        streams = dict(zip(self.order, generator(seed).spawn(len(self.order))))
         latents: dict[str, np.ndarray] = {}
-        for generation in self.generations:
-            for name in generation:
-                latents[name] = self.evaluate(name, n, latents, streams[name], interventions)
+        for name, stream in zip(self.order, generator(seed).spawn(len(self.order))):
+            latents[name] = self.evaluate(name, n, latents, stream, interventions)
         return latents
 
     def observe(

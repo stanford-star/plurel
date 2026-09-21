@@ -250,22 +250,13 @@ def test_schema_validation():
     assert not empty["customers"]["n_orders"].any()
 
 
-def test_evaluation_order_within_a_generation_does_not_matter(schema):
-    linking, noise, _ = generator(0).spawn(3)
-    links = schema.links(ROWS, linking)
-    expected = schema.propagate(ROWS, links, noise, {})
-    streams = dict(zip(schema.order, generator(0).spawn(3)[1].spawn(len(schema.order))))
-    latents = {table: {} for table in ROWS}
-    for generation in schema.generations:
-        for table, name in reversed(generation):
-            location = (table, name)
-            latents[table][name] = schema.evaluate(
-                location, ROWS, latents, links, streams[location], {}
-            )
-    for table in ROWS:
-        assert set(latents[table]) == set(expected[table])
-        for name, latent in latents[table].items():
-            np.testing.assert_array_equal(latent, expected[table][name])
+def test_order_puts_every_node_after_its_parents(schema):
+    position = {node: k for k, node in enumerate(schema.order)}
+    assert set(position) == {(t, n) for t, scm in schema.tables.items() for n in scm.nodes}
+    for table, scm in schema.tables.items():
+        for name, node in scm.nodes.items():
+            for tail in node.parents:
+                assert position[schema.source(table, tail)] < position[table, name]
 
 
 def test_influence_flows_child_to_parent_to_other_child():
