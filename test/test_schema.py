@@ -135,8 +135,7 @@ def test_sampling_is_deterministic_and_interventions_keep_common_random_numbers(
     linked = frames["orders"]["customer_id"].notna().to_numpy()
     expected = np.tile(EMBEDDING[2], (linked.sum(), 1))
     np.testing.assert_array_equal(latents_ported["orders"]["embedding"][linked], expected)
-    with pytest.raises(ValueError, match="Schema"):
-        orders().sample(50, seed=0)
+    assert orders().inputs == {Foreign("customer_id", "segment"), Foreign("customer_id", "value")}
 
 
 def test_aggregates_handle_empty_groups():

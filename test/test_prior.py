@@ -14,7 +14,11 @@ from plurel.prior import (
     SchemaPrior,
     TablePrior,
 )
-from plurel.schema import Foreign, Summary
+from plurel.schema import Foreign, Schema, Summary
+
+
+def sample(scm, n, *, seed=None):
+    return Schema({"t": scm}).sample({"t": n}, seed=seed)["t"]
 
 
 def test_choices_and_ranges_draw_within_their_declarations():
@@ -49,8 +53,8 @@ def test_table_prior_realizes_valid_diverse_tables():
     for seed in range(40):
         scm = prior.realize(seed, time=seed % 2 == 1)
         assert prior.realize(seed, time=seed % 2 == 1).order == scm.order
-        frame = scm.sample(200, seed=seed)
-        assert frame.equals(scm.sample(200, seed=seed)) and len(frame) == 200
+        frame = sample(scm, 200, seed=seed)
+        assert frame.equals(sample(scm, 200, seed=seed)) and len(frame) == 200
         assert scm.pkey_column == "id" and 4 <= len(frame.columns) <= 14
         assert 3 <= sum(name.startswith("n") for name in scm.nodes) <= 16
         for mechanism in scm.nodes.values():
@@ -73,13 +77,13 @@ def test_table_prior_knobs_are_respected():
         assert scm.time_column is None
         assert all(c.kind != "categorical" for c in scm.columns.values())
         assert all(c.missing == 0.0 for c in scm.columns.values())
-        assert not scm.sample(50, seed=seed).isna().any().any()
+        assert not sample(scm, 50, seed=seed).isna().any().any()
     with pytest.raises(ValueError, match="change width"):
         TablePrior(edge_families=Choices(("linear",)))
     single = TablePrior(node_count=IntegersRange(1, 1), column_count=IntegersRange(1, 1))
     scm = single.realize(0)
     assert len(scm.nodes) <= 2 and not scm.nodes["n0"].parents
-    assert scm.sample(5, seed=0).shape[0] == 5
+    assert sample(scm, 5, seed=0).shape[0] == 5
 
 
 def test_warping_gives_each_realization_its_own_style():

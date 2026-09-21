@@ -65,8 +65,8 @@ from plurel.prior import (
     TablePrior,
 )
 from plurel.random import Seed, generator
-from plurel.schema import AGGREGATES, FK, Foreign, Schema, Summary
-from plurel.scm import SCM, Interventions
+from plurel.schema import AGGREGATES, FK, Foreign, Interventions, Schema, Summary
+from plurel.scm import SCM
 
 __all__ = [
     "AGGREGATES",

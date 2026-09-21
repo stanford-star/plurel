@@ -6,12 +6,32 @@ import numpy as np
 import pandas as pd
 
 from plurel.links import Link, RandomLink, TreeLink
+from plurel.mechanisms import Node
 from plurel.random import Seed, generator
-from plurel.scm import SCM, Interventions, topological
+from plurel.scm import SCM, topological
 
 Links = dict[tuple[str, str], np.ndarray]
+Interventions = Mapping[str, float | np.ndarray]
 
 COMPLETE = ("count", "sum")
+
+
+def intervention(value: float | np.ndarray, n: int, dim: int) -> np.ndarray:
+    value = np.asarray(value, dtype=float)
+    if value.shape == (n,):
+        value = value[:, None]
+    try:
+        return np.array(np.broadcast_to(value, (n, dim)))
+    except ValueError as error:
+        raise ValueError(f"intervention of shape {value.shape} does not fit {(n, dim)}") from error
+
+
+def checked(name: str, node: Node, latent: np.ndarray, n: int) -> np.ndarray:
+    if latent.shape != (n, node.dim):
+        raise ValueError(f"{name!r} produced {latent.shape}, declared {(n, node.dim)}")
+    if not np.isfinite(latent).all():
+        raise ValueError(f"{name!r} produced non-finite values")
+    return latent
 
 
 def _sum(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
@@ -188,18 +208,26 @@ class Schema:
         rng: np.random.Generator,
         interventions: Mapping[str, Interventions],
     ) -> dict[str, dict[str, np.ndarray]]:
-        """Evaluate every node of every table in one topological order, each with its own
-        noise stream, resolving the tails that cross keys as it goes."""
+        """Evaluate every node of every table once, in topological order, each with its own
+        noise stream: an intervened node takes its value, any other its edges plus noise."""
         latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
         for (table, name), stream in zip(self.order, rng.spawn(len(self.order))):
-            scm, forced = self.tables[table], interventions.get(table, {})
-            crossing = {
-                tail: self.resolve(table, tail, rows, latents, links)
-                for tail in scm.nodes[name].parents
-                if not isinstance(tail, str) and name not in forced
+            node, n, forced = (
+                self.tables[table].nodes[name],
+                rows[table],
+                interventions.get(table, {}),
+            )
+            if name in forced:
+                latents[table][name] = intervention(forced[name], n, node.dim)
+                continue
+            parents = {
+                tail: latents[table][tail]
+                if isinstance(tail, str)
+                else self.resolve(table, tail, rows, latents, links)
+                for tail in node.parents
             }
-            inputs = {**latents[table], **crossing}
-            latents[table][name] = scm.evaluate(name, rows[table], inputs, stream, forced)
+            value = node.evaluate(parents, node.sample_noise(n, stream))
+            latents[table][name] = checked(name, node, value, n)
         return latents
 
     def observe(
@@ -209,9 +237,18 @@ class Schema:
         links: Links,
         rng: np.random.Generator,
     ) -> dict[str, pd.DataFrame]:
+        """Turn latents into one frame per table: its columns, then its key columns."""
         frames = {}
         for (table, scm), stream in zip(self.tables.items(), rng.spawn(len(self.tables))):
-            frame = scm.observe(latents[table], stream, rows[table])
+            n = rows[table]
+            observed = {
+                name: column.observe(latents[table], stream, n)
+                for name, column in scm.columns.items()
+            }
+            frame = pd.DataFrame(observed, index=range(n))
+            for name, column in scm.columns.items():
+                if column.after is not None and (frame[name] < frame[column.after]).any():
+                    raise ValueError(f"column {name!r} precedes {column.after!r} on some rows")
             for fk in self.fkeys:
                 if fk.table == table:
                     indices = links[table, fk.column]
