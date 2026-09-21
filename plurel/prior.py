@@ -407,32 +407,23 @@ class SchemaPrior:
 
     def realize(self, seed: Seed = None) -> Schema:
         rng, _ = generator(seed).spawn(2)
-        n = self.table_count.draw(rng)
-        parents = self.table_layouts.draw(rng).sample(n, rng)
-        referenced = {p for references in parents for p in references}
-        priors = [self.table_prior.warp(rng) for _ in range(n)]
-        tables = {f"t{i}": priors[i].build(rng, time=i not in referenced) for i in range(n)}
-        fkeys = [
-            self.fkey(f"t{i}", f"t{p}", rng)
-            for i, references in enumerate(parents)
-            for p in references
-        ]
+        layout = self.table_layouts.draw(rng).sample(self.table_count.draw(rng), rng)
+        names = [f"t{i}" for i in range(len(layout))]
+        references = {names[i]: [names[p] for p in parents] for i, parents in enumerate(layout)}
+        static = {parent for parents in references.values() for parent in parents}
+        priors = {name: self.table_prior.warp(rng) for name in names}
+        tables = {name: priors[name].build(rng, time=name not in static) for name in names}
+        fkeys = [self.fkey(name, parent, rng) for name in names for parent in references[name]]
         for fk in fkeys:
-            if tables[fk.table].time_column is None:
-                self.aggregate(tables, fk, priors[int(fk.parent[1:])], rng)
+            if fk.table in static:
+                self.aggregate(tables, fk, priors[fk.parent], rng)
         for fk in fkeys:
-            self.gather(tables, fk, priors[int(fk.table[1:])], rng)
-        for i in sorted(referenced):
-            if rng.random() < self.self_reference_probability:
-                fk = FK(
-                    f"t{i}",
-                    "parent_id",
-                    f"t{i}",
-                    TreeLink(self.self_reference_root_share.draw(rng)),
-                    fill=0.0,
-                )
-                fkeys.append(fk)
-                self.gather(tables, fk, priors[i], rng)
+            self.gather(tables, fk, priors[fk.table], rng)
+        for name in names:
+            if name in static and rng.random() < self.self_reference_probability:
+                link = TreeLink(self.self_reference_root_share.draw(rng))
+                fkeys.append(FK(name, "parent_id", name, link, fill=0.0))
+                self.gather(tables, fkeys[-1], priors[name], rng)
         return Schema(tables, tuple(fkeys))
 
     def rows(self, schema: Schema, seed: Seed = None) -> dict[str, int]:
