@@ -28,7 +28,7 @@ def sample(scm, n, *, seed=None, interventions=None):
 
 N = 300
 TABLE = np.arange(6.0).reshape(3, 2)
-MECHANISMS = {
+NODES = {
     "y": Node((LinearEdge("x", 2.0), LinearEdge("xz", -0.5)), noise=Normal(std=0.1)),
     "xz": Node((LinearEdge("x"), LinearEdge("z")), op="product", noise=None),
     "x": Node(),
@@ -46,19 +46,19 @@ COLUMNS = {name: Column(name) for name in ("y", "xz", "x", "z")}
 
 @pytest.fixture
 def scm():
-    return SCM(MECHANISMS, COLUMNS)
+    return SCM(NODES, COLUMNS)
 
 
 def test_simulate_evaluates_every_node_in_topological_order(scm):
     latents = simulate(scm, N, seed=0)
-    assert set(latents) == set(MECHANISMS)
+    assert set(latents) == set(NODES)
     assert scm.order.index("x") < scm.order.index("xz") < scm.order.index("y")
-    for name, mechanism in MECHANISMS.items():
-        assert latents[name].shape == (N, mechanism.dim)
+    for name, node in NODES.items():
+        assert latents[name].shape == (N, node.dim)
     np.testing.assert_allclose(latents["xz"], latents["x"] * latents["z"])
     np.testing.assert_array_equal(latents["embedding"], TABLE[latents["segment"].argmax(1)])
     again = simulate(scm, N, seed=0)
-    assert all(np.array_equal(latents[name], again[name]) for name in MECHANISMS)
+    assert all(np.array_equal(latents[name], again[name]) for name in NODES)
     assert not np.array_equal(latents["x"], simulate(scm, N, seed=1)["x"])
 
 
@@ -106,20 +106,20 @@ def test_sample_observes_columns_from_one_draw(scm):
         "segment": Column("segment", "categorical", categories=("a", "b", "c")),
         "when": Column("z", "timestamp", marginal=DEFAULT_CALENDAR),
     }
-    typed = SCM(MECHANISMS, columns)
+    typed = SCM(NODES, columns)
     frame = sample(typed, N, seed=0)
     assert list(frame) == list(columns) and frame["when"].dtype == "datetime64[ns]"
     assert set(frame["segment"]) == {"a", "b", "c"} and 0.05 < frame["amount"].isna().mean() < 0.15
     same = sample(typed, N, seed=0, interventions={"x": 0.0})
     pd.testing.assert_series_equal(same["when"], frame["when"])
-    mnar = sample_with_latents(SCM(MECHANISMS, {"y": Column("y", missing="hidden")}), N, seed=0)
+    mnar = sample_with_latents(SCM(NODES, {"y": Column("y", missing="hidden")}), N, seed=0)
     frame, latents = mnar
     assert frame["y"].isna().to_numpy().tolist() == (latents["hidden"][:, 1] == 1.0).tolist()
     assert latents["y"][frame["y"].isna()].mean() > latents["y"][frame["y"].notna()].mean()
     with pytest.raises(ValueError):
-        SCM(MECHANISMS, {"c": Column("missing")})
+        SCM(NODES, {"c": Column("missing")})
     with pytest.raises(ValueError):
-        SCM(MECHANISMS, {"c": Column("y", missing="nobody")})
+        SCM(NODES, {"c": Column("y", missing="nobody")})
 
 
 def test_declared_time_order_is_enforced_on_the_observed_table():

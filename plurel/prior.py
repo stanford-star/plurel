@@ -255,9 +255,7 @@ class TablePrior:
             self.node_class_count.draw(rng) if categorical[i] else self.node_width.draw(rng)
             for i in range(n)
         ]
-        nodes = {
-            f"n{i}": self.mechanism(parents[i], dims, i, categorical[i], rng) for i in range(n)
-        }
+        nodes = {f"n{i}": self.node(parents[i], dims, i, categorical[i], rng) for i in range(n)}
         columns = {"id": Column(kind="key")}
         feature_nodes = rng.permutation(n)[: rng.integers(1, n + 1)]
         for c in range(self.column_count.draw(rng)):
@@ -268,7 +266,7 @@ class TablePrior:
             columns["time"] = Column("time", "timestamp")
         return SCM(nodes, columns, time_column="time" if time else None)
 
-    def mechanism(
+    def node(
         self,
         sources: tuple[int, ...],
         dims: list[int],
@@ -369,7 +367,7 @@ class SchemaPrior:
         gather_count: Parent nodes gathered into the child per foreign key.
         aggregate_count: Child node summaries fed into the parent per foreign key between static
             tables.
-        aggregates: Aggregation of an aggregate port.
+        aggregates: Aggregation a summary edge draws from.
     """
 
     table_count: Range = LogIntegersRange(2, 8)

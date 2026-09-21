@@ -254,8 +254,8 @@ def test_influence_flows_child_to_parent_to_other_child():
     fkeys = (FK("b", "a_id", "a"), FK("c", "a_id", "a"), FK("d", "b_id", "b"), FK("d", "c_id", "c"))
     schema = Schema(tables, fkeys)
     positions = [
-        schema.order.index(location)
-        for location in (("b", "x"), ("a", "total"), ("c", "from_a"), ("d", "from_c"))
+        schema.order.index(node)
+        for node in (("b", "x"), ("a", "total"), ("c", "from_a"), ("d", "from_c"))
     ]
     assert positions == sorted(positions)
     rows = {"a": 20, "b": 500, "c": 100, "d": 1000}

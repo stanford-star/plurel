@@ -57,9 +57,9 @@ def test_table_prior_realizes_valid_diverse_tables():
         assert frame.equals(sample(scm, 200, seed=seed)) and len(frame) == 200
         assert scm.pkey_column == "id" and 4 <= len(frame.columns) <= 14
         assert 3 <= sum(name.startswith("n") for name in scm.nodes) <= 16
-        for mechanism in scm.nodes.values():
-            assert 1 <= mechanism.dim <= 8
-            families.update(type(edge) for edge in getattr(mechanism, "edges", ()))
+        for node in scm.nodes.values():
+            assert 1 <= node.dim <= 8
+            families.update(type(edge) for edge in node.edges)
         kinds.update(column.kind for column in scm.columns.values())
     assert families == {EDGES[name] for name in FAMILIES}
     assert kinds == {"key", "numeric", "categorical", "timestamp"}
