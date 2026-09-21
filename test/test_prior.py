@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from plurel.graph import EDGES, Foreign, Summary
+from plurel.distributions import Beta, Exponential, Mixture, Normal, Poisson, TimeSeries, Uniform
+from plurel.graph import EDGES, REDUCTIONS, Foreign, LookupEdge, MatrixEdge, NearestEdge, Summary
 from plurel.io import create_database
 from plurel.links import TreeLink
 from plurel.prior import (
@@ -49,20 +50,31 @@ def test_choices_and_ranges_draw_within_their_declarations():
 
 def test_table_prior_realizes_valid_diverse_tables():
     prior = TablePrior()
-    families, kinds = set(), set()
+    families, kinds, ops, noises, binnings, missing = (set() for _ in range(6))
     for seed in range(40):
-        scm = prior.realize(seed, time=seed % 2 == 1)
-        assert prior.realize(seed, time=seed % 2 == 1).order == scm.order
+        time = seed % 2 == 1
+        scm = prior.realize(seed, time=time)
+        assert prior.realize(seed, time=time).order == scm.order
         frame = sample(scm, 200, seed=seed)
         assert frame.equals(sample(scm, 200, seed=seed)) and len(frame) == 200
         assert scm.pkey_column == "id" and 4 <= len(frame.columns) <= 14
         assert 3 <= sum(name.startswith("n") for name in scm.nodes) <= 16
-        for node in scm.nodes.values():
+        for name, node in scm.nodes.items():
             assert 1 <= node.dim <= 8
             families.update(type(edge) for edge in node.edges)
-        kinds.update(column.kind for column in scm.columns.values())
-    assert families == {EDGES[name] for name in FAMILIES}
+            ops.add(node.op)
+            if not node.parents and not node.onehot and name != "time":
+                noises.add(type(node.noise))
+                assert time or not isinstance(node.noise, TimeSeries)
+        for column in scm.columns.values():
+            kinds.add(column.kind)
+            binnings.add(column.binning)
+            missing.add(type(column.missing))
+    assert families == {EDGES[name] for name in FAMILIES} and set(FAMILIES) == set(EDGES)
     assert kinds == {"key", "numeric", "categorical", "timestamp"}
+    assert ops == set(REDUCTIONS)
+    assert noises == {Normal, Uniform, Mixture, Beta, Exponential, Poisson, TimeSeries}
+    assert binnings == {"normal", "empirical"} and missing == {float, str}
 
 
 def test_table_prior_knobs_are_respected():
@@ -70,20 +82,75 @@ def test_table_prior_knobs_are_respected():
         node_categorical_share=0.0,
         column_binned_share=0.0,
         column_missing_share=0.0,
+        root_series_share=0.0,
     )
     for seed in range(10):
-        scm = plain.realize(seed)
+        scm = plain.realize(seed, time=True)
         assert not any(m.onehot for m in scm.nodes.values())
-        assert scm.time_column is None
+        assert not any(isinstance(m.noise, TimeSeries) for m in scm.nodes.values())
         assert all(c.kind != "categorical" for c in scm.columns.values())
         assert all(c.missing == 0.0 for c in scm.columns.values())
         assert not sample(scm, 50, seed=seed).isna().any().any()
-    with pytest.raises(ValueError, match="change width"):
-        TablePrior(edge_families=Choices(("linear",)))
+    seasonal = TablePrior(root_series_share=1.0, node_categorical_share=0.0)
+    for seed in range(5):
+        scm = seasonal.realize(seed, time=True)
+        roots = [m for n, m in scm.nodes.items() if not m.parents and not m.onehot and n != "time"]
+        assert roots and all(isinstance(m.noise, TimeSeries) for m in roots)
+        assert not any(
+            isinstance(m.noise, TimeSeries) for m in seasonal.realize(seed).nodes.values()
+        )
+    fitted = TablePrior(edge_families=Choices(("lookup", "nearest", "matrix")))
+    for seed in range(10):
+        scm = fitted.realize(seed)
+        for node in scm.nodes.values():
+            for edge in node.edges:
+                if isinstance(edge, LookupEdge):
+                    assert scm.nodes[edge.parent].dim == 1 and node.dim == 1 and not node.onehot
+                if isinstance(edge, NearestEdge):
+                    assert edge.dim == node.dim >= 2
+        sample(scm, 50, seed=seed)
+    for families in (("linear",), ("lookup", "nearest")):
+        with pytest.raises(ValueError, match="fits any widths"):
+            TablePrior(edge_families=Choices(families))
     single = TablePrior(node_count=IntegersRange(1, 1), column_count=IntegersRange(1, 1))
     scm = single.realize(0)
     assert len(scm.nodes) <= 2 and not scm.nodes["n0"].parents
     assert sample(scm, 5, seed=0).shape[0] == 5
+
+
+def test_nested_categorical_nodes_stay_within_their_parents_classes():
+    prior = TablePrior(
+        node_categorical_share=1.0, node_nested_share=1.0, node_count=IntegersRange(4, 8)
+    )
+    seen = 0
+    for seed in range(6):
+        scm = prior.realize(seed)
+        latents = Schema({"t": scm}).sample_with_latents({"t": 300}, seed=seed)[1]["t"]
+        for name, node in scm.nodes.items():
+            nested = [
+                e for e in node.edges if isinstance(e, MatrixEdge) and (e.matrix < -100).any()
+            ]
+            assert len(nested) <= 1 and len(nested) == (len(node.parents) > 0 and name[0] == "n")
+            for edge in nested:
+                allowed = edge.matrix > -100
+                assert allowed.any(1).all()
+                assert allowed[latents[edge.parent].argmax(1), latents[name].argmax(1)].all()
+                seen += 1
+    assert seen > 10
+
+
+def test_structured_missingness_follows_its_indicator_node():
+    prior = TablePrior(column_missing_share=1.0, column_missing_structured_share=1.0)
+    for seed in range(5):
+        scm = prior.realize(seed)
+        frames, latents = Schema({"t": scm}).sample_with_latents({"t": 300}, seed=seed)
+        for name, column in scm.columns.items():
+            if column.kind == "key":
+                continue
+            indicator = scm.nodes[column.missing]
+            assert indicator.onehot and indicator.dim == 2 and len(indicator.parents) == 1
+            flagged = latents["t"][column.missing][:, 1] == 1.0
+            assert (frames["t"][name].isna().to_numpy() == flagged).all()
 
 
 def test_warping_gives_each_realization_its_own_style():
@@ -143,6 +210,9 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
             assert (table in referenced) == (schema.tables[table].time_column is None)
         frames, latents = schema.sample_with_latents(rows, seed=seed)
         assert all(len(frames[t]) == n for t, n in rows.items())
+        pairs = [(fk.table, fk.parent) for fk in schema.fkeys]
+        if len(pairs) > len(set(pairs)):
+            seen.add("duplicate")
         for (table, name), edges in schema.crossings.items():
             scm = schema.tables[table]
             for tail in (edge.parent for edge in edges):
@@ -151,6 +221,8 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
                     assert scm.time_column is None
                     assert schema.tables[tail.table].time_column is None
                     assert (tail.fill is None) == (tail.how in ("count", "sum"))
+                    if schema.tables[tail.table].nodes[tail.node].dim > 1:
+                        seen.add("wide aggregate")
                 else:
                     seen.add("gather")
                     fk = schema.keys[table, tail.key]
@@ -164,7 +236,7 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
         for table in cut.table_dict.values():
             for column, parent in table.fkey_col_to_pkey_table.items():
                 assert table.df[column].dropna().lt(len(cut.table_dict[parent].df)).all()
-    assert seen == {"gather", "aggregate", "self"}
+    assert seen == {"gather", "aggregate", "self", "duplicate", "wide aggregate"}
 
 
 def test_schema_prior_knobs_switch_cross_table_structure_off():
@@ -174,10 +246,12 @@ def test_schema_prior_knobs_switch_cross_table_structure_off():
         aggregate_count=IntegersRange(0, 0),
         self_reference_probability=0.0,
         fk_nullable_share=0.0,
+        fk_duplicate_share=0.0,
     )
     for seed in range(8):
         schema = quiet.realize(seed)
         assert not schema.crossings
+        assert len({(fk.table, fk.parent) for fk in schema.fkeys}) == len(schema.fkeys)
         assert all(fk.nullable == 0.0 for fk in schema.fkeys)
         assert all(fk.table != fk.parent for fk in schema.fkeys)
         frames = schema.sample(quiet.rows(schema, seed), seed=seed)
