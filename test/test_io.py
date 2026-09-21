@@ -34,9 +34,7 @@ def customers(key=True):
     return SCM(
         {
             "segment": Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()),
-            "spend": Node(
-                (LinearEdge(Summary("orders", "customer_id", "amount", "sum")),), noise=None
-            ),
+            "spend": Node(noise=None),
         },
         columns,
     )
@@ -54,7 +52,7 @@ def orders(key=True, time_column="when"):
     return SCM(
         {
             "when": Node(),
-            "value": Node((LinearEdge(Foreign("customer_id", "spend")),), noise=None),
+            "value": Node(noise=None),
             "amount": Node((LinearEdge("when"),), noise=Normal(std=0.5)),
         },
         columns,
@@ -63,11 +61,15 @@ def orders(key=True, time_column="when"):
 
 
 FKEYS = (FK("orders", "customer_id", "customers", HSBMLink((2,), (2,)), nullable=0.1, fill=0.0),)
+CROSSINGS = {
+    ("customers", "spend"): (LinearEdge(Summary("orders", "customer_id", "amount", "sum")),),
+    ("orders", "value"): (LinearEdge(Foreign("customer_id", "spend")),),
+}
 
 
 @pytest.fixture
 def schema():
-    return Schema({"customers": customers(), "orders": orders()}, FKEYS)
+    return Schema({"customers": customers(), "orders": orders()}, FKEYS, CROSSINGS)
 
 
 def test_tables_declare_their_keys_and_time():
@@ -100,10 +102,10 @@ def test_database_wraps_sampled_tables_with_relbench_metadata(schema):
     expected = frames["orders"].sort_values("when", kind="stable").reset_index(drop=True)
     expected["order_id"] = np.arange(len(expected))
     pd.testing.assert_frame_equal(order_table.df, expected)
-    events = Schema({"customers": customers(), "orders": orders(key=False)}, FKEYS)
+    events = Schema({"customers": customers(), "orders": orders(key=False)}, FKEYS, CROSSINGS)
     event_table = create_database(events, events.sample(ROWS, seed=0)).table_dict["orders"]
     assert event_table.pkey_col is None and "order_id" not in event_table.df
-    unkeyed = Schema({"customers": customers(key=False), "orders": orders()}, FKEYS)
+    unkeyed = Schema({"customers": customers(key=False), "orders": orders()}, FKEYS, CROSSINGS)
     with pytest.raises(ValueError, match="primary key"):
         create_database(unkeyed, unkeyed.sample(ROWS, seed=0))
     with pytest.raises(ValueError, match="collides"):
@@ -172,9 +174,7 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
         {
             "signup": Node(noise=seconds),
             "value": Node(),
-            "n_orders": Node(
-                (LinearEdge(Summary("orders", "customer_id", "amount", "count")),), noise=None
-            ),
+            "n_orders": Node(noise=None),
         },
         {
             "id": Column(kind="key"),
@@ -186,9 +186,9 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
     )
     orders = SCM(
         {
-            "signup": Node((LinearEdge(Foreign("customer_id", "signup")),), noise=None),
+            "signup": Node(noise=None),
             "when": Node((LinearEdge("signup"),), noise=Exponential(3600.0)),
-            "value": Node((LinearEdge(Foreign("customer_id", "value")),), noise=None),
+            "value": Node(noise=None),
             "amount": Node((LinearEdge("value"),), noise=Normal(std=0.1)),
         },
         {
@@ -203,7 +203,7 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
         {
             "joined": Node(),
             "level": Node(),
-            "manager_level": Node((LinearEdge(Foreign("manager_id", "level")),), noise=None),
+            "manager_level": Node(noise=None),
         },
         {
             "id": Column(kind="key"),
@@ -217,7 +217,17 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
         FK("orders", "customer_id", "customers"),
         FK("employees", "manager_id", "employees", TreeLink(roots=0.2), fill=0.0),
     )
-    schema = Schema({"customers": customers, "orders": orders, "employees": employees}, fkeys)
+    crossings = {
+        ("customers", "n_orders"): (
+            LinearEdge(Summary("orders", "customer_id", "amount", "count")),
+        ),
+        ("orders", "signup"): (LinearEdge(Foreign("customer_id", "signup")),),
+        ("orders", "value"): (LinearEdge(Foreign("customer_id", "value")),),
+        ("employees", "manager_level"): (LinearEdge(Foreign("manager_id", "level")),),
+    }
+    schema = Schema(
+        {"customers": customers, "orders": orders, "employees": employees}, fkeys, crossings
+    )
     rows = {"customers": 100, "orders": 1000, "employees": 80}
     frames = schema.sample(rows, seed=0)
     assert not frames["customers"]["signup"].is_monotonic_increasing

@@ -28,7 +28,7 @@ def random_schema(rng):
     names = [f"t{i}" for i in range(int(rng.integers(1, 4)))]
     nodes = {t: {} for t in names}
     columns = {t: {f"{t}_id": Column(kind="key")} for t in names}
-    fkeys = []
+    fkeys, crossings = [], {}
     for t in names:
         roots = [f"r{j}" for j in range(int(rng.integers(1, 4)))]
         for j, root in enumerate(roots):
@@ -75,8 +75,10 @@ def random_schema(rng):
         fkeys.append(FK(t, key, parent, link, nullable=float(rng.choice([0.0, 0.2])), fill=0.0))
         observed = bool(rng.random() < 0.5)
         width = nodes[parent]["seg"].dim
-        nodes[t]["g_r0"] = Node((LinearEdge(Foreign(key, "r0")),), noise=None)
-        nodes[t]["g_seg"] = Node((LinearEdge(Foreign(key, "seg"), dim=width),), noise=None)
+        nodes[t]["g_r0"] = Node(noise=None)
+        nodes[t]["g_seg"] = Node(dim=width, noise=None)
+        crossings[t, "g_r0"] = (LinearEdge(Foreign(key, "r0")),)
+        crossings[t, "g_seg"] = (LinearEdge(Foreign(key, "seg"), dim=width),)
         columns[t]["g_seg"] = Column(
             "g_seg", "categorical", categories=tuple(f"p{i}" for i in range(width))
         )
@@ -88,21 +90,24 @@ def random_schema(rng):
             columns[t]["z"] = Column("z")
         how = str(rng.choice(["count", "sum", "mean", "max"]))
         summary = Summary(t, key, "y", how, fill=None if how in COMPLETE else 0.0)
-        nodes[parent][f"a_{t}"] = Node((LinearEdge(summary),), noise=None)
+        nodes[parent][f"a_{t}"] = Node(noise=None)
+        crossings[parent, f"a_{t}"] = (LinearEdge(summary),)
         nodes[parent][f"w_{t}"] = Node((LinearEdge(f"a_{t}", 0.5),), noise=Normal())
         columns[parent][f"a_{t}"] = Column(f"a_{t}")
         columns[parent][f"w_{t}"] = Column(f"w_{t}")
     if rng.random() < 0.4:
         t = names[0]
         fkeys.append(FK(t, "boss", t, TreeLink(roots=0.3), fill=0.0))
-        nodes[t]["boss_r0"] = Node((LinearEdge(Foreign("boss", "r0")),), noise=None)
-        nodes[t]["reports"] = Node((LinearEdge(Summary(t, "boss", "r0", "count")),), noise=None)
+        nodes[t]["boss_r0"] = Node(noise=None)
+        nodes[t]["reports"] = Node(noise=None)
+        crossings[t, "boss_r0"] = (LinearEdge(Foreign("boss", "r0")),)
+        crossings[t, "reports"] = (LinearEdge(Summary(t, "boss", "r0", "count")),)
         columns[t]["reports"] = Column("reports")
     tables = {
         t: SCM(nodes[t], columns[t], time_column="stamp" if "stamp" in columns[t] else None)
         for t in names
     }
-    return Schema(tables, tuple(fkeys))
+    return Schema(tables, tuple(fkeys), crossings)
 
 
 @pytest.mark.parametrize("seed", range(30))
