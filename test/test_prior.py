@@ -117,12 +117,14 @@ def test_warping_gives_each_realization_its_own_style():
 SMALL = dict(entity_row_count=IntegersRange(60, 120), activity_row_count=IntegersRange(300, 600))
 
 
-def summarized(scm):
+def summarized(schema, table):
     """Nodes with a summary among their ancestors, which no key may read."""
-    tainted = set()
+    scm, tainted = schema.tables[table], set()
     for name in scm.order:
-        tails = scm.nodes[name].parents
-        if any(isinstance(tail, Summary) or tail in tainted for tail in tails):
+        edges = schema.crossings.get((table, name), ())
+        if any(isinstance(e.parent, Summary) for e in edges) or any(
+            p in tainted for p in scm.nodes[name].parents
+        ):
             tainted.add(name)
     return tainted
 
@@ -141,21 +143,22 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
             assert (table in referenced) == (schema.tables[table].time_column is None)
         frames, latents = schema.sample_with_latents(rows, seed=seed)
         assert all(len(frames[t]) == n for t, n in rows.items())
-        for table, scm in schema.tables.items():
-            for name, node in scm.nodes.items():
-                for tail in node.parents:
-                    if isinstance(tail, Summary):
-                        seen.add("aggregate")
+        for (table, name), edges in schema.crossings.items():
+            scm = schema.tables[table]
+            for tail in (edge.parent for edge in edges):
+                if isinstance(tail, Summary):
+                    seen.add("aggregate")
+                    assert scm.time_column is None
+                    assert schema.tables[tail.table].time_column is None
+                    assert (tail.fill is None) == (tail.how in ("count", "sum"))
+                else:
+                    seen.add("gather")
+                    fk = schema.keys[table, tail.key]
+                    assert tail.node not in summarized(schema, fk.parent)
+                    assert name not in scm.timestamp_nodes
+                    if isinstance(fk.link, TreeLink):
+                        seen.add("self")
                         assert scm.time_column is None
-                        assert schema.tables[tail.table].time_column is None
-                        assert (tail.fill is None) == (tail.how in ("count", "sum"))
-                    elif isinstance(tail, Foreign):
-                        seen.add("gather")
-                        origin = schema.tables[schema.keys[table, tail.key].parent]
-                        assert tail.node not in summarized(origin)
-                        if isinstance(schema.keys[table, tail.key].link, TreeLink):
-                            seen.add("self")
-                            assert scm.time_column is None
         db = create_database(schema, frames)
         cut = db.upto(db.min_timestamp + (db.max_timestamp - db.min_timestamp) / 2)
         for table in cut.table_dict.values():
@@ -174,7 +177,7 @@ def test_schema_prior_knobs_switch_cross_table_structure_off():
     )
     for seed in range(8):
         schema = quiet.realize(seed)
-        assert not any(scm.inputs for scm in schema.tables.values())
+        assert not schema.crossings
         assert all(fk.nullable == 0.0 for fk in schema.fkeys)
         assert all(fk.table != fk.parent for fk in schema.fkeys)
         frames = schema.sample(quiet.rows(schema, seed), seed=seed)
@@ -198,11 +201,11 @@ def test_schema_prior_edge_cases():
     for seed in range(12):
         schema = tiny.realize(seed)
         assert sum(fk.table == fk.parent for fk in schema.fkeys) == 1
-        for table, scm in schema.tables.items():
-            for name, node in scm.nodes.items():
-                for tail in node.parents:
-                    if isinstance(tail, Foreign) and schema.keys[table, tail.key].parent == table:
-                        assert tail.node != name and not scm.nodes[tail.node].parents
+        for (table, name), edges in schema.crossings.items():
+            scm = schema.tables[table]
+            for tail in (edge.parent for edge in edges):
+                if isinstance(tail, Foreign) and schema.keys[table, tail.key].parent == table:
+                    assert tail.node != name and not scm.nodes[tail.node].parents
         schema.sample(tiny.rows(schema, seed), seed=seed)
     with pytest.raises(ValueError, match="clusters"):
         SchemaPrior(entity_row_count=IntegersRange(5, 10), activity_row_count=IntegersRange(5, 10))

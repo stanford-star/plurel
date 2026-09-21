@@ -1,4 +1,4 @@
-from collections.abc import Callable, Hashable
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass, fields, replace
 
 import numpy as np
@@ -190,6 +190,8 @@ class TablePrior:
         node_width: Latent dimensions of a numeric node.
         node_categorical_share: Probability that a node is categorical, a one-hot node.
         node_class_count: Classes of a categorical node.
+        key_reader_share: Share of the table's nodes that read the edges crossing one key, drawn
+            per key; at least one node reads.
         edge_families: Edge family per edge; linear only when parent and node widths agree.
         node_ops: Reduction over the edges of a node with several parents.
         node_noise_std: Standard deviation of the Gaussian noise of a node.
@@ -214,6 +216,7 @@ class TablePrior:
     node_width: Range = LogIntegersRange(1, 4)
     node_categorical_share: float = 0.3
     node_class_count: Range = IntegersRange(2, 8)
+    key_reader_share: Range = Range(0.1, 1.0)
     edge_families: Choices = Choices(FAMILIES)
     node_ops: Choices = Choices(("sum", "product", "max", "logsumexp"), (6.0, 1.0, 1.0, 1.0))
     node_noise_std: Range = LogRange(0.01, 0.5)
@@ -320,34 +323,39 @@ class TablePrior:
 
 def _wire(
     scm: SCM,
-    sources: list[str],
-    consumers: list[str],
-    count: int,
-    tail: Callable[[str], tuple[Hashable, int]],
     prior: TablePrior,
+    crossings: dict[tuple[str, str], tuple[Edge, ...]],
+    table: str,
+    tails: Mapping[str, tuple[Hashable, int]],
+    count: int,
     rng: np.random.Generator,
-) -> SCM:
-    """Give each of `count` drawn sources, as the tail and width `tail` makes of it, to a drawn
-    consumer as a new edge built by `prior`."""
-    nodes = dict(scm.nodes)
-    count = min(count, len(sources), len(consumers))
-    for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
-        consumer = str(rng.choice(consumers))
-        target = nodes[consumer]
-        parent, d_in = tail(source)
-        edge = prior.edge(parent, d_in, target.dim, target.onehot, rng)
-        nodes[consumer] = replace(target, edges=target.edges + (edge,))
-    return SCM(nodes, scm.columns, time_column=scm.time_column)
+    readers: list[str] | None = None,
+) -> list[str]:
+    """Give the tails of `count` drawn sources to a drawn share of the readers, every node of
+    the table unless given, as crossing edges built by the table's prior; returns the readers."""
+    readers = list(scm.nodes) if readers is None else readers
+    count = min(count, len(tails))
+    if not count or not readers:
+        return []
+    share = prior.key_reader_share.draw(rng)
+    chosen = [node for node in readers if rng.random() < share] or [str(rng.choice(readers))]
+    drawn = [tails[str(source)] for source in rng.choice(list(tails), count, replace=False)]
+    for node in chosen:
+        target = scm.nodes[node]
+        edges = tuple(
+            prior.edge(tail, d_in, target.dim, target.onehot, rng) for tail, d_in in drawn
+        )
+        crossings[table, node] = crossings.get((table, node), ()) + edges
+    return chosen
 
 
-def _plain(scm: SCM) -> list[str]:
-    """Nodes with no summary among their ancestors, the ones a key may read."""
-    tainted: set[str] = set()
-    for name in scm.order:
-        tails = scm.nodes[name].parents
-        if any(isinstance(tail, Summary) or tail in tainted for tail in tails):
-            tainted.add(name)
-    return [name for name in scm.nodes if name not in tainted]
+def _downstream(scm: SCM, readers: list[str]) -> set[str]:
+    """The readers and every node below them in the table's DAG."""
+    below = set(readers)
+    for node in scm.order:
+        if any(parent in below for parent in scm.nodes[node].parents):
+            below.add(node)
+    return below
 
 
 @dataclass(frozen=True)
@@ -355,10 +363,11 @@ class SchemaPrior:
     """Random multi-table schema prior.
 
     A table's parents in the table graph are the tables it references. Each table is a fresh
-    warp of `table_prior`. Across each key, drawn parent nodes feed drawn child nodes and
-    summaries of drawn child nodes feed drawn parent nodes, both as extra edges on existing
-    nodes; summaries are wired first and keys never read a node downstream of one, so the node
-    graph across tables stays acyclic by construction.
+    warp of `table_prior`, built as a local plan first. The crossing edges are then decided on
+    the built tables and given to the Schema: across each key, a drawn share of the child's
+    nodes read drawn parent nodes, and a drawn share of the parent's nodes read summaries of
+    drawn child nodes. Summaries are wired first and keys never read a node downstream of one,
+    so the node graph across tables stays acyclic by construction.
 
     Tables nothing references hold events and get a time column; referenced tables are static,
     so no key ever points into the future and cutting a database at any time leaves every key
@@ -435,17 +444,40 @@ class SchemaPrior:
         priors = {name: self.table_prior.warp(rng) for name in names}
         tables = {name: priors[name].build(rng, time=name not in static) for name in names}
         fkeys = [self.fkey(name, parent, rng) for name in names for parent in references[name]]
+        crossings: dict[tuple[str, str], tuple[Edge, ...]] = {}
+        tainted: dict[str, set[str]] = {name: set() for name in names}
         for fk in fkeys:
             if fk.table in static:
-                self.aggregate(tables, fk, priors[fk.parent], rng)
+                child, parent = tables[fk.table], tables[fk.parent]
+                scalars = [n for n in child.nodes if child.nodes[n].dim == 1]
+                tails = {n: (self.summary(fk, n, rng), 1) for n in scalars}
+                count = self.aggregate_count.draw(rng)
+                readers = _wire(parent, priors[fk.parent], crossings, fk.parent, tails, count, rng)
+                tainted[fk.parent] |= _downstream(parent, readers)
         for fk in fkeys:
-            self.gather(tables, fk, priors[fk.table], rng)
+            child, parent = tables[fk.table], tables[fk.parent]
+            plain = [n for n in parent.nodes if n not in tainted[fk.parent]]
+            tails = {n: (Foreign(fk.column, n), parent.nodes[n].dim) for n in plain}
+            count = self.gather_count.draw(rng)
+            readers = [n for n in child.nodes if n not in child.timestamp_nodes]
+            _wire(child, priors[fk.table], crossings, fk.table, tails, count, rng, readers)
         for name in names:
             if name in static and rng.random() < self.self_reference_probability:
                 link = TreeLink(self.self_reference_root_share.draw(rng))
                 fkeys.append(FK(name, "parent_id", name, link, fill=0.0))
-                self.gather(tables, fkeys[-1], priors[name], rng)
-        return Schema(tables, tuple(fkeys))
+                scm = tables[name]
+                roots = [
+                    n for n in scm.nodes if not scm.nodes[n].parents and n not in tainted[name]
+                ]
+                tails = {n: (Foreign("parent_id", n), scm.nodes[n].dim) for n in roots}
+                readers = [n for n in scm.nodes if scm.nodes[n].parents]
+                count = self.gather_count.draw(rng)
+                _wire(scm, priors[name], crossings, name, tails, count, rng, readers)
+        return Schema(tables, tuple(fkeys), crossings)
+
+    def summary(self, fk: FK, source: str, rng: np.random.Generator) -> Summary:
+        how = self.aggregates.draw(rng)
+        return Summary(fk.table, fk.column, source, how, fill=None if how in COMPLETE else 0.0)
 
     def rows(self, schema: Schema, seed: Seed = None) -> dict[str, int]:
         _, rng = generator(seed).spawn(2)
@@ -474,39 +506,3 @@ class SchemaPrior:
     def fkey(self, child: str, parent: str, rng: np.random.Generator) -> FK:
         nullable = self.fk_nullable_rate.draw(rng) if rng.random() < self.fk_nullable_share else 0.0
         return FK(child, f"{parent}_id", parent, self.link(rng), nullable=nullable, fill=0.0)
-
-    def gather(
-        self, tables: dict[str, SCM], fk: FK, prior: TablePrior, rng: np.random.Generator
-    ) -> None:
-        """Give drawn parent nodes to drawn child nodes as edges reading through the key."""
-        child, parent = tables[fk.table], tables[fk.parent]
-        sources = _plain(parent)
-        consumers = [name for name in child.nodes if name not in child.timestamp_nodes]
-        if fk.table == fk.parent:
-            sources = [name for name in sources if not parent.nodes[name].parents]
-            consumers = [name for name in consumers if child.nodes[name].parents]
-
-        def tail(source: str) -> tuple[Foreign, int]:
-            return Foreign(fk.column, source), parent.nodes[source].dim
-
-        count = self.gather_count.draw(rng)
-        tables[fk.table] = _wire(child, sources, consumers, count, tail, prior, rng)
-
-    def aggregate(
-        self, tables: dict[str, SCM], fk: FK, prior: TablePrior, rng: np.random.Generator
-    ) -> None:
-        """Feed summaries of drawn child nodes into drawn parent nodes as edges crossing the key.
-
-        Summaries are wired before any key is read, and keys read only nodes with no summary
-        among their ancestors, so the node graph across tables stays acyclic.
-        """
-        child, parent = tables[fk.table], tables[fk.parent]
-        sources = [name for name, node in child.nodes.items() if node.dim == 1]
-
-        def tail(source: str) -> tuple[Summary, int]:
-            how = self.aggregates.draw(rng)
-            fill = None if how in COMPLETE else 0.0
-            return Summary(fk.table, fk.column, source, how, fill), 1
-
-        count = self.aggregate_count.draw(rng)
-        tables[fk.parent] = _wire(parent, sources, list(parent.nodes), count, tail, prior, rng)
