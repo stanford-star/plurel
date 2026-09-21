@@ -62,6 +62,12 @@ def test_mixture_follows_its_weights():
 def test_autoregressive_is_persistent():
     values = AutoRegressive(0.9, 1.0).sample(20_000, np.random.default_rng(4))
     assert np.corrcoef(values[:-1], values[1:])[0, 1] == pytest.approx(0.9, abs=0.02)
+    for rho, n in ((0.0, 50), (0.5, 7), (0.999, 3000), (1e-6, 1000), (0.9, 20_001)):
+        expected = np.random.default_rng(4).normal(0.0, 2.0, n)
+        for index in range(1, n):
+            expected[index] += rho * expected[index - 1]
+        actual = AutoRegressive(rho, 2.0).sample(n, np.random.default_rng(4))
+        np.testing.assert_allclose(actual, expected, rtol=1e-9, atol=1e-9)
 
 
 def test_time_series_is_the_sum_of_its_parts():
@@ -80,3 +86,6 @@ def test_calendar_is_sorted_within_range_and_honors_zero_weights():
     assert stamps.min() >= START and stamps.max() <= END
     assert set(stamps.weekday) <= {0, 1, 2, 3, 4}
     assert set(stamps.hour) <= set(range(9, 17))
+    early = Calendar(pd.Timestamp("1965-01-01"), pd.Timestamp("1966-01-01"), weekday, hour)
+    stamps = pd.to_datetime(early.sample(300, np.random.default_rng(6)), unit="s")
+    assert set(stamps.weekday) <= {0, 1, 2, 3, 4} and set(stamps.hour) <= set(range(9, 17))

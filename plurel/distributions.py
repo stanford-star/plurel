@@ -179,9 +179,20 @@ class AutoRegressive:
             raise ValueError("scale must be non-negative")
 
     def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
-        out = rng.normal(0.0, self.scale, n)
-        for index in range(1, n):
-            out[index] += self.rho * out[index - 1]
+        """The AR(1) recursion as a scan over blocks short enough for the powers of `rho` to
+        stay finite."""
+        noise = rng.normal(0.0, self.scale, n)
+        if not self.rho or not n:
+            return noise
+        block = max(1, min(n, int(250.0 / -np.log10(self.rho))))
+        powers = self.rho ** np.arange(1, block + 1)
+        out, carry = np.empty(n), 0.0
+        for start in range(0, n, block):
+            steps = powers[: min(block, n - start)]
+            out[start : start + block] = steps * (
+                np.cumsum(noise[start : start + block] / steps) + carry
+            )
+            carry = out[start + len(steps) - 1]
         return out
 
 
@@ -220,14 +231,12 @@ class Calendar:
             return np.empty(0)
         span = (self.end - self.start).total_seconds()
         candidates = n * self.oversampling
-        offsets = rng.uniform(0.0, span, candidates)
-        stamps = self.start + pd.to_timedelta(offsets, unit="s")
-        weights = (
-            np.asarray(self.weekday_weights)[stamps.weekday]
-            * np.asarray(self.hour_weights)[stamps.hour]
-        )
+        seconds = self.start.timestamp() + rng.uniform(0.0, span, candidates)
+        weekdays = ((seconds // 86400.0 + 3) % 7).astype(int)
+        hours = (seconds % 86400.0 // 3600.0).astype(int)
+        weights = np.asarray(self.weekday_weights)[weekdays] * np.asarray(self.hour_weights)[hours]
         chosen = rng.choice(candidates, n, p=weights / weights.sum())
-        return np.sort(self.start.timestamp() + offsets[chosen])
+        return np.sort(seconds[chosen])
 
 
 DISTRIBUTIONS: dict[str, type] = {
