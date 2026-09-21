@@ -1,3 +1,4 @@
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass, fields, replace
 
 import numpy as np
@@ -317,8 +318,26 @@ class TablePrior:
         return Column(node, dims=slot, marginal=self.column_marginals.draw(rng), missing=missing)
 
 
-def _consume(node: Node, edge: Edge) -> Node:
-    return replace(node, edges=node.edges + (edge,))
+def _wire(
+    scm: SCM,
+    sources: list[str],
+    consumers: list[str],
+    count: int,
+    tail: Callable[[str], tuple[Hashable, int]],
+    prior: TablePrior,
+    rng: np.random.Generator,
+) -> SCM:
+    """Give each of `count` drawn sources, as the tail and width `tail` makes of it, to a drawn
+    consumer as a new edge built by `prior`."""
+    nodes = dict(scm.nodes)
+    count = min(count, len(sources), len(consumers))
+    for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
+        consumer = str(rng.choice(consumers))
+        target = nodes[consumer]
+        parent, d_in = tail(source)
+        edge = prior.edge(parent, d_in, target.dim, target.onehot, rng)
+        nodes[consumer] = replace(target, edges=target.edges + (edge,))
+    return SCM(nodes, scm.columns, time_column=scm.time_column)
 
 
 def _plain(scm: SCM) -> list[str]:
@@ -459,22 +478,19 @@ class SchemaPrior:
     def gather(
         self, tables: dict[str, SCM], fk: FK, prior: TablePrior, rng: np.random.Generator
     ) -> None:
-        """Give drawn parent nodes to drawn child nodes as edges crossing the key."""
+        """Give drawn parent nodes to drawn child nodes as edges reading through the key."""
         child, parent = tables[fk.table], tables[fk.parent]
-        sources = [name for name in _plain(parent) if name not in parent.timestamp_nodes]
-        consumers = [name for name in _plain(child) if name not in child.timestamp_nodes]
+        sources = _plain(parent)
+        consumers = [name for name in child.nodes if name not in child.timestamp_nodes]
         if fk.table == fk.parent:
             sources = [name for name in sources if not parent.nodes[name].parents]
             consumers = [name for name in consumers if child.nodes[name].parents]
-        nodes = dict(child.nodes)
-        count = min(self.gather_count.draw(rng), len(sources), len(consumers))
-        for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
-            consumer = str(rng.choice(consumers))
-            target = nodes[consumer]
-            tail = Foreign(fk.column, source)
-            edge = prior.edge(tail, parent.nodes[source].dim, target.dim, target.onehot, rng)
-            nodes[consumer] = _consume(target, edge)
-        tables[fk.table] = SCM(nodes, child.columns, time_column=child.time_column)
+
+        def tail(source: str) -> tuple[Foreign, int]:
+            return Foreign(fk.column, source), parent.nodes[source].dim
+
+        count = self.gather_count.draw(rng)
+        tables[fk.table] = _wire(child, sources, consumers, count, tail, prior, rng)
 
     def aggregate(
         self, tables: dict[str, SCM], fk: FK, prior: TablePrior, rng: np.random.Generator
@@ -486,12 +502,11 @@ class SchemaPrior:
         """
         child, parent = tables[fk.table], tables[fk.parent]
         sources = [name for name, node in child.nodes.items() if node.dim == 1]
-        consumers = [name for name in parent.nodes if name not in parent.timestamp_nodes]
-        nodes = dict(parent.nodes)
-        count = min(self.aggregate_count.draw(rng), len(sources), len(consumers))
-        for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
-            consumer, how = str(rng.choice(consumers)), self.aggregates.draw(rng)
-            tail = Summary(fk.table, fk.column, source, how, fill=None if how in COMPLETE else 0.0)
-            target = nodes[consumer]
-            nodes[consumer] = _consume(target, prior.edge(tail, 1, target.dim, target.onehot, rng))
-        tables[fk.parent] = SCM(nodes, parent.columns, time_column=parent.time_column)
+
+        def tail(source: str) -> tuple[Summary, int]:
+            how = self.aggregates.draw(rng)
+            fill = None if how in COMPLETE else 0.0
+            return Summary(fk.table, fk.column, source, how, fill), 1
+
+        count = self.aggregate_count.draw(rng)
+        tables[fk.parent] = _wire(parent, sources, list(parent.nodes), count, tail, prior, rng)
