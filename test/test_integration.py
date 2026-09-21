@@ -20,7 +20,7 @@ from plurel import (
 )
 from plurel.distributions import Gumbel
 from plurel.links import HSBMLink, RandomLink, TreeLink
-from plurel.schema import COMPLETE, FK, Childless, Foreign, Orphan, Schema, Summary
+from plurel.schema import COMPLETE, FK, Foreign, Schema, Summary
 
 
 def random_schema(rng):
@@ -80,7 +80,7 @@ def random_schema(rng):
             "g_seg", "categorical", categories=tuple(f"p{i}" for i in range(width))
         )
         if observed:
-            columns[t]["g_r0"] = Column("g_r0", marginal=Uniform(), missing=Orphan(key))
+            columns[t]["g_r0"] = Column("g_r0", marginal=Uniform())
         else:
             edges = (LinearEdge("g_r0", 2.0), MatrixEdge("g_seg", np.ones((width, 1))))
             mechanisms[t]["z"] = Node(edges, noise=Normal(std=0.1))
@@ -89,8 +89,7 @@ def random_schema(rng):
         summary = Summary(t, key, "y", how, fill=None if how in COMPLETE else 0.0)
         mechanisms[parent][f"a_{t}"] = Node((LinearEdge(summary),), noise=None)
         mechanisms[parent][f"w_{t}"] = Node((LinearEdge(f"a_{t}", 0.5),), noise=Normal())
-        missing = 0.0 if how in COMPLETE else Childless(t, key)
-        columns[parent][f"a_{t}"] = Column(f"a_{t}", missing=missing)
+        columns[parent][f"a_{t}"] = Column(f"a_{t}")
         columns[parent][f"w_{t}"] = Column(f"w_{t}")
     if rng.random() < 0.4:
         t = names[0]
@@ -139,8 +138,6 @@ def test_random_schemas_sample_wrap_and_round_trip(seed, tmp_path):
         if fk.table != fk.parent:
             orphan = frames[fk.table][fk.column].isna().to_numpy()
             assert frames[fk.table]["g_seg"].isna().to_numpy()[orphan].all()
-            if "g_r0" in frames[fk.table]:
-                assert frames[fk.table]["g_r0"].isna().to_numpy().tolist() == orphan.tolist()
     db = create_database(schema, frames)
     timed = [t for t, scm in schema.tables.items() if scm.time_column and rows[t]]
     if timed:

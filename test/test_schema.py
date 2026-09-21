@@ -13,10 +13,9 @@ from plurel import (
     MatrixEdge,
     Node,
     Normal,
-    generator,
 )
 from plurel.links import HSBMLink, RandomLink, TreeLink
-from plurel.schema import AGGREGATES, FK, Childless, Foreign, Orphan, Schema, Summary
+from plurel.schema import AGGREGATES, FK, Foreign, Schema, Summary
 
 ROWS = {"customers": 300, "orders": 2000, "employees": 150}
 EMBEDDING = np.arange(9.0).reshape(3, 3)
@@ -206,22 +205,6 @@ def test_schema_validation():
     ):
         with pytest.raises(ValueError, match=message):
             Schema({**tables, "orders": SCM({**orders().nodes, **bad}, orders().columns)}, FKEYS)
-    with pytest.raises(ValueError, match="marker"):
-        Schema(
-            {**tables, "orders": SCM(orders().nodes, {"amount": Column("amount", missing=("x",))})},
-            FKEYS,
-        )
-    with pytest.raises(ValueError, match="does not point"):
-        Schema(
-            {
-                **tables,
-                "orders": SCM(
-                    orders().nodes,
-                    {"amount": Column("amount", missing=Childless("orders", "customer_id"))},
-                ),
-            },
-            FKEYS,
-        )
     with pytest.raises(ValueError):
         Summary("orders", "customer_id", "amount", "median")
     with pytest.raises(ValueError):
@@ -343,7 +326,7 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
         },
         {
             "segment": Column("segment", "categorical", categories=("a", "b", "c")),
-            "amount": Column("value", marginal=LogNormal(), missing=Orphan("customer_id")),
+            "amount": Column("value", marginal=LogNormal()),
         },
     )
     fkeys = (FK("orders", "customer_id", "customers", nullable=0.3, fill=0.0),)
@@ -352,8 +335,8 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
     orphan = frames["orders"]["customer_id"].isna()
     assert 0.2 < orphan.mean() < 0.4
     pd.testing.assert_series_equal(frames["orders"]["segment"].isna(), orphan, check_names=False)
-    pd.testing.assert_series_equal(frames["orders"]["amount"].isna(), orphan, check_names=False)
-    assert (frames["orders"]["amount"].dropna() > 0).all()
+    amount = frames["orders"]["amount"].mask(orphan)
+    assert amount.isna().to_numpy().tolist() == orphan.tolist() and (amount.dropna() > 0).all()
     with pytest.raises(ValueError, match="integers"):
         schema.sample({"customers": 20.0, "orders": 10}, seed=0)
     unfilled = (FK("orders", "customer_id", "customers", nullable=0.3),)
@@ -376,8 +359,6 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
         Schema({"customers": childless, "orders": orders}, complete).sample(
             {"customers": 20, "orders": 10}, seed=0
         )
-    with pytest.raises(ValueError, match="Schema"):
-        orders.observe({"segment": np.zeros((2, 3)), "value": np.zeros((2, 1))}, generator(0), 2)
     with pytest.raises(ValueError):
         FK("orders", "customer_id", "customers", TreeLink())
     for bad in (np.zeros(10), np.zeros(9, dtype=int), np.full(10, 20), np.full(10, -2)):

@@ -65,7 +65,7 @@ from plurel.prior import (
     TablePrior,
 )
 from plurel.random import Seed, generator
-from plurel.schema import AGGREGATES, FK, Childless, Foreign, Orphan, Schema, Summary
+from plurel.schema import AGGREGATES, FK, Foreign, Schema, Summary
 from plurel.scm import SCM, Interventions
 
 __all__ = [
@@ -85,7 +85,6 @@ __all__ = [
     "BarabasiAlbert",
     "Beta",
     "Calendar",
-    "Childless",
     "Choices",
     "Column",
     "Node",
@@ -114,7 +113,6 @@ __all__ = [
     "MLPEdge",
     "NearestEdge",
     "Normal",
-    "Orphan",
     "Pareto",
     "Poisson",
     "QuadraticEdge",

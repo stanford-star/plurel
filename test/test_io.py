@@ -17,7 +17,7 @@ from plurel import (
 from plurel.distributions import Gumbel
 from plurel.io import create_database, read_database, split_timestamps, write_database
 from plurel.links import HSBMLink, TreeLink
-from plurel.schema import FK, Foreign, Orphan, Schema, Summary
+from plurel.schema import FK, Foreign, Schema, Summary
 
 ROWS = {"customers": 40, "orders": 300}
 
@@ -46,7 +46,7 @@ def orders(key=True, time_column="when"):
         "order_id": Column(kind="key"),
         "when": Column("when", "timestamp", marginal=DEFAULT_CALENDAR),
         "amount": Column("amount"),
-        "value": Column("value", missing=Orphan("customer_id")),
+        "value": Column("value"),
     }
     if not key:
         del columns["order_id"]

@@ -92,21 +92,6 @@ class Summary:
             raise ValueError("fill is a finite value for mean, max or min only")
 
 
-@dataclass(frozen=True)
-class Orphan:
-    """Missingness marker for a column: the rows whose `key` is null."""
-
-    key: str
-
-
-@dataclass(frozen=True)
-class Childless:
-    """Missingness marker for a column: the rows no row of `table` points at through `key`."""
-
-    table: str
-    key: str
-
-
 class Schema:
     def __init__(self, tables: Mapping[str, SCM], fkeys: tuple[FK, ...] = ()) -> None:
         self.tables = dict(tables)
@@ -125,9 +110,6 @@ class Schema:
         for table, scm in self.tables.items():
             for name, node in scm.nodes.items():
                 parents[table, name] = tuple(self.source(table, tail) for tail in node.parents)
-            for column in scm.columns.values():
-                if column.kind != "key" and not isinstance(column.missing, int | float | str):
-                    self.check_marker(table, column.missing)
         self.order = topological(parents)
 
     def key(self, table: str, column: str) -> FK:
@@ -150,17 +132,6 @@ class Schema:
         if node not in self.tables[origin].nodes:
             raise ValueError(f"unknown node {origin}.{node}")
         return origin, node
-
-    def check_marker(self, table: str, marker: Hashable) -> None:
-        if isinstance(marker, Orphan):
-            self.key(table, marker.key)
-        elif isinstance(marker, Childless):
-            if self.key(marker.table, marker.key).parent != table:
-                raise ValueError(
-                    f"key {marker.key!r} of {marker.table!r} does not point at {table!r}"
-                )
-        else:
-            raise ValueError(f"{marker!r} is not a missingness rate, node or marker")
 
     def links(self, rows: Mapping[str, int], rng: np.random.Generator) -> Links:
         links = {}
@@ -210,17 +181,6 @@ class Schema:
             out[empty] = tail.fill
         return out
 
-    def indicator(
-        self, table: str, marker: Orphan | Childless, rows: Mapping[str, int], links: Links
-    ) -> np.ndarray:
-        """A two-class indicator, class one where the marker says the value is missing."""
-        if isinstance(marker, Orphan):
-            missing = links[table, marker.key] < 0
-        else:
-            indices = links[marker.table, marker.key]
-            missing = np.bincount(indices[indices >= 0], minlength=rows[table]) == 0
-        return np.eye(2)[missing.astype(int)]
-
     def propagate(
         self,
         rows: Mapping[str, int],
@@ -251,12 +211,7 @@ class Schema:
     ) -> dict[str, pd.DataFrame]:
         frames = {}
         for (table, scm), stream in zip(self.tables.items(), rng.spawn(len(self.tables))):
-            markers = {
-                column.missing: self.indicator(table, column.missing, rows, links)
-                for column in scm.columns.values()
-                if column.kind != "key" and not isinstance(column.missing, int | float | str)
-            }
-            frame = scm.observe({**latents[table], **markers}, stream, rows[table])
+            frame = scm.observe(latents[table], stream, rows[table])
             for fk in self.fkeys:
                 if fk.table == table:
                     indices = links[table, fk.column]

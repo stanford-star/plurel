@@ -37,8 +37,8 @@ def topological[T: Hashable](parents: Mapping[T, tuple[T, ...]]) -> tuple[T, ...
 
 
 class SCM:
-    """A table's DAG. Edge tails and missingness markers that cross keys are `inputs` a Schema
-    supplies; a table with inputs samples only through a Schema."""
+    """A table's DAG. Edge tails that cross keys are `inputs` a Schema supplies; a table with
+    inputs samples only through a Schema."""
 
     def __init__(
         self,
@@ -48,7 +48,6 @@ class SCM:
     ) -> None:
         self.nodes = dict(nodes)
         inputs: set[Hashable] = set()
-        markers: set[Hashable] = set()
         for child, node in self.nodes.items():
             local = {parent for parent in node.parents if isinstance(parent, str)}
             if unknown := local - set(self.nodes):
@@ -66,8 +65,6 @@ class SCM:
             needed = {column.node}
             if isinstance(column.missing, str):
                 needed.add(column.missing)
-            elif not isinstance(column.missing, int | float):
-                markers.add(column.missing)
             if unknown := needed - set(self.nodes):
                 raise ValueError(f"column {name!r} refers to unknown nodes {sorted(unknown)}")
         kinds = {name: column.kind for name, column in self.columns.items()}
@@ -86,8 +83,7 @@ class SCM:
         self.timestamp_nodes = frozenset(
             column.node for column in self.columns.values() if column.kind == "timestamp"
         )
-        self.markers = frozenset(markers)
-        self.inputs = frozenset(inputs) | self.markers
+        self.inputs = frozenset(inputs)
 
     def evaluate(
         self,
@@ -120,8 +116,6 @@ class SCM:
     def observe(
         self, latents: Mapping[Hashable, np.ndarray], rng: np.random.Generator, n: int
     ) -> pd.DataFrame:
-        if unsupplied := self.markers - set(latents):
-            raise ValueError(f"markers {sorted(map(str, unsupplied))} must come from a Schema")
         observed = {name: column.observe(latents, rng, n) for name, column in self.columns.items()}
         frame = pd.DataFrame(observed, index=range(n))
         for name, column in self.columns.items():
