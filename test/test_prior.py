@@ -108,11 +108,12 @@ def test_table_prior_realizes_valid_diverse_tables():
 
 
 def test_table_prior_knobs_are_respected():
+    never = Range(0.0, 0.0)
     plain = TablePrior(
-        node_categorical_share=0.0,
-        column_binned_share=0.0,
-        column_missing_share=0.0,
-        root_series_share=0.0,
+        node_categorical_share=never,
+        column_binned_share=never,
+        column_missing_share=never,
+        root_series_share=never,
     )
     for seed in range(10):
         scm = plain.realize(seed, time=True)
@@ -121,7 +122,7 @@ def test_table_prior_knobs_are_respected():
         assert all(c.kind != "categorical" for c in scm.columns.values())
         assert all(c.missing == 0.0 for c in scm.columns.values())
         assert not sample(scm, 50, seed=seed).isna().any().any()
-    seasonal = TablePrior(root_series_share=1.0, node_categorical_share=0.0)
+    seasonal = TablePrior(root_series_share=Range(1.0, 1.0), node_categorical_share=never)
     for seed in range(5):
         scm = seasonal.realize(seed, time=True)
         roots = [m for n, m in scm.nodes.items() if not m.parents and not m.onehot and n != "time"]
@@ -150,7 +151,8 @@ def test_table_prior_knobs_are_respected():
 
 
 def test_structured_missingness_follows_its_indicator_node():
-    prior = TablePrior(column_missing_share=1.0, column_missing_structured_share=1.0)
+    always = Range(1.0, 1.0)
+    prior = TablePrior(column_missing_share=always, column_missing_structured_share=always)
     for seed in range(5):
         scm = prior.realize(seed)
         frames, latents = Schema({"t": scm}).sample_with_latents({"t": 300}, seed=seed)
@@ -175,7 +177,7 @@ def test_warping_gives_each_realization_its_own_style():
     assert choices.values == ("a", "b", "c") and choices.weights[2] == 0.0
     prior = TablePrior().warp(rng)
     assert prior.node_count.shape is not None and prior.edge_families.weights is not None
-    assert prior.node_categorical_share == TablePrior().node_categorical_share
+    assert prior.fourier_frequency_count == TablePrior().fourier_frequency_count
     meta = [
         np.mean([m.dim for m in TablePrior().realize(seed).nodes.values()]) for seed in range(60)
     ]
@@ -267,9 +269,9 @@ def test_schema_prior_knobs_switch_cross_table_structure_off():
         **SMALL,
         gather_count=IntegersRange(0, 0),
         aggregate_share=Range(0.0, 0.0),
-        self_reference_probability=0.0,
-        fk_nullable_share=0.0,
-        fk_duplicate_share=0.0,
+        self_reference_share=Range(0.0, 0.0),
+        fk_nullable_share=Range(0.0, 0.0),
+        fk_duplicate_share=Range(0.0, 0.0),
     )
     for seed in range(8):
         schema = quiet.realize(seed)
@@ -282,7 +284,9 @@ def test_schema_prior_knobs_switch_cross_table_structure_off():
 
 
 def test_schema_prior_edge_cases():
-    single = SchemaPrior(**SMALL, table_count=IntegersRange(1, 1), self_reference_probability=1.0)
+    single = SchemaPrior(
+        **SMALL, table_count=IntegersRange(1, 1), self_reference_share=Range(1.0, 1.0)
+    )
     for seed in range(6):
         schema = single.realize(seed)
         assert len(schema.tables) == 1 and not schema.fkeys
@@ -292,7 +296,7 @@ def test_schema_prior_edge_cases():
         **SMALL,
         table_count=IntegersRange(2, 2),
         table_prior=TablePrior(node_count=IntegersRange(1, 2)),
-        self_reference_probability=1.0,
+        self_reference_share=Range(1.0, 1.0),
         gather_count=IntegersRange(3, 3),
     )
     for seed in range(12):
