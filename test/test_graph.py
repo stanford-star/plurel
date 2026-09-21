@@ -16,6 +16,7 @@ from plurel.graph import (
     TreeEdge,
     bin_levels,
     nested_logits,
+    standardize,
 )
 
 N = 200
@@ -216,3 +217,22 @@ def test_fourier_and_quadratic_edges_match_their_formulas(latents):
     ones = np.concatenate([h, np.ones((N, 1))], axis=1)
     expected = np.stack([np.einsum("ni,ij,nj->n", ones, a, ones) for a in QUADRATIC.tensor], axis=1)
     np.testing.assert_allclose(QUADRATIC.apply(h), expected)
+
+
+def test_standardize_gives_a_unit_scale_signal_that_crossing_terms_join():
+    rng = np.random.default_rng(0)
+    x = rng.normal(3.0, 40.0, (500, 2))
+    z = standardize(x)
+    assert np.allclose(z.mean(0), 0.0) and np.allclose(z.std(0), 1.0)
+    assert (standardize(np.full((4, 1), 7.0)) == 0.0).all()
+    assert standardize(np.empty((0, 3))).shape == (0, 3)
+    node = Node((LinearEdge("x", 1000.0),), noise=None, standardize=True)
+    zeros, across = np.zeros((500, 1)), rng.normal(size=(500, 1))
+    assert np.allclose(node.evaluate({"x": x[:, :1]}, zeros), z[:, :1])
+    assert np.allclose(
+        node.evaluate({"x": x[:, :1]}, zeros, across), standardize(1000.0 * x[:, :1] + across)
+    )
+    raw = Node((LinearEdge("x", 2.0),), noise=None)
+    assert np.allclose(
+        raw.evaluate({"x": x[:, :1]}, zeros + 1.0, across), 2.0 * x[:, :1] + 1.0 + across
+    )

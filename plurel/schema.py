@@ -111,8 +111,8 @@ Crossings = Mapping[tuple[str, str], tuple[Edge, ...]]
 class Schema:
     """The plan of a database: its tables, the keys between them, and the edges that cross
     keys, `crossings`, mapping a (table, node) to edges whose tails are `Foreign` or `Summary`;
-    their contribution is added to the node's own edges and noise. The Schema realizes every
-    node in one topological order across tables."""
+    their contributions join the node's signal. The Schema realizes every node in one
+    topological order across tables."""
 
     def __init__(
         self,
@@ -229,12 +229,13 @@ class Schema:
             if name in forced:
                 latents[table][name] = intervention(forced[name], n, node.dim)
                 continue
-            exogenous = node.sample_noise(n, stream)
+            exogenous, across = node.sample_noise(n, stream), None
             for edge in self.crossings.get((table, name), ()):
-                across = self.resolve(table, edge.parent, rows, latents, links)
-                exogenous = exogenous + edge.apply(across)
+                term = edge.apply(self.resolve(table, edge.parent, rows, latents, links))
+                across = term if across is None else across + term
             parents = {parent: latents[table][parent] for parent in node.parents}
-            latents[table][name] = checked(name, node, node.evaluate(parents, exogenous), n)
+            value = node.evaluate(parents, exogenous, across)
+            latents[table][name] = checked(name, node, value, n)
         return latents
 
     def observe(
