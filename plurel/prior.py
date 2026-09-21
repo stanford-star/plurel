@@ -218,8 +218,7 @@ class TablePrior:
 
     Ranges and choices are warped once per table, then drawn per use. A calendar time column
     is added only on request; a schema prior decides it by table role. Nodes standardize their
-    signal, so noise, bias and crossing terms are at unit scale; a nested class node, a product
-    of two indicators without noise, has nothing to standardize.
+    signal, so noise, bias and crossing terms are at unit scale.
 
     Attributes:
         node_count: Nodes in the table's DAG.
@@ -228,9 +227,6 @@ class TablePrior:
             together.
         node_categorical_share: Probability that a node is categorical, a one-hot node.
         node_class_count: Classes of a categorical node, and levels of a lookup edge.
-        node_nested_share: Probability that a categorical node nests its classes in a
-            categorical parent with fewer classes: the parent's classes partition the node's,
-            and a choice node `k{i}` reading the node's other parents picks within the part.
         node_ops: Reduction over the edges of a numeric node with several parents.
         node_noise_std: Standard deviation of the Gaussian noise of a numeric node, relative
             to its standardized signal.
@@ -286,7 +282,6 @@ class TablePrior:
     node_width: Range = LogIntegersRange(1, 4)
     node_categorical_share: float = 0.3
     node_class_count: Range = IntegersRange(2, 10)
-    node_nested_share: float = 0.5
     node_ops: Choices = Choices(
         ("sum", "product", "max", "min", "logsumexp", "concat"), (6.0, 1.0, 1.0, 1.0, 1.0, 2.0)
     )
@@ -374,13 +369,10 @@ class TablePrior:
                 dims.append(sum(dims[p] for p in parents[i]))
             else:
                 dims.append(self.node_width.draw(rng))
-        nodes: dict[str, Node] = {}
-        for i in range(n):
-            p = self.nesting(parents[i], i, dims, categorical, rng)
-            if p is None:
-                nodes[f"n{i}"] = self.node(parents[i], ops[i], dims, i, categorical, rng, time)
-            else:
-                nodes[f"k{i}"], nodes[f"n{i}"] = self.nested(parents[i], p, i, dims, rng)
+        nodes = {
+            f"n{i}": self.node(parents[i], ops[i], dims, i, categorical, rng, time)
+            for i in range(n)
+        }
         columns = {"id": Column(kind="key")}
         feature_nodes = rng.permutation(n)[: rng.integers(1, n + 1)]
         for c in range(self.column_count.draw(rng)):
@@ -426,43 +418,6 @@ class TablePrior:
         unfit = tuple(name for name, fits in FITS.items() if not fits(d_in, d_out, block))
         family = self.edge_families.without(unfit).draw(rng)
         return BUILDERS[family](self, parent, d_in, d_out, rng)
-
-    def nesting(
-        self,
-        sources: tuple[int, ...],
-        i: int,
-        dims: list[int],
-        categorical: np.ndarray,
-        rng: np.random.Generator,
-    ) -> int | None:
-        """The categorical parent with fewer classes that categorical node `i` nests its
-        classes in, if any."""
-        coarser = [p for p in sources if categorical[p] and dims[p] < dims[i]]
-        if categorical[i] and coarser and rng.random() < self.node_nested_share:
-            return int(rng.choice(coarser))
-        return None
-
-    def nested(
-        self, sources: tuple[int, ...], p: int, i: int, dims: list[int], rng: np.random.Generator
-    ) -> tuple[Node, Node]:
-        """The choice node `k{i}` and the class node `n{i}` of a categorical node nested in
-        parent `p`. The parent's classes partition the node's; the choice node reads the other
-        parents and picks a position within the parent's part; the class node is the product of
-        the two indicators, one exactly for that class, and has no noise."""
-        d_p, d_c = dims[p], dims[i]
-        owner, order = np.empty(d_c, dtype=int), rng.permutation(d_c)
-        owner[order[:d_p]] = np.arange(d_p)
-        owner[order[d_p:]] = rng.integers(d_p, size=d_c - d_p)
-        size = np.bincount(owner, minlength=d_p)
-        position = np.array([int((owner[:c] == owner[c]).sum()) for c in range(d_c)])
-        m = int(size.max())
-        parts = (np.arange(d_p)[:, None] == owner[None, :]).astype(float)
-        picks = (np.arange(m)[:, None] % size[owner][None, :] == position[None, :]).astype(float)
-        edges = tuple(self.edge(f"n{q}", dims[q], m, True, rng) for q in sources if q != p)
-        bias = tuple(rng.normal(0.0, 0.5, m))
-        choice = Node(edges, bias=bias, onehot=True, noise=Gumbel(), standardize=True)
-        lookups = (MatrixEdge(f"n{p}", parts), MatrixEdge(f"k{i}", picks))
-        return choice, Node(lookups, "product", onehot=True, noise=None)
 
     def indicator(self, rate: float, dims: list[int], rng: np.random.Generator) -> Node:
         """A two-class node reading one drawn node, in its second class at about `rate`."""
@@ -515,11 +470,9 @@ def _wire(
     rng: np.random.Generator,
     readers: list[str] | None = None,
 ) -> list[str]:
-    """Give the tails of `count` drawn sources to a drawn share of the readers with noise,
-    every node of the table unless given, as crossing edges built by the table's prior; returns
-    the readers. A node without noise is a function of its parents alone and reads nothing."""
+    """Give the tails of `count` drawn sources to a drawn share of the readers, every node of
+    the table unless given, as crossing edges built by the table's prior; returns the readers."""
     readers = list(scm.nodes) if readers is None else readers
-    readers = [n for n in readers if scm.nodes[n].noise is not None]
     count = min(count, len(tails))
     if not count or not readers:
         return []

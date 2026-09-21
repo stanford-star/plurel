@@ -149,28 +149,6 @@ def test_table_prior_knobs_are_respected():
     assert sample(scm, 5, seed=0).shape[0] == 5
 
 
-def test_nested_categorical_nodes_refine_their_parents_classes():
-    prior = TablePrior(
-        node_categorical_share=1.0, node_nested_share=1.0, node_count=IntegersRange(4, 8)
-    )
-    seen = 0
-    for seed in range(12):
-        scm = prior.realize(seed)
-        latents = Schema({"t": scm}).sample_with_latents({"t": 300}, seed=seed)[1]["t"]
-        for name, node in scm.nodes.items():
-            if node.noise is not None:
-                continue
-            parent, choice = node.edges
-            assert node.op == "product" and choice.parent == f"k{name[1:]}"
-            parts, picks = parent.matrix, choice.matrix
-            assert (parts.sum(0) == 1).all() and parts.any(1).all() and picks.shape[0] >= 2
-            assert parts[latents[parent.parent].argmax(1), latents[name].argmax(1)].all()
-            chooser = scm.nodes[choice.parent]
-            assert chooser.onehot and not {parent.parent, name} & set(chooser.parents)
-            seen += 1
-    assert seen > 6
-
-
 def test_structured_missingness_follows_its_indicator_node():
     prior = TablePrior(column_missing_share=1.0, column_missing_structured_share=1.0)
     for seed in range(5):
