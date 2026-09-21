@@ -5,7 +5,7 @@ from statistics import NormalDist
 
 import numpy as np
 
-from plurel.distributions import Distribution, Gumbel, Normal
+from plurel.distributions import Distribution, Normal
 
 Function = str | Callable[[np.ndarray], np.ndarray]
 
@@ -226,26 +226,36 @@ class Mechanism:
 
 
 @dataclass(frozen=True)
-class Root(Mechanism):
-    dim: int = 1
+class Node(Mechanism):
+    """The one node type: a reduction over per-parent effects, plus bias and noise.
 
-    def evaluate(self, latents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
-        return exogenous
+    Without effects the node is a root whose value is its noise, `dim` wide. With `onehot`
+    the node emits the one-hot argmax of its scores; with Gumbel noise that samples the
+    class from the softmax of the scores.
+    """
 
-
-@dataclass(frozen=True)
-class Combine(Mechanism):
     effects: tuple[Effect, ...] = ()
     op: str = "sum"
+    bias: tuple[float, ...] | None = None
+    onehot: bool = False
+    dim: int | None = None
 
     def __post_init__(self) -> None:
         if self.op not in REDUCTIONS:
             raise ValueError(f"op must be one of {tuple(REDUCTIONS)}")
-
-    @property
-    def dim(self) -> int:
         dims = [effect.dim for effect in self.effects]
-        return sum(dims) if self.op == "concat" else max(dims, default=1)
+        if dims:
+            derived = sum(dims) if self.op == "concat" else max(dims)
+        else:
+            derived = len(self.bias) if self.bias else (1 if self.dim is None else self.dim)
+        if self.dim is None:
+            object.__setattr__(self, "dim", derived)
+        elif self.dim != derived:
+            raise ValueError(f"dim {self.dim} does not match the effects or bias, {derived}")
+        if self.bias is not None and len(self.bias) != self.dim:
+            raise ValueError("one bias per dimension")
+        if self.onehot and self.dim < 2:
+            raise ValueError("a one-hot node needs at least two classes")
 
     @property
     def parents(self) -> tuple[str, ...]:
@@ -253,28 +263,10 @@ class Combine(Mechanism):
 
     def evaluate(self, latents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
         terms = [effect.apply(latents[effect.parent]) for effect in self.effects]
-        return REDUCTIONS[self.op](terms) + exogenous if terms else exogenous
-
-
-@dataclass(frozen=True)
-class Softmax(Combine):
-    biases: tuple[float, ...] | None = None
-    noise: Distribution = field(default_factory=Gumbel, kw_only=True)
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if self.dim < 2:
-            raise ValueError("at least two classes")
-        if self.biases is not None and len(self.biases) != self.dim:
-            raise ValueError("one bias per class")
-
-    @property
-    def dim(self) -> int:
-        return super().dim if self.effects else len(self.biases or ())
-
-    def evaluate(self, latents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
-        scores = super().evaluate(latents, exogenous) + np.asarray(self.biases or 0.0)
-        return np.eye(self.dim)[scores.argmax(1)]
+        value = REDUCTIONS[self.op](terms) + exogenous if terms else exogenous
+        if self.bias is not None:
+            value = value + np.asarray(self.bias)
+        return np.eye(self.dim)[value.argmax(1)] if self.onehot else value
 
 
 EFFECTS: dict[str, type] = {
@@ -286,10 +278,4 @@ EFFECTS: dict[str, type] = {
     "tree": TreeEffect,
     "fourier": FourierEffect,
     "quadratic": QuadraticEffect,
-}
-
-MECHANISMS: dict[str, type] = {
-    "root": Root,
-    "combine": Combine,
-    "softmax": Softmax,
 }

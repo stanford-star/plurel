@@ -6,20 +6,19 @@ from plurel import (
     DEFAULT_CALENDAR,
     SCM,
     Column,
-    Combine,
     Exponential,
     LinearEffect,
     LogNormal,
     MatrixEffect,
+    Node,
     Normal,
     Pareto,
-    Root,
-    Softmax,
     Uniform,
     create_database,
     read_database,
     write_database,
 )
+from plurel.distributions import Gumbel
 from plurel.links import HSBMLink, RandomLink, TreeLink
 from plurel.schema import FK, Port, Schema
 
@@ -32,27 +31,27 @@ def random_schema(rng):
     for t in names:
         roots = [f"r{j}" for j in range(int(rng.integers(1, 4)))]
         for j, root in enumerate(roots):
-            mechanisms[t][root] = Root(noise=rng.choice([Normal(), Uniform(), LogNormal()]))
+            mechanisms[t][root] = Node(noise=rng.choice([Normal(), Uniform(), LogNormal()]))
             marginal = rng.choice([None, Uniform(), LogNormal(), Pareto(2.0)])
             columns[t][f"c{j}"] = Column(
                 root, marginal=marginal, missing=float(rng.choice([0.0, 0.2]))
             )
         k = int(rng.integers(2, 5))
-        mechanisms[t]["seg"] = Softmax(biases=tuple(rng.normal(size=k)))
+        mechanisms[t]["seg"] = Node(bias=tuple(rng.normal(size=k)), onehot=True, noise=Gumbel())
         columns[t]["seg"] = Column(
             "seg", "categorical", categories=tuple(f"s{i}" for i in range(k))
         )
-        mechanisms[t]["h"] = Root(dim=int(rng.integers(1, 4)))
+        mechanisms[t]["h"] = Node(dim=int(rng.integers(1, 4)))
         if rng.random() < 0.5:
-            mechanisms[t]["stamp"] = Root(noise=DEFAULT_CALENDAR)
-            mechanisms[t]["later"] = Combine((LinearEffect("stamp"),), noise=Exponential(3600.0))
+            mechanisms[t]["stamp"] = Node(noise=DEFAULT_CALENDAR)
+            mechanisms[t]["later"] = Node((LinearEffect("stamp"),), noise=Exponential(3600.0))
             columns[t]["stamp"] = Column("stamp", "timestamp")
             columns[t]["later"] = Column("later", "timestamp", after="stamp")
         terms = tuple(
             LinearEffect(root, float(rng.normal()), str(rng.choice(["identity", "tanh", "square"])))
             for root in roots
         )
-        mechanisms[t]["y"] = Combine(terms, noise=Normal(std=0.3))
+        mechanisms[t]["y"] = Node(terms, noise=Normal(std=0.3))
         columns[t]["y"] = Column("y", marginal=rng.choice([None, Uniform(-1.0, 1.0)]))
         binning = str(rng.choice(["normal", "empirical"]))
         columns[t]["bin"] = Column(
@@ -83,12 +82,12 @@ def random_schema(rng):
             columns[t]["g_r0"] = Column("g_r0", marginal=Uniform())
         else:
             effects = (LinearEffect("g_r0", 2.0), MatrixEffect("g_seg", np.ones((width, 1))))
-            mechanisms[t]["z"] = Combine(effects, noise=Normal(std=0.1))
+            mechanisms[t]["z"] = Node(effects, noise=Normal(std=0.1))
             columns[t]["z"] = Column("z")
         aggregate = str(rng.choice(["count", "sum", "mean", "max"]))
         fill = None if aggregate in ("count", "sum") else 0.0
         mechanisms[parent][f"a_{t}"] = Port(t, "y", aggregate=aggregate, fill=fill)
-        mechanisms[parent][f"w_{t}"] = Combine((LinearEffect(f"a_{t}", 0.5),), noise=Normal())
+        mechanisms[parent][f"w_{t}"] = Node((LinearEffect(f"a_{t}", 0.5),), noise=Normal())
         columns[parent][f"a_{t}"] = Column(f"a_{t}")
         columns[parent][f"w_{t}"] = Column(f"w_{t}")
     if rng.random() < 0.4:
