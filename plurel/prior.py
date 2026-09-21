@@ -14,14 +14,17 @@ from plurel.distributions import (
     Uniform,
 )
 from plurel.graph import (
+    COMPLETE,
     TRANSFORM_NAMES,
     Edge,
+    Foreign,
     FourierEdge,
     LinearEdge,
     MatrixEdge,
     MLPEdge,
     Node,
     QuadraticEdge,
+    Summary,
     TreeEdge,
 )
 from plurel.layouts import (
@@ -35,7 +38,7 @@ from plurel.layouts import (
 )
 from plurel.links import HSBMLink, Link, RandomLink, TreeLink
 from plurel.random import Seed, generator
-from plurel.schema import COMPLETE, FK, SCM, Foreign, Schema, Summary
+from plurel.schema import FK, SCM, Schema
 
 ACTIVATIONS = tuple(name for name in TRANSFORM_NAMES if name != "identity")
 

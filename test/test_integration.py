@@ -19,8 +19,9 @@ from plurel import (
     write_database,
 )
 from plurel.distributions import Gumbel
+from plurel.graph import COMPLETE, Foreign, Summary
 from plurel.links import HSBMLink, RandomLink, TreeLink
-from plurel.schema import COMPLETE, FK, Foreign, Schema, Summary
+from plurel.schema import FK, Schema
 
 
 def random_schema(rng):

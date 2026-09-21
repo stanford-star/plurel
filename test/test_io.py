@@ -15,9 +15,10 @@ from plurel import (
     Uniform,
 )
 from plurel.distributions import Gumbel
+from plurel.graph import Foreign, Summary
 from plurel.io import create_database, read_database, split_timestamps, write_database
 from plurel.links import HSBMLink, TreeLink
-from plurel.schema import FK, Foreign, Schema, Summary
+from plurel.schema import FK, Schema
 
 ROWS = {"customers": 40, "orders": 300}
 

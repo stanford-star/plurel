@@ -14,8 +14,9 @@ from plurel import (
     Node,
     Normal,
 )
+from plurel.graph import AGGREGATES, Foreign, Summary
 from plurel.links import HSBMLink, RandomLink, TreeLink
-from plurel.schema import AGGREGATES, FK, Foreign, Schema, Summary
+from plurel.schema import FK, Schema
 
 ROWS = {"customers": 300, "orders": 2000, "employees": 150}
 EMBEDDING = np.arange(9.0).reshape(3, 3)
