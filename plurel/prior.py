@@ -35,7 +35,7 @@ from plurel.mechanisms import (
     TreeEdge,
 )
 from plurel.random import Seed, generator
-from plurel.schema import COMPLETE, FK, Childless, Foreign, Schema, Summary
+from plurel.schema import COMPLETE, FK, Foreign, Schema, Summary
 from plurel.scm import SCM
 
 ACTIVATIONS = tuple(name for name in TRANSFORM_NAMES if name != "identity")
@@ -322,12 +322,13 @@ def _consume(node: Node, edge: Edge) -> Node:
 
 
 def _plain(scm: SCM) -> list[str]:
-    """Nodes that neither are summaries nor read them, the ones keys may cross."""
-    return [
-        name
-        for name, node in scm.nodes.items()
-        if not any(isinstance(tail, Summary) for tail in node.parents)
-    ]
+    """Nodes with no summary among their ancestors, the ones a key may read."""
+    tainted: set[str] = set()
+    for name in scm.order:
+        tails = scm.nodes[name].parents
+        if any(isinstance(tail, Summary) or tail in tainted for tail in tails):
+            tainted.add(name)
+    return [name for name in scm.nodes if name not in tainted]
 
 
 @dataclass(frozen=True)
@@ -335,9 +336,10 @@ class SchemaPrior:
     """Random multi-table schema prior.
 
     A table's parents in the table graph are the tables it references. Each table is a fresh
-    warp of `table_prior`. Gathered parent nodes become extra edges on existing child nodes;
-    aggregated child nodes become new observed nodes of the parent, so the node graph across
-    tables stays acyclic by construction.
+    warp of `table_prior`. Across each key, drawn parent nodes feed drawn child nodes and
+    summaries of drawn child nodes feed drawn parent nodes, both as extra edges on existing
+    nodes; summaries are wired first and keys never read a node downstream of one, so the node
+    graph across tables stays acyclic by construction.
 
     Tables nothing references hold events and get a time column; referenced tables are static,
     so no key ever points into the future and cutting a database at any time leaves every key
@@ -365,7 +367,7 @@ class SchemaPrior:
             key.
         self_reference_root_share: Share of roots in a self-referential tree.
         gather_count: Parent nodes gathered into the child per foreign key.
-        aggregate_count: Child nodes aggregated into the parent per foreign key between static
+        aggregate_count: Child node summaries fed into the parent per foreign key between static
             tables.
         aggregates: Aggregation of an aggregate port.
     """
@@ -412,14 +414,16 @@ class SchemaPrior:
         referenced = {p for references in parents for p in references}
         priors = [self.table_prior.warp(rng) for _ in range(n)]
         tables = {f"t{i}": priors[i].build(rng, time=i not in referenced) for i in range(n)}
-        fkeys = []
-        for i, references in enumerate(parents):
-            for p in references:
-                fk = self.fkey(f"t{i}", f"t{p}", rng)
-                fkeys.append(fk)
-                self.gather(tables, fk, priors[i], rng)
-                if tables[fk.table].time_column is None:
-                    self.aggregate(tables, fk, rng)
+        fkeys = [
+            self.fkey(f"t{i}", f"t{p}", rng)
+            for i, references in enumerate(parents)
+            for p in references
+        ]
+        for fk in fkeys:
+            if tables[fk.table].time_column is None:
+                self.aggregate(tables, fk, priors[int(fk.parent[1:])], rng)
+        for fk in fkeys:
+            self.gather(tables, fk, priors[int(fk.table[1:])], rng)
         for i in sorted(referenced):
             if rng.random() < self.self_reference_probability:
                 fk = FK(
@@ -481,17 +485,22 @@ class SchemaPrior:
             nodes[consumer] = _consume(target, edge)
         tables[fk.table] = SCM(nodes, child.columns, time_column=child.time_column)
 
-    def aggregate(self, tables: dict[str, SCM], fk: FK, rng: np.random.Generator) -> None:
-        """Summarize drawn child nodes into new observed nodes of the parent."""
+    def aggregate(
+        self, tables: dict[str, SCM], fk: FK, prior: TablePrior, rng: np.random.Generator
+    ) -> None:
+        """Feed summaries of drawn child nodes into drawn parent nodes as edges crossing the key.
+
+        Summaries are wired before any key is read, and keys read only nodes with no summary
+        among their ancestors, so the node graph across tables stays acyclic.
+        """
         child, parent = tables[fk.table], tables[fk.parent]
-        sources = [name for name in _plain(child) if child.nodes[name].dim == 1]
-        nodes, columns = dict(parent.nodes), dict(parent.columns)
-        count = min(self.aggregate_count.draw(rng), len(sources))
+        sources = [name for name, node in child.nodes.items() if node.dim == 1]
+        consumers = [name for name in parent.nodes if name not in parent.timestamp_nodes]
+        nodes = dict(parent.nodes)
+        count = min(self.aggregate_count.draw(rng), len(sources), len(consumers))
         for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
-            how = self.aggregates.draw(rng)
-            name = f"{fk.table}_{source}_{how}"
+            consumer, how = str(rng.choice(consumers)), self.aggregates.draw(rng)
             tail = Summary(fk.table, fk.column, source, how, fill=None if how in COMPLETE else 0.0)
-            nodes[name] = Node((LinearEdge(tail),), noise=None)
-            missing = 0.0 if how in COMPLETE else Childless(fk.table, fk.column)
-            columns[name] = Column(name, missing=missing)
-        tables[fk.parent] = SCM(nodes, columns, time_column=parent.time_column)
+            target = nodes[consumer]
+            nodes[consumer] = _consume(target, prior.edge(tail, 1, target.dim, target.onehot, rng))
+        tables[fk.parent] = SCM(nodes, parent.columns, time_column=parent.time_column)

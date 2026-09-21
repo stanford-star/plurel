@@ -113,6 +113,16 @@ def test_warping_gives_each_realization_its_own_style():
 SMALL = dict(entity_row_count=IntegersRange(60, 120), activity_row_count=IntegersRange(300, 600))
 
 
+def summarized(scm):
+    """Nodes with a summary among their ancestors, which no key may read."""
+    tainted = set()
+    for name in scm.order:
+        tails = scm.nodes[name].parents
+        if any(isinstance(tail, Summary) or tail in tainted for tail in tails):
+            tainted.add(name)
+    return tainted
+
+
 def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
     prior = SchemaPrior(**SMALL)
     seen = set()
@@ -134,13 +144,11 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
                         seen.add("aggregate")
                         assert scm.time_column is None
                         assert schema.tables[tail.table].time_column is None
-                        if tail.how in ("mean", "max", "min"):
-                            keys = frames[tail.table][tail.key].dropna().astype(int)
-                            childless = ~np.isin(np.arange(rows[table]), keys)
-                            observed = frames[table][name].isna().to_numpy().tolist()
-                            assert observed == childless.tolist()
+                        assert (tail.fill is None) == (tail.how in ("count", "sum"))
                     elif isinstance(tail, Foreign):
                         seen.add("gather")
+                        origin = schema.tables[schema.keys[table, tail.key].parent]
+                        assert tail.node not in summarized(origin)
                         if isinstance(schema.keys[table, tail.key].link, TreeLink):
                             seen.add("self")
                             assert scm.time_column is None
