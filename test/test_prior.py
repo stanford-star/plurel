@@ -60,7 +60,10 @@ def test_table_prior_realizes_valid_diverse_tables():
         assert scm.pkey_column == "id" and 4 <= len(frame.columns) <= 14
         assert 3 <= sum(name.startswith("n") for name in scm.nodes) <= 16
         for name, node in scm.nodes.items():
-            assert 1 <= node.dim <= 8
+            if node.op == "concat":
+                assert node.dim == sum(scm.nodes[p].dim for p in node.parents)
+            else:
+                assert 1 <= node.dim <= 8
             families.update(type(edge) for edge in node.edges)
             ops.add(node.op)
             if not node.parents and not node.onehot and name != "time":
@@ -104,10 +107,11 @@ def test_table_prior_knobs_are_respected():
         scm = fitted.realize(seed)
         for node in scm.nodes.values():
             for edge in node.edges:
+                width = scm.nodes[edge.parent].dim if node.op == "concat" else node.dim
                 if isinstance(edge, LookupEdge):
-                    assert scm.nodes[edge.parent].dim == 1 and node.dim == 1 and not node.onehot
+                    assert scm.nodes[edge.parent].dim == 1 and width == 1 and not node.onehot
                 if isinstance(edge, NearestEdge):
-                    assert edge.dim == node.dim >= 2
+                    assert edge.dim == width >= 2
         sample(scm, 50, seed=seed)
     for families in (("linear",), ("lookup", "nearest")):
         with pytest.raises(ValueError, match="fits any widths"):

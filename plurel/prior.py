@@ -202,11 +202,6 @@ def _open_unit(rng: np.random.Generator) -> float:
     return float(rng.integers(1, 2**53) / 2**53)
 
 
-def _parts(total: int, count: int, rng: np.random.Generator) -> list[int]:
-    """`count` positive widths summing to `total`."""
-    return [int(part) + 1 for part in rng.multinomial(total - count, np.full(count, 1.0 / count))]
-
-
 @dataclass(frozen=True)
 class TablePrior:
     """Random single-table SCM prior.
@@ -217,13 +212,13 @@ class TablePrior:
     Attributes:
         node_count: Nodes in the table's DAG.
         node_layouts: DAG generator for the node graph.
-        node_width: Latent dimensions of a numeric node.
+        node_width: Latent dimensions of a numeric node; a concat node has its parents' widths
+            together.
         node_categorical_share: Probability that a node is categorical, a one-hot node.
         node_class_count: Classes of a categorical node, and levels of a lookup edge.
         node_nested_share: Probability that a categorical node with categorical parents nests
             its classes in one of them: each parent class allows a drawn subset of the classes.
-        node_ops: Reduction over the edges of a node with several parents; concat only when the
-            node is at least as wide as it has parents.
+        node_ops: Reduction over the edges of a numeric node with several parents.
         node_noise_std: Standard deviation of the Gaussian noise of a node.
         key_reader_share: Share of the table's nodes that read the edges crossing one key, drawn
             per key; at least one node reads.
@@ -330,11 +325,22 @@ class TablePrior:
         n = self.node_count.draw(rng)
         parents = self.node_layouts.draw(rng).sample(n, rng)
         categorical = rng.random(n) < self.node_categorical_share
-        dims = [
-            self.node_class_count.draw(rng) if categorical[i] else self.node_width.draw(rng)
+        ops = [
+            self.node_ops.draw(rng) if len(parents[i]) > 1 and not categorical[i] else "sum"
             for i in range(n)
         ]
-        nodes = {f"n{i}": self.node(parents[i], dims, i, categorical, rng, time) for i in range(n)}
+        dims: list[int] = []
+        for i in range(n):
+            if categorical[i]:
+                dims.append(self.node_class_count.draw(rng))
+            elif ops[i] == "concat":
+                dims.append(sum(dims[p] for p in parents[i]))
+            else:
+                dims.append(self.node_width.draw(rng))
+        nodes = {
+            f"n{i}": self.node(parents[i], ops[i], dims, i, categorical, rng, time)
+            for i in range(n)
+        }
         columns = {"id": Column(kind="key")}
         feature_nodes = rng.permutation(n)[: rng.integers(1, n + 1)]
         for c in range(self.column_count.draw(rng)):
@@ -354,6 +360,7 @@ class TablePrior:
     def node(
         self,
         sources: tuple[int, ...],
+        op: str,
         dims: list[int],
         i: int,
         categorical: np.ndarray,
@@ -379,9 +386,7 @@ class TablePrior:
             series = time and rng.random() < self.root_series_share
             noise = self.series(rng) if series else self.root_noise.draw(rng)
             return Node(dim=dims[i], noise=noise)
-        ops = self.node_ops if dims[i] >= len(sources) else self.node_ops.without(("concat",))
-        op = ops.draw(rng) if len(sources) > 1 else "sum"
-        widths = _parts(dims[i], len(sources), rng) if op == "concat" else [dims[i]] * len(sources)
+        widths = [dims[p] if op == "concat" else dims[i] for p in sources]
         edges = tuple(self.edge(f"n{p}", dims[p], w, False, rng) for p, w in zip(sources, widths))
         return Node(edges, op, noise=Normal(std=self.node_noise_std.draw(rng)))
 
