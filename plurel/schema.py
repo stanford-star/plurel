@@ -211,11 +211,8 @@ class Schema:
         noise stream: an intervened node takes its value, any other its edges plus noise."""
         latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
         for (table, name), stream in zip(self.order, rng.spawn(len(self.order))):
-            node, n, forced = (
-                self.tables[table].nodes[name],
-                rows[table],
-                interventions.get(table, {}),
-            )
+            node, n = self.tables[table].nodes[name], rows[table]
+            forced = interventions.get(table, {})
             if name in forced:
                 latents[table][name] = intervention(forced[name], n, node.dim)
                 continue
