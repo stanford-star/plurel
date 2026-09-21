@@ -207,7 +207,9 @@ class TablePrior:
     """Random single-table SCM prior.
 
     Ranges and choices are warped once per table, then drawn per use. A calendar time column
-    is added only on request; a schema prior decides it by table role.
+    is added only on request; a schema prior decides it by table role. Nodes standardize their
+    signal, so noise, bias and crossing terms are at unit scale; a categorical node with a
+    nested edge keeps its raw scores, so the mask holds.
 
     Attributes:
         node_count: Nodes in the table's DAG.
@@ -219,7 +221,8 @@ class TablePrior:
         node_nested_share: Probability that a categorical node with categorical parents nests
             its classes in one of them: each parent class allows a drawn subset of the classes.
         node_ops: Reduction over the edges of a numeric node with several parents.
-        node_noise_std: Standard deviation of the Gaussian noise of a node.
+        node_noise_std: Standard deviation of the Gaussian noise of a numeric node, relative
+            to its standardized signal.
         key_reader_share: Share of the table's nodes that read the edges crossing one key, drawn
             per key; at least one node reads.
         edge_families: Edge family per edge, among those fitting its widths: linear keeps a
@@ -379,16 +382,16 @@ class TablePrior:
                 else self.edge(f"n{p}", dims[p], dims[i], True, rng)
                 for p in sources
             )
-            return Node(
-                edges, bias=tuple(rng.normal(0.0, 0.5, dims[i])), onehot=True, noise=Gumbel()
-            )
+            bias = tuple(rng.normal(0.0, 0.5, dims[i]))
+            return Node(edges, bias=bias, onehot=True, noise=Gumbel(), standardize=nested < 0)
         if not sources:
             series = time and rng.random() < self.root_series_share
             noise = self.series(rng) if series else self.root_noise.draw(rng)
-            return Node(dim=dims[i], noise=noise)
+            return Node(dim=dims[i], noise=noise, standardize=True)
         widths = [dims[p] if op == "concat" else dims[i] for p in sources]
         edges = tuple(self.edge(f"n{p}", dims[p], w, False, rng) for p, w in zip(sources, widths))
-        return Node(edges, op, noise=Normal(std=self.node_noise_std.draw(rng)))
+        noise = Normal(std=self.node_noise_std.draw(rng))
+        return Node(edges, op, noise=noise, standardize=True)
 
     def edge(
         self, parent: str, d_in: int, d_out: int, block: bool, rng: np.random.Generator
@@ -411,7 +414,7 @@ class TablePrior:
         p = int(rng.integers(len(dims)))
         edge = self.edge(f"n{p}", dims[p], 2, True, rng)
         bias = (0.0, float(np.log(rate / (1.0 - rate))))
-        return Node((edge,), bias=bias, onehot=True, noise=Gumbel())
+        return Node((edge,), bias=bias, onehot=True, noise=Gumbel(), standardize=True)
 
     def series(self, rng: np.random.Generator) -> TimeSeries:
         trend = Trend(self.series_trend_alpha.draw(rng), self.series_trend_scale.draw(rng))

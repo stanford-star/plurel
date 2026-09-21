@@ -34,6 +34,15 @@ def apply_transform(transform: Function, x: np.ndarray) -> np.ndarray:
     return transform(x) if callable(transform) else TRANSFORMS[transform](x)
 
 
+def standardize(x: np.ndarray) -> np.ndarray:
+    """Zero mean and unit deviation per column; a constant column is zero."""
+    if not len(x):
+        return x
+    centered = x - x.mean(0)
+    deviation = centered.std(0)
+    return centered / np.where(deviation > 0.0, deviation, 1.0)
+
+
 def _normal_edges(probabilities: tuple[float, ...]) -> np.ndarray:
     cuts = np.cumsum(probabilities)[:-1]
     return np.asarray([NormalDist().inv_cdf(float(np.clip(c, 1e-6, 1 - 1e-6))) for c in cuts])
@@ -220,7 +229,9 @@ class Node:
 
     Without edges the node is a root whose value is its noise, `dim` wide. With `onehot`
     the node emits the one-hot argmax of its scores; with Gumbel noise that samples the
-    class from the softmax of the scores.
+    class from the softmax of the scores. With `standardize` the signal, the reduction plus
+    any crossing terms, is standardized per dimension before noise and bias are added, so
+    the noise is relative to a unit-scale signal.
     """
 
     edges: tuple[Edge, ...] = ()
@@ -229,6 +240,7 @@ class Node:
     onehot: bool = False
     dim: int | None = None
     noise: Distribution | None = field(default_factory=Normal, kw_only=True)
+    standardize: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
         if self.op not in REDUCTIONS:
@@ -254,9 +266,21 @@ class Node:
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, self.dim))
 
-    def evaluate(self, latents: Mapping[Hashable, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
+    def evaluate(
+        self,
+        latents: Mapping[Hashable, np.ndarray],
+        exogenous: np.ndarray,
+        across: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """The value from the parents' latents, the exogenous term and, if given, the summed
+        contributions of the crossing edges."""
         terms = [edge.apply(latents[edge.parent]) for edge in self.edges]
-        value = REDUCTIONS[self.op](terms) + exogenous if terms else exogenous
+        signal = REDUCTIONS[self.op](terms) if terms else np.zeros_like(exogenous)
+        if across is not None:
+            signal = signal + across
+        if self.standardize:
+            signal = standardize(signal)
+        value = signal + exogenous
         if self.bias is not None:
             value = value + np.asarray(self.bias)
         return np.eye(self.dim)[value.argmax(1)] if self.onehot else value

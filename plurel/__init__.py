@@ -37,6 +37,7 @@ from plurel.graph import (
     apply_transform,
     bin_levels,
     nested_logits,
+    standardize,
 )
 from plurel.io import (
     create_database,
@@ -141,5 +142,6 @@ __all__ = [
     "rank_map",
     "read_database",
     "split_timestamps",
+    "standardize",
     "write_database",
 ]

@@ -16,7 +16,7 @@ from plurel import (
     Normal,
     Uniform,
 )
-from plurel.graph import AGGREGATES, Foreign, Summary
+from plurel.graph import AGGREGATES, Foreign, Summary, standardize
 from plurel.links import HSBMLink, RandomLink, TreeLink
 from plurel.schema import FK, Schema
 
@@ -566,3 +566,13 @@ def test_child_events_follow_their_parent_events():
     when = frames["orders"]["when"].to_numpy()
     assert (when >= signup).all() and frames["orders"]["when"].dtype == "datetime64[ns]"
     assert frames["customers"]["signup"].is_monotonic_increasing
+
+
+def test_crossing_terms_join_a_standardized_signal():
+    parent = SCM({"x": Node(noise=Normal(5.0, 10.0))}, {"id": Column(kind="key")})
+    child = SCM({"y": Node(dim=1, noise=None, standardize=True)}, {"id": Column(kind="key")})
+    crossings = {("c", "y"): (LinearEdge(Foreign("p_id", "x"), 3.0),)}
+    schema = Schema({"p": parent, "c": child}, (FK("c", "p_id", "p"),), crossings)
+    frames, latents = schema.sample_with_latents({"p": 50, "c": 400}, seed=1)
+    read = latents["p"]["x"][frames["c"]["p_id"].to_numpy(dtype=int)]
+    assert np.allclose(latents["c"]["y"], standardize(3.0 * read))
