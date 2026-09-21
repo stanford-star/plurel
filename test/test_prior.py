@@ -12,7 +12,7 @@ from plurel.distributions import (
     TimeSeries,
     Uniform,
 )
-from plurel.graph import EDGES, REDUCTIONS, Foreign, LookupEdge, MatrixEdge, NearestEdge, Summary
+from plurel.graph import EDGES, REDUCTIONS, Foreign, LookupEdge, NearestEdge, Summary
 from plurel.io import create_database
 from plurel.links import TreeLink
 from plurel.prior import (
@@ -149,25 +149,26 @@ def test_table_prior_knobs_are_respected():
     assert sample(scm, 5, seed=0).shape[0] == 5
 
 
-def test_nested_categorical_nodes_stay_within_their_parents_classes():
+def test_nested_categorical_nodes_refine_their_parents_classes():
     prior = TablePrior(
         node_categorical_share=1.0, node_nested_share=1.0, node_count=IntegersRange(4, 8)
     )
     seen = 0
-    for seed in range(6):
+    for seed in range(12):
         scm = prior.realize(seed)
         latents = Schema({"t": scm}).sample_with_latents({"t": 300}, seed=seed)[1]["t"]
         for name, node in scm.nodes.items():
-            nested = [
-                e for e in node.edges if isinstance(e, MatrixEdge) and (e.matrix < -100).any()
-            ]
-            assert len(nested) <= 1 and len(nested) == (len(node.parents) > 0 and name[0] == "n")
-            for edge in nested:
-                allowed = edge.matrix > -100
-                assert allowed.any(1).all()
-                assert allowed[latents[edge.parent].argmax(1), latents[name].argmax(1)].all()
-                seen += 1
-    assert seen > 10
+            if node.noise is not None:
+                continue
+            parent, choice = node.edges
+            assert node.op == "product" and choice.parent == f"k{name[1:]}"
+            parts, picks = parent.matrix, choice.matrix
+            assert (parts.sum(0) == 1).all() and parts.any(1).all() and picks.shape[0] >= 2
+            assert parts[latents[parent.parent].argmax(1), latents[name].argmax(1)].all()
+            chooser = scm.nodes[choice.parent]
+            assert chooser.onehot and not {parent.parent, name} & set(chooser.parents)
+            seen += 1
+    assert seen > 6
 
 
 def test_structured_missingness_follows_its_indicator_node():

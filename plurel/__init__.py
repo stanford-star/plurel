@@ -36,7 +36,6 @@ from plurel.graph import (
     TreeEdge,
     apply_transform,
     bin_levels,
-    nested_logits,
     standardize,
 )
 from plurel.io import (
@@ -137,7 +136,6 @@ __all__ = [
     "bin_levels",
     "create_database",
     "generator",
-    "nested_logits",
     "order_by_time",
     "rank_map",
     "read_database",

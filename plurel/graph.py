@@ -57,18 +57,6 @@ def bin_levels(latent: np.ndarray, probabilities: tuple[float, ...]) -> np.ndarr
     return np.digitize(latent, _normal_edges(probabilities))
 
 
-def nested_logits(
-    allowed: tuple[tuple[int, ...], ...], probabilities: tuple[float, ...]
-) -> np.ndarray:
-    """Log-probabilities of the levels under each code; a level the code does not allow sits at
-    the most negative finite value, which no finite score lifts."""
-    mask = np.zeros((len(allowed), len(probabilities)))
-    for code, subset in enumerate(allowed):
-        mask[code, list(subset)] = 1.0
-    scores = np.where(mask > 0, mask * np.asarray(probabilities), 1.0)
-    return np.where(mask > 0, np.log(scores), -np.finfo(float).max)
-
-
 def _check_probabilities(probabilities: tuple[float, ...] | None, size: int) -> None:
     if probabilities is None:
         return
