@@ -5,6 +5,7 @@ from plurel.distributions import Gumbel, Mixture, Normal
 from plurel.graph import (
     EDGES,
     REDUCTIONS,
+    TRANSFORM_NAMES,
     FourierEdge,
     LinearEdge,
     LookupEdge,
@@ -14,8 +15,8 @@ from plurel.graph import (
     Node,
     QuadraticEdge,
     TreeEdge,
+    apply_transform,
     bin_levels,
-    nested_logits,
     standardize,
 )
 
@@ -167,20 +168,6 @@ def test_one_hot_node_is_a_gumbel_argmax_over_the_combined_scores(latents):
     np.testing.assert_allclose(draws.mean(0), PROBABILITIES, atol=0.02)
 
 
-def test_nested_levels_are_a_softmax_over_masked_logits():
-    allowed = ((0, 1), (2,), (3, 4))
-    rng = np.random.default_rng(0)
-    country = Node(bias=(0.0,) * 3, onehot=True, noise=Gumbel())
-    city = Node(
-        (MatrixEdge("country", nested_logits(allowed, (0.2,) * 5)),), onehot=True, noise=Gumbel()
-    )
-    countries = country.evaluate({}, country.sample_noise(N, rng))
-    cities = city.evaluate({"country": countries}, city.sample_noise(N, rng))
-    assert city.dim == 5
-    for code, subset in enumerate(allowed):
-        assert set(cities[countries.argmax(1) == code].argmax(1)) <= set(subset)
-
-
 def test_nearest_edge_one_hot_encodes_the_closest_center(latents):
     one_hot = NearestEdge("h", CENTERS).apply(latents["h"])
     assert (one_hot.sum(1) == 1).all()
@@ -236,3 +223,10 @@ def test_standardize_gives_a_unit_scale_signal_that_crossing_terms_join():
     assert np.allclose(
         raw.evaluate({"x": x[:, :1]}, zeros + 1.0, across), 2.0 * x[:, :1] + 1.0 + across
     )
+
+
+def test_transforms_stay_finite_on_wide_inputs():
+    x = np.linspace(-50.0, 50.0, 1001)
+    for name in TRANSFORM_NAMES:
+        y = apply_transform(name, x)
+        assert y.shape == x.shape and np.isfinite(y).all() and len(np.unique(y)) > 1

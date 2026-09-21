@@ -1,8 +1,18 @@
 import numpy as np
 import pytest
 
-from plurel.distributions import Beta, Exponential, Mixture, Normal, Poisson, TimeSeries, Uniform
-from plurel.graph import EDGES, REDUCTIONS, Foreign, LookupEdge, MatrixEdge, NearestEdge, Summary
+from plurel.distributions import (
+    Beta,
+    Exponential,
+    LogNormal,
+    Mixture,
+    Normal,
+    Pareto,
+    Poisson,
+    TimeSeries,
+    Uniform,
+)
+from plurel.graph import EDGES, REDUCTIONS, Foreign, LookupEdge, NearestEdge, Summary
 from plurel.io import create_database
 from plurel.links import TreeLink
 from plurel.prior import (
@@ -50,7 +60,7 @@ def test_choices_and_ranges_draw_within_their_declarations():
 
 def test_table_prior_realizes_valid_diverse_tables():
     prior = TablePrior()
-    families, kinds, ops, noises, binnings, missing = (set() for _ in range(6))
+    families, kinds, ops, noises, binnings, missing, calendars = (set() for _ in range(7))
     for seed in range(40):
         time = seed % 2 == 1
         scm = prior.realize(seed, time=time)
@@ -63,29 +73,47 @@ def test_table_prior_realizes_valid_diverse_tables():
             if node.op == "concat":
                 assert node.dim == sum(scm.nodes[p].dim for p in node.parents)
             else:
-                assert 1 <= node.dim <= 8
+                assert 1 <= node.dim <= 10
             families.update(type(edge) for edge in node.edges)
             ops.add(node.op)
             if not node.parents and not node.onehot and name != "time":
                 noises.add(type(node.noise))
                 assert time or not isinstance(node.noise, TimeSeries)
-        for column in scm.columns.values():
+        for name, column in scm.columns.items():
             kinds.add(column.kind)
             binnings.add(column.binning)
             missing.add(type(column.missing))
+            if isinstance(column.marginal, Mixture) and column.marginal.components[0] == Normal(
+                0.0, 0.0
+            ):
+                assert (frame[name].dropna() == 0.0).mean() > 0.2
+        if time:
+            calendars.add(scm.nodes["time"].noise)
     assert families == {EDGES[name] for name in FAMILIES} and set(FAMILIES) == set(EDGES)
     assert kinds == {"key", "numeric", "categorical", "timestamp"}
     assert ops == set(REDUCTIONS)
-    assert noises == {Normal, Uniform, Mixture, Beta, Exponential, Poisson, TimeSeries}
+    assert noises == {
+        Normal,
+        Uniform,
+        Mixture,
+        Beta,
+        Exponential,
+        LogNormal,
+        Pareto,
+        Poisson,
+        TimeSeries,
+    }
     assert binnings == {"normal", "empirical"} and missing == {float, str}
+    assert len(calendars) > 1
 
 
 def test_table_prior_knobs_are_respected():
+    never = Range(0.0, 0.0)
     plain = TablePrior(
-        node_categorical_share=0.0,
-        column_binned_share=0.0,
-        column_missing_share=0.0,
-        root_series_share=0.0,
+        node_categorical_share=never,
+        column_binned_share=never,
+        column_missing_share=never,
+        root_series_share=never,
     )
     for seed in range(10):
         scm = plain.realize(seed, time=True)
@@ -94,7 +122,7 @@ def test_table_prior_knobs_are_respected():
         assert all(c.kind != "categorical" for c in scm.columns.values())
         assert all(c.missing == 0.0 for c in scm.columns.values())
         assert not sample(scm, 50, seed=seed).isna().any().any()
-    seasonal = TablePrior(root_series_share=1.0, node_categorical_share=0.0)
+    seasonal = TablePrior(root_series_share=Range(1.0, 1.0), node_categorical_share=never)
     for seed in range(5):
         scm = seasonal.realize(seed, time=True)
         roots = [m for n, m in scm.nodes.items() if not m.parents and not m.onehot and n != "time"]
@@ -122,29 +150,9 @@ def test_table_prior_knobs_are_respected():
     assert sample(scm, 5, seed=0).shape[0] == 5
 
 
-def test_nested_categorical_nodes_stay_within_their_parents_classes():
-    prior = TablePrior(
-        node_categorical_share=1.0, node_nested_share=1.0, node_count=IntegersRange(4, 8)
-    )
-    seen = 0
-    for seed in range(6):
-        scm = prior.realize(seed)
-        latents = Schema({"t": scm}).sample_with_latents({"t": 300}, seed=seed)[1]["t"]
-        for name, node in scm.nodes.items():
-            nested = [
-                e for e in node.edges if isinstance(e, MatrixEdge) and (e.matrix < -100).any()
-            ]
-            assert len(nested) <= 1 and len(nested) == (len(node.parents) > 0 and name[0] == "n")
-            for edge in nested:
-                allowed = edge.matrix > -100
-                assert allowed.any(1).all()
-                assert allowed[latents[edge.parent].argmax(1), latents[name].argmax(1)].all()
-                seen += 1
-    assert seen > 10
-
-
 def test_structured_missingness_follows_its_indicator_node():
-    prior = TablePrior(column_missing_share=1.0, column_missing_structured_share=1.0)
+    always = Range(1.0, 1.0)
+    prior = TablePrior(column_missing_share=always, column_missing_structured_share=always)
     for seed in range(5):
         scm = prior.realize(seed)
         frames, latents = Schema({"t": scm}).sample_with_latents({"t": 300}, seed=seed)
@@ -169,7 +177,7 @@ def test_warping_gives_each_realization_its_own_style():
     assert choices.values == ("a", "b", "c") and choices.weights[2] == 0.0
     prior = TablePrior().warp(rng)
     assert prior.node_count.shape is not None and prior.edge_families.weights is not None
-    assert prior.node_categorical_share == TablePrior().node_categorical_share
+    assert prior.fourier_frequency_count == TablePrior().fourier_frequency_count
     meta = [
         np.mean([m.dim for m in TablePrior().realize(seed).nodes.values()]) for seed in range(60)
     ]
@@ -185,7 +193,11 @@ def test_warping_gives_each_realization_its_own_style():
     assert np.var(meta) > 1.5 * np.var(flat)
 
 
-SMALL = dict(entity_row_count=IntegersRange(60, 120), activity_row_count=IntegersRange(300, 600))
+SMALL = dict(
+    entity_row_count=IntegersRange(60, 120),
+    activity_row_count=IntegersRange(300, 600),
+    link_level_count=IntegersRange(1, 3),
+)
 
 
 def summarized(schema, table):
@@ -217,6 +229,15 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
         pairs = [(fk.table, fk.parent) for fk in schema.fkeys]
         if len(pairs) > len(set(pairs)):
             seen.add("duplicate")
+        summarized_keys = {
+            (e.parent.table, e.parent.key)
+            for edges in schema.crossings.values()
+            for e in edges
+            if isinstance(e.parent, Summary)
+        }
+        for fk in schema.fkeys:
+            if fk.table != fk.parent and schema.tables[fk.table].time_column is None:
+                seen.add("aggregate" if (fk.table, fk.column) in summarized_keys else "silent key")
         for (table, name), edges in schema.crossings.items():
             scm = schema.tables[table]
             for tail in (edge.parent for edge in edges):
@@ -240,17 +261,17 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
         for table in cut.table_dict.values():
             for column, parent in table.fkey_col_to_pkey_table.items():
                 assert table.df[column].dropna().lt(len(cut.table_dict[parent].df)).all()
-    assert seen == {"gather", "aggregate", "self", "duplicate", "wide aggregate"}
+    assert seen == {"gather", "aggregate", "silent key", "self", "duplicate", "wide aggregate"}
 
 
 def test_schema_prior_knobs_switch_cross_table_structure_off():
     quiet = SchemaPrior(
         **SMALL,
         gather_count=IntegersRange(0, 0),
-        aggregate_count=IntegersRange(0, 0),
-        self_reference_probability=0.0,
-        fk_nullable_share=0.0,
-        fk_duplicate_share=0.0,
+        aggregate_share=Range(0.0, 0.0),
+        self_reference_share=Range(0.0, 0.0),
+        fk_nullable_share=Range(0.0, 0.0),
+        fk_duplicate_share=Range(0.0, 0.0),
     )
     for seed in range(8):
         schema = quiet.realize(seed)
@@ -263,7 +284,9 @@ def test_schema_prior_knobs_switch_cross_table_structure_off():
 
 
 def test_schema_prior_edge_cases():
-    single = SchemaPrior(**SMALL, table_count=IntegersRange(1, 1), self_reference_probability=1.0)
+    single = SchemaPrior(
+        **SMALL, table_count=IntegersRange(1, 1), self_reference_share=Range(1.0, 1.0)
+    )
     for seed in range(6):
         schema = single.realize(seed)
         assert len(schema.tables) == 1 and not schema.fkeys
@@ -273,7 +296,7 @@ def test_schema_prior_edge_cases():
         **SMALL,
         table_count=IntegersRange(2, 2),
         table_prior=TablePrior(node_count=IntegersRange(1, 2)),
-        self_reference_probability=1.0,
+        self_reference_share=Range(1.0, 1.0),
         gather_count=IntegersRange(3, 3),
     )
     for seed in range(12):

@@ -17,6 +17,11 @@ TRANSFORMS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
     "step": lambda x: np.where(x > 0.0, 0.8, -0.8),
     "cube": lambda x: np.clip(x, -3.0, 3.0) ** 3 / 9.0,
     "exp": lambda x: np.exp(np.clip(x, -2.5, 2.5)),
+    "sigmoid": lambda x: np.tanh(x / 2.0) / 2.0,
+    "softplus": lambda x: np.logaddexp(0.0, x) - 0.7,
+    "abs": lambda x: np.abs(x) - 0.8,
+    "sin": np.sin,
+    "log": lambda x: np.sign(x) * np.log1p(np.abs(x)),
 }
 TRANSFORM_NAMES = tuple(TRANSFORMS)
 
@@ -50,15 +55,6 @@ def _normal_edges(probabilities: tuple[float, ...]) -> np.ndarray:
 
 def bin_levels(latent: np.ndarray, probabilities: tuple[float, ...]) -> np.ndarray:
     return np.digitize(latent, _normal_edges(probabilities))
-
-
-def nested_logits(
-    allowed: tuple[tuple[int, ...], ...], probabilities: tuple[float, ...]
-) -> np.ndarray:
-    mask = np.zeros((len(allowed), len(probabilities)))
-    for code, subset in enumerate(allowed):
-        mask[code, list(subset)] = 1.0
-    return np.log(np.maximum(mask * np.asarray(probabilities), np.finfo(float).tiny))
 
 
 def _check_probabilities(probabilities: tuple[float, ...] | None, size: int) -> None:
