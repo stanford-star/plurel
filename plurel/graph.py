@@ -262,6 +262,66 @@ class Node:
         return np.eye(self.dim)[value.argmax(1)] if self.onehot else value
 
 
+COMPLETE = ("count", "sum")
+
+
+def _sum(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
+    out = np.zeros((n, values.shape[1]))
+    np.add.at(out, indices, values)
+    return out
+
+
+def _mean(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
+    count = np.bincount(indices, minlength=n)[:, None]
+    total = _sum(values, indices, n)
+    return np.divide(total, count, out=np.full_like(total, np.nan), where=count > 0)
+
+
+def _extreme(op: np.ufunc, start: float) -> Callable[..., np.ndarray]:
+    def aggregate(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
+        out = np.full((n, values.shape[1]), start)
+        op.at(out, indices, values)
+        out[np.bincount(indices, minlength=n) == 0] = np.nan
+        return out
+
+    return aggregate
+
+
+AGGREGATES: dict[str, Callable[..., np.ndarray]] = {
+    "count": lambda values, indices, n: np.bincount(indices, minlength=n)[:, None].astype(float),
+    "sum": lambda values, indices, n: _sum(values, indices, n),
+    "mean": _mean,
+    "max": _extreme(np.maximum, -np.inf),
+    "min": _extreme(np.minimum, np.inf),
+}
+
+
+@dataclass(frozen=True)
+class Foreign:
+    """Tail of an edge crossing a key: `node` of the row that `key` points at."""
+
+    key: str
+    node: str
+
+
+@dataclass(frozen=True)
+class Summary:
+    """Tail of an edge aggregating, per row, the rows of `table` that point at it through
+    `key`; `fill` is read where no row does, needed for mean, max and min."""
+
+    table: str
+    key: str
+    node: str
+    how: str
+    fill: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.how not in AGGREGATES:
+            raise ValueError(f"how must be one of {tuple(AGGREGATES)}")
+        if self.fill is not None and (self.how in COMPLETE or not np.isfinite(self.fill)):
+            raise ValueError("fill is a finite value for mean, max or min only")
+
+
 EDGES: dict[str, type] = {
     "linear": LinearEdge,
     "lookup": LookupEdge,

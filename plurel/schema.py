@@ -1,19 +1,18 @@
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass
+from graphlib import CycleError, TopologicalSorter
 from operator import index as as_int
 
 import numpy as np
 import pandas as pd
 
+from plurel.columns import Column
+from plurel.graph import AGGREGATES, COMPLETE, Foreign, Node, Summary
 from plurel.links import Link, RandomLink, TreeLink
-from plurel.mechanisms import Node
 from plurel.random import Seed, generator
-from plurel.scm import SCM, topological
 
 Links = dict[tuple[str, str], np.ndarray]
 Interventions = Mapping[str, float | np.ndarray]
-
-COMPLETE = ("count", "sum")
 
 
 def intervention(value: float | np.ndarray, n: int, dim: int) -> np.ndarray:
@@ -32,37 +31,6 @@ def checked(name: str, node: Node, latent: np.ndarray, n: int) -> np.ndarray:
     if not np.isfinite(latent).all():
         raise ValueError(f"{name!r} produced non-finite values")
     return latent
-
-
-def _sum(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
-    out = np.zeros((n, values.shape[1]))
-    np.add.at(out, indices, values)
-    return out
-
-
-def _mean(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
-    count = np.bincount(indices, minlength=n)[:, None]
-    total = _sum(values, indices, n)
-    return np.divide(total, count, out=np.full_like(total, np.nan), where=count > 0)
-
-
-def _extreme(op: np.ufunc, start: float) -> Callable[..., np.ndarray]:
-    def aggregate(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
-        out = np.full((n, values.shape[1]), start)
-        op.at(out, indices, values)
-        out[np.bincount(indices, minlength=n) == 0] = np.nan
-        return out
-
-    return aggregate
-
-
-AGGREGATES: dict[str, Callable[..., np.ndarray]] = {
-    "count": lambda values, indices, n: np.bincount(indices, minlength=n)[:, None].astype(float),
-    "sum": lambda values, indices, n: _sum(values, indices, n),
-    "mean": _mean,
-    "max": _extreme(np.maximum, -np.inf),
-    "min": _extreme(np.minimum, np.inf),
-}
 
 
 @dataclass(frozen=True)
@@ -86,30 +54,61 @@ class FK:
             raise ValueError("fill must be finite")
 
 
-@dataclass(frozen=True)
-class Foreign:
-    """Tail of an edge crossing a key: `node` of the row that `key` points at."""
+def topological[T: Hashable](parents: Mapping[T, tuple[T, ...]]) -> tuple[T, ...]:
+    try:
+        return tuple(TopologicalSorter(parents).static_order())
+    except CycleError as error:
+        raise ValueError("nodes must form a directed acyclic graph") from error
 
-    key: str
-    node: str
 
+class SCM:
+    """A table's DAG and the columns that observe it; a Schema executes it. Edge tails that
+    cross keys are the table's `inputs`."""
 
-@dataclass(frozen=True)
-class Summary:
-    """Tail of an edge aggregating, per row, the rows of `table` that point at it through
-    `key`; `fill` is read where no row does, needed for mean, max and min."""
-
-    table: str
-    key: str
-    node: str
-    how: str
-    fill: float | None = None
-
-    def __post_init__(self) -> None:
-        if self.how not in AGGREGATES:
-            raise ValueError(f"how must be one of {tuple(AGGREGATES)}")
-        if self.fill is not None and (self.how in COMPLETE or not np.isfinite(self.fill)):
-            raise ValueError("fill is a finite value for mean, max or min only")
+    def __init__(
+        self,
+        nodes: Mapping[str, Node],
+        columns: Mapping[str, Column],
+        time_column: str | None = None,
+    ) -> None:
+        self.nodes = dict(nodes)
+        inputs: set[Hashable] = set()
+        for child, node in self.nodes.items():
+            local = {parent for parent in node.parents if isinstance(parent, str)}
+            if unknown := local - set(self.nodes):
+                raise ValueError(f"{child!r} refers to unknown parents {sorted(unknown)}")
+            inputs |= set(node.parents) - local
+        self.inputs = frozenset(inputs)
+        parents = {
+            name: tuple(parent for parent in node.parents if isinstance(parent, str))
+            for name, node in self.nodes.items()
+        }
+        self.order = topological(parents)
+        self.columns = dict(columns)
+        for name, column in self.columns.items():
+            if column.kind == "key":
+                continue
+            needed = {column.node}
+            if isinstance(column.missing, str):
+                needed.add(column.missing)
+            if unknown := needed - set(self.nodes):
+                raise ValueError(f"column {name!r} refers to unknown nodes {sorted(unknown)}")
+        kinds = {name: column.kind for name, column in self.columns.items()}
+        for name, column in self.columns.items():
+            if column.after is not None and (
+                column.after == name or kinds.get(column.after) != "timestamp"
+            ):
+                raise ValueError(f"column {name!r} must come after another timestamp column")
+        keys = [name for name, kind in kinds.items() if kind == "key"]
+        if len(keys) > 1:
+            raise ValueError("a table has at most one key column")
+        if time_column is not None and kinds.get(time_column) != "timestamp":
+            raise ValueError(f"time column {time_column!r} must be a timestamp column")
+        self.pkey_column = keys[0] if keys else None
+        self.time_column = time_column
+        self.timestamp_nodes = frozenset(
+            column.node for column in self.columns.values() if column.kind == "timestamp"
+        )
 
 
 class Schema:

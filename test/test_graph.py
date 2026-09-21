@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from plurel.distributions import Gumbel, Mixture, Normal
-from plurel.mechanisms import (
+from plurel.graph import (
     EDGES,
     REDUCTIONS,
     FourierEdge,

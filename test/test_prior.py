@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
+from plurel.graph import EDGES
 from plurel.io import create_database
 from plurel.links import TreeLink
-from plurel.mechanisms import EDGES
 from plurel.prior import (
     FAMILIES,
     Choices,

@@ -4,9 +4,8 @@ import pytest
 
 from plurel.columns import DEFAULT_CALENDAR, Column
 from plurel.distributions import Exponential, Gumbel, Normal, Uniform
-from plurel.mechanisms import LinearEdge, MatrixEdge, NearestEdge, Node
-from plurel.schema import Schema
-from plurel.scm import SCM
+from plurel.graph import LinearEdge, MatrixEdge, NearestEdge, Node
+from plurel.schema import SCM, Schema
 
 
 def simulate(scm, n, *, seed=None, interventions=None):

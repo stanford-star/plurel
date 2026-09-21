@@ -13,17 +13,7 @@ from plurel.distributions import (
     Pareto,
     Uniform,
 )
-from plurel.layouts import (
-    BarabasiAlbert,
-    ErdosRenyi,
-    Layered,
-    RandomCauchy,
-    RandomTree,
-    ReverseRandomTree,
-    WattsStrogatz,
-)
-from plurel.links import HSBMLink, Link, RandomLink, TreeLink
-from plurel.mechanisms import (
+from plurel.graph import (
     TRANSFORM_NAMES,
     Edge,
     FourierEdge,
@@ -34,9 +24,18 @@ from plurel.mechanisms import (
     QuadraticEdge,
     TreeEdge,
 )
+from plurel.layouts import (
+    BarabasiAlbert,
+    ErdosRenyi,
+    Layered,
+    RandomCauchy,
+    RandomTree,
+    ReverseRandomTree,
+    WattsStrogatz,
+)
+from plurel.links import HSBMLink, Link, RandomLink, TreeLink
 from plurel.random import Seed, generator
-from plurel.schema import COMPLETE, FK, Foreign, Schema, Summary
-from plurel.scm import SCM
+from plurel.schema import COMPLETE, FK, SCM, Foreign, Schema, Summary
 
 ACTIVATIONS = tuple(name for name in TRANSFORM_NAMES if name != "identity")
 
