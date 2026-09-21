@@ -9,8 +9,7 @@ from plurel.links import Link, RandomLink, TreeLink
 from plurel.random import Seed, generator
 from plurel.scm import SCM, Interventions, generations
 
-Location = tuple[str, str]
-Links = dict[Location, np.ndarray]
+Links = dict[tuple[str, str], np.ndarray]
 
 COMPLETE = ("count", "sum")
 
@@ -122,7 +121,7 @@ class Schema:
         self.keys = {(fk.table, fk.column): fk for fk in self.fkeys}
         if len(self.keys) != len(self.fkeys):
             raise ValueError("foreign key columns must be unique per table")
-        parents: dict[Location, tuple[Location, ...]] = {}
+        parents: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {}
         for table, scm in self.tables.items():
             for name, node in scm.nodes.items():
                 parents[table, name] = tuple(self.source(table, tail) for tail in node.parents)
@@ -130,14 +129,14 @@ class Schema:
                 if column.kind != "key" and not isinstance(column.missing, int | float | str):
                     self.check_marker(table, column.missing)
         self.generations = generations(parents)
-        self.order = tuple(location for generation in self.generations for location in generation)
+        self.order = tuple(node for generation in self.generations for node in generation)
 
     def key(self, table: str, column: str) -> FK:
         if (table, column) not in self.keys:
             raise ValueError(f"{table!r} has no key column {column!r}")
         return self.keys[table, column]
 
-    def source(self, table: str, tail: Hashable) -> Location:
+    def source(self, table: str, tail: Hashable) -> tuple[str, str]:
         """The node an edge tail of `table` reads, local or across a key."""
         if isinstance(tail, str):
             origin, node = table, tail
@@ -225,14 +224,14 @@ class Schema:
 
     def evaluate(
         self,
-        location: Location,
+        node: tuple[str, str],
         rows: Mapping[str, int],
         latents: dict[str, dict[str, np.ndarray]],
         links: Links,
         stream: np.random.Generator,
         interventions: Mapping[str, Interventions],
     ) -> np.ndarray:
-        table, name = location
+        table, name = node
         scm, forced = self.tables[table], interventions.get(table, {})
         inputs = {}
         if name not in forced:
@@ -251,9 +250,9 @@ class Schema:
         streams = dict(zip(self.order, rng.spawn(len(self.order))))
         latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
         for generation in self.generations:
-            for location in generation:
-                latents[location[0]][location[1]] = self.evaluate(
-                    location, rows, latents, links, streams[location], interventions
+            for table, name in generation:
+                latents[table][name] = self.evaluate(
+                    (table, name), rows, latents, links, streams[table, name], interventions
                 )
         return latents
 
