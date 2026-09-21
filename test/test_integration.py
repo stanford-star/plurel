@@ -25,33 +25,33 @@ from plurel.schema import COMPLETE, FK, Foreign, Schema, Summary
 
 def random_schema(rng):
     names = [f"t{i}" for i in range(int(rng.integers(1, 4)))]
-    mechanisms = {t: {} for t in names}
+    nodes = {t: {} for t in names}
     columns = {t: {f"{t}_id": Column(kind="key")} for t in names}
     fkeys = []
     for t in names:
         roots = [f"r{j}" for j in range(int(rng.integers(1, 4)))]
         for j, root in enumerate(roots):
-            mechanisms[t][root] = Node(noise=rng.choice([Normal(), Uniform(), LogNormal()]))
+            nodes[t][root] = Node(noise=rng.choice([Normal(), Uniform(), LogNormal()]))
             marginal = rng.choice([None, Uniform(), LogNormal(), Pareto(2.0)])
             columns[t][f"c{j}"] = Column(
                 root, marginal=marginal, missing=float(rng.choice([0.0, 0.2]))
             )
         k = int(rng.integers(2, 5))
-        mechanisms[t]["seg"] = Node(bias=tuple(rng.normal(size=k)), onehot=True, noise=Gumbel())
+        nodes[t]["seg"] = Node(bias=tuple(rng.normal(size=k)), onehot=True, noise=Gumbel())
         columns[t]["seg"] = Column(
             "seg", "categorical", categories=tuple(f"s{i}" for i in range(k))
         )
-        mechanisms[t]["h"] = Node(dim=int(rng.integers(1, 4)))
+        nodes[t]["h"] = Node(dim=int(rng.integers(1, 4)))
         if rng.random() < 0.5:
-            mechanisms[t]["stamp"] = Node(noise=DEFAULT_CALENDAR)
-            mechanisms[t]["later"] = Node((LinearEdge("stamp"),), noise=Exponential(3600.0))
+            nodes[t]["stamp"] = Node(noise=DEFAULT_CALENDAR)
+            nodes[t]["later"] = Node((LinearEdge("stamp"),), noise=Exponential(3600.0))
             columns[t]["stamp"] = Column("stamp", "timestamp")
             columns[t]["later"] = Column("later", "timestamp", after="stamp")
         terms = tuple(
             LinearEdge(root, float(rng.normal()), str(rng.choice(["identity", "tanh", "square"])))
             for root in roots
         )
-        mechanisms[t]["y"] = Node(terms, noise=Normal(std=0.3))
+        nodes[t]["y"] = Node(terms, noise=Normal(std=0.3))
         columns[t]["y"] = Column("y", marginal=rng.choice([None, Uniform(-1.0, 1.0)]))
         binning = str(rng.choice(["normal", "empirical"]))
         columns[t]["bin"] = Column(
@@ -73,9 +73,9 @@ def random_schema(rng):
         key = f"{parent}_fk"
         fkeys.append(FK(t, key, parent, link, nullable=float(rng.choice([0.0, 0.2])), fill=0.0))
         observed = bool(rng.random() < 0.5)
-        width = mechanisms[parent]["seg"].dim
-        mechanisms[t]["g_r0"] = Node((LinearEdge(Foreign(key, "r0")),), noise=None)
-        mechanisms[t]["g_seg"] = Node((LinearEdge(Foreign(key, "seg"), dim=width),), noise=None)
+        width = nodes[parent]["seg"].dim
+        nodes[t]["g_r0"] = Node((LinearEdge(Foreign(key, "r0")),), noise=None)
+        nodes[t]["g_seg"] = Node((LinearEdge(Foreign(key, "seg"), dim=width),), noise=None)
         columns[t]["g_seg"] = Column(
             "g_seg", "categorical", categories=tuple(f"p{i}" for i in range(width))
         )
@@ -83,24 +83,22 @@ def random_schema(rng):
             columns[t]["g_r0"] = Column("g_r0", marginal=Uniform())
         else:
             edges = (LinearEdge("g_r0", 2.0), MatrixEdge("g_seg", np.ones((width, 1))))
-            mechanisms[t]["z"] = Node(edges, noise=Normal(std=0.1))
+            nodes[t]["z"] = Node(edges, noise=Normal(std=0.1))
             columns[t]["z"] = Column("z")
         how = str(rng.choice(["count", "sum", "mean", "max"]))
         summary = Summary(t, key, "y", how, fill=None if how in COMPLETE else 0.0)
-        mechanisms[parent][f"a_{t}"] = Node((LinearEdge(summary),), noise=None)
-        mechanisms[parent][f"w_{t}"] = Node((LinearEdge(f"a_{t}", 0.5),), noise=Normal())
+        nodes[parent][f"a_{t}"] = Node((LinearEdge(summary),), noise=None)
+        nodes[parent][f"w_{t}"] = Node((LinearEdge(f"a_{t}", 0.5),), noise=Normal())
         columns[parent][f"a_{t}"] = Column(f"a_{t}")
         columns[parent][f"w_{t}"] = Column(f"w_{t}")
     if rng.random() < 0.4:
         t = names[0]
         fkeys.append(FK(t, "boss", t, TreeLink(roots=0.3), fill=0.0))
-        mechanisms[t]["boss_r0"] = Node((LinearEdge(Foreign("boss", "r0")),), noise=None)
-        mechanisms[t]["reports"] = Node(
-            (LinearEdge(Summary(t, "boss", "r0", "count")),), noise=None
-        )
+        nodes[t]["boss_r0"] = Node((LinearEdge(Foreign("boss", "r0")),), noise=None)
+        nodes[t]["reports"] = Node((LinearEdge(Summary(t, "boss", "r0", "count")),), noise=None)
         columns[t]["reports"] = Column("reports")
     tables = {
-        t: SCM(mechanisms[t], columns[t], time_column="stamp" if "stamp" in columns[t] else None)
+        t: SCM(nodes[t], columns[t], time_column="stamp" if "stamp" in columns[t] else None)
         for t in names
     }
     return Schema(tables, tuple(fkeys))
