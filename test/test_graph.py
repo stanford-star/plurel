@@ -179,8 +179,19 @@ def test_nested_levels_are_a_softmax_over_masked_logits():
     countries = country.evaluate({}, country.sample_noise(N, rng))
     cities = city.evaluate({"country": countries}, city.sample_noise(N, rng))
     assert city.dim == 5
+    loud = Node(
+        (
+            MatrixEdge("country", nested_logits(allowed, (0.2,) * 5)),
+            MatrixEdge("x", 1e6 * rng.normal(size=(3, 5))),
+        ),
+        onehot=True,
+        noise=Gumbel(),
+    )
+    x = rng.normal(size=(N, 3))
+    loud_cities = loud.evaluate({"country": countries, "x": x}, loud.sample_noise(N, rng))
     for code, subset in enumerate(allowed):
         assert set(cities[countries.argmax(1) == code].argmax(1)) <= set(subset)
+        assert set(loud_cities[countries.argmax(1) == code].argmax(1)) <= set(subset)
 
 
 def test_nearest_edge_one_hot_encodes_the_closest_center(latents):
