@@ -9,15 +9,16 @@ from plurel import (
     SCM,
     Column,
     Exponential,
-    LinearEffect,
+    LinearEdge,
     Node,
     Normal,
     Uniform,
 )
 from plurel.distributions import Gumbel
+from plurel.graph import Foreign, Summary
 from plurel.io import create_database, read_database, split_timestamps, write_database
 from plurel.links import HSBMLink, TreeLink
-from plurel.schema import FK, Port, Schema
+from plurel.schema import FK, Schema
 
 ROWS = {"customers": 40, "orders": 300}
 
@@ -33,7 +34,9 @@ def customers(key=True):
     return SCM(
         {
             "segment": Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()),
-            "spend": Port("orders", "amount", aggregate="sum"),
+            "spend": Node(
+                (LinearEdge(Summary("orders", "customer_id", "amount", "sum")),), noise=None
+            ),
         },
         columns,
     )
@@ -51,15 +54,15 @@ def orders(key=True, time_column="when"):
     return SCM(
         {
             "when": Node(),
-            "value": Port("customers", "spend", fill=np.nan),
-            "amount": Node((LinearEffect("when"),), noise=Normal(std=0.5)),
+            "value": Node((LinearEdge(Foreign("customer_id", "spend")),), noise=None),
+            "amount": Node((LinearEdge("when"),), noise=Normal(std=0.5)),
         },
         columns,
         time_column=time_column,
     )
 
 
-FKEYS = (FK("orders", "customer_id", "customers", HSBMLink((2,), (2,)), nullable=0.1),)
+FKEYS = (FK("orders", "customer_id", "customers", HSBMLink((2,), (2,)), nullable=0.1, fill=0.0),)
 
 
 @pytest.fixture
@@ -169,7 +172,9 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
         {
             "signup": Node(noise=seconds),
             "value": Node(),
-            "n_orders": Port("orders", "amount", aggregate="count"),
+            "n_orders": Node(
+                (LinearEdge(Summary("orders", "customer_id", "amount", "count")),), noise=None
+            ),
         },
         {
             "id": Column(kind="key"),
@@ -181,10 +186,10 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
     )
     orders = SCM(
         {
-            "signup": Port("customers", "signup"),
-            "when": Node((LinearEffect("signup"),), noise=Exponential(3600.0)),
-            "value": Port("customers", "value"),
-            "amount": Node((LinearEffect("value"),), noise=Normal(std=0.1)),
+            "signup": Node((LinearEdge(Foreign("customer_id", "signup")),), noise=None),
+            "when": Node((LinearEdge("signup"),), noise=Exponential(3600.0)),
+            "value": Node((LinearEdge(Foreign("customer_id", "value")),), noise=None),
+            "amount": Node((LinearEdge("value"),), noise=Normal(std=0.1)),
         },
         {
             "id": Column(kind="key"),
@@ -198,7 +203,7 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
         {
             "joined": Node(),
             "level": Node(),
-            "manager_level": Port("employees", "level", via="manager_id", fill=0.0),
+            "manager_level": Node((LinearEdge(Foreign("manager_id", "level")),), noise=None),
         },
         {
             "id": Column(kind="key"),
@@ -210,7 +215,7 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
     )
     fkeys = (
         FK("orders", "customer_id", "customers"),
-        FK("employees", "manager_id", "employees", TreeLink(roots=0.2)),
+        FK("employees", "manager_id", "employees", TreeLink(roots=0.2), fill=0.0),
     )
     schema = Schema({"customers": customers, "orders": orders, "employees": employees}, fkeys)
     rows = {"customers": 100, "orders": 1000, "employees": 80}

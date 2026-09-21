@@ -1,3 +1,4 @@
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass, fields, replace
 
 import numpy as np
@@ -13,6 +14,20 @@ from plurel.distributions import (
     Pareto,
     Uniform,
 )
+from plurel.graph import (
+    COMPLETE,
+    TRANSFORM_NAMES,
+    Edge,
+    Foreign,
+    FourierEdge,
+    LinearEdge,
+    MatrixEdge,
+    MLPEdge,
+    Node,
+    QuadraticEdge,
+    Summary,
+    TreeEdge,
+)
 from plurel.layouts import (
     BarabasiAlbert,
     ErdosRenyi,
@@ -23,65 +38,50 @@ from plurel.layouts import (
     WattsStrogatz,
 )
 from plurel.links import HSBMLink, Link, RandomLink, TreeLink
-from plurel.mechanisms import (
-    TRANSFORM_NAMES,
-    Effect,
-    FourierEffect,
-    LinearEffect,
-    MatrixEffect,
-    Mechanism,
-    MLPEffect,
-    Node,
-    QuadraticEffect,
-    TreeEffect,
-)
 from plurel.random import Seed, generator
-from plurel.schema import FK, Port, Schema
-from plurel.scm import SCM
+from plurel.schema import FK, SCM, Schema
 
 ACTIVATIONS = tuple(name for name in TRANSFORM_NAMES if name != "identity")
 
 
-def _linear(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
-    return LinearEffect(parent, float(rng.normal()), str(rng.choice(TRANSFORM_NAMES)), dim=d_in)
+def _linear(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
+    return LinearEdge(parent, float(rng.normal()), str(rng.choice(TRANSFORM_NAMES)), dim=d_in)
 
 
-def _matrix(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
-    return MatrixEffect(parent, rng.normal(0.0, 1.0 / np.sqrt(d_in), (d_in, d_out)))
+def _matrix(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
+    return MatrixEdge(parent, rng.normal(0.0, 1.0 / np.sqrt(d_in), (d_in, d_out)))
 
 
-def _mlp(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+def _mlp(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
     hidden = prior.mlp_hidden_width.draw(rng)
     weights = (
         rng.normal(0.0, 1.0 / np.sqrt(d_in), (d_in, hidden)),
         rng.normal(0.0, 1.0 / np.sqrt(hidden), (hidden, d_out)),
     )
     biases = (rng.normal(0.0, 0.5, hidden), np.zeros(d_out))
-    return MLPEffect(
-        parent, weights, biases, ("identity", str(rng.choice(ACTIVATIONS)), "identity")
-    )
+    return MLPEdge(parent, weights, biases, ("identity", str(rng.choice(ACTIVATIONS)), "identity"))
 
 
-def _tree(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+def _tree(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
     trees, depth = prior.tree_count.draw(rng), prior.tree_depth.draw(rng)
     splits = rng.integers(0, d_in, (trees, depth))
-    return TreeEffect(
+    return TreeEdge(
         parent, splits, rng.normal(size=(trees, depth)), rng.normal(size=(trees, 2**depth, d_out))
     )
 
 
-def _fourier(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+def _fourier(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
     frequencies = rng.normal(size=(d_in, prior.fourier_frequency_count)) * rng.uniform(0.5, 3.0)
     phases = rng.uniform(0.0, 2.0 * np.pi, prior.fourier_frequency_count)
     weights = rng.normal(
         0.0, 1.0 / np.sqrt(prior.fourier_frequency_count), (prior.fourier_frequency_count, d_out)
     )
-    return FourierEffect(parent, frequencies, phases, weights)
+    return FourierEdge(parent, frequencies, phases, weights)
 
 
-def _quadratic(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Effect:
+def _quadratic(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
     scale = 1.0 / (np.sqrt(d_in) * (d_in + 1))
-    return QuadraticEffect(parent, rng.normal(0.0, scale, (d_out, d_in + 1, d_in + 1)))
+    return QuadraticEdge(parent, rng.normal(0.0, scale, (d_out, d_in + 1, d_in + 1)))
 
 
 BUILDERS = {
@@ -190,14 +190,14 @@ class TablePrior:
         node_width: Latent dimensions of a numeric node.
         node_categorical_share: Probability that a node is categorical, a one-hot node.
         node_class_count: Classes of a categorical node.
-        effect_families: Effect family per edge; linear only when parent and node widths agree.
-        node_ops: Reduction over the effects of a node with several parents.
+        edge_families: Edge family per edge; linear only when parent and node widths agree.
+        node_ops: Reduction over the edges of a node with several parents.
         node_noise_std: Standard deviation of the Gaussian noise of a node.
         root_noise: Exogenous distribution of a source node.
-        mlp_hidden_width: Hidden width of an MLP effect.
-        tree_count: Oblivious trees in a tree effect.
+        mlp_hidden_width: Hidden width of an MLP edge.
+        tree_count: Oblivious trees in a tree edge.
         tree_depth: Depth of each oblivious tree.
-        fourier_frequency_count: Random Fourier features in a Fourier effect.
+        fourier_frequency_count: Random Fourier features in a Fourier edge.
         column_count: Observed columns besides the key.
         column_marginals: Marginal a numeric column is rank-mapped onto; None keeps the latent.
         column_binned_share: Probability that a numeric column is binned into categories instead.
@@ -214,7 +214,7 @@ class TablePrior:
     node_width: Range = LogIntegersRange(1, 4)
     node_categorical_share: float = 0.3
     node_class_count: Range = IntegersRange(2, 8)
-    effect_families: Choices = Choices(FAMILIES)
+    edge_families: Choices = Choices(FAMILIES)
     node_ops: Choices = Choices(("sum", "product", "max", "logsumexp"), (6.0, 1.0, 1.0, 1.0))
     node_noise_std: Range = LogRange(0.01, 0.5)
     root_noise: Choices = Choices(
@@ -235,8 +235,8 @@ class TablePrior:
     time_calendar: Calendar = DEFAULT_CALENDAR
 
     def __post_init__(self) -> None:
-        if set(self.effect_families.values) <= set(PRESERVING):
-            raise ValueError("effect_families needs a family that can change width")
+        if set(self.edge_families.values) <= set(PRESERVING):
+            raise ValueError("edge_families needs a family that can change width")
 
     def warp(self, rng: np.random.Generator) -> "TablePrior":
         knobs = {
@@ -258,42 +258,40 @@ class TablePrior:
             self.node_class_count.draw(rng) if categorical[i] else self.node_width.draw(rng)
             for i in range(n)
         ]
-        mechanisms = {
-            f"n{i}": self.mechanism(parents[i], dims, i, categorical[i], rng) for i in range(n)
-        }
+        nodes = {f"n{i}": self.node(parents[i], dims, i, categorical[i], rng) for i in range(n)}
         columns = {"id": Column(kind="key")}
         feature_nodes = rng.permutation(n)[: rng.integers(1, n + 1)]
         for c in range(self.column_count.draw(rng)):
             i = int(rng.choice(feature_nodes))
             columns[f"col{c}"] = self.column(i, dims[i], categorical[i], rng)
         if time:
-            mechanisms["time"] = Node(noise=self.time_calendar)
+            nodes["time"] = Node(noise=self.time_calendar)
             columns["time"] = Column("time", "timestamp")
-        return SCM(mechanisms, columns, time_column="time" if time else None)
+        return SCM(nodes, columns, time_column="time" if time else None)
 
-    def mechanism(
+    def node(
         self,
         sources: tuple[int, ...],
         dims: list[int],
         i: int,
         categorical: bool,
         rng: np.random.Generator,
-    ) -> Mechanism:
-        effects = tuple(self.effect(f"n{p}", dims[p], dims[i], categorical, rng) for p in sources)
+    ) -> Node:
+        edges = tuple(self.edge(f"n{p}", dims[p], dims[i], categorical, rng) for p in sources)
         if categorical:
             return Node(
-                effects, bias=tuple(rng.normal(0.0, 0.5, dims[i])), onehot=True, noise=Gumbel()
+                edges, bias=tuple(rng.normal(0.0, 0.5, dims[i])), onehot=True, noise=Gumbel()
             )
-        if not effects:
+        if not edges:
             return Node(dim=dims[i], noise=self.root_noise.draw(rng))
-        op = self.node_ops.draw(rng) if len(effects) > 1 else "sum"
-        return Node(effects, op, noise=Normal(std=self.node_noise_std.draw(rng)))
+        op = self.node_ops.draw(rng) if len(edges) > 1 else "sum"
+        return Node(edges, op, noise=Normal(std=self.node_noise_std.draw(rng)))
 
-    def effect(
+    def edge(
         self, parent: str, d_in: int, d_out: int, block: bool, rng: np.random.Generator
-    ) -> Effect:
+    ) -> Edge:
         preserving = d_in == d_out and not block
-        families = self.effect_families if preserving else self.effect_families.without(PRESERVING)
+        families = self.edge_families if preserving else self.edge_families.without(PRESERVING)
         return BUILDERS[families.draw(rng)](self, parent, d_in, d_out, rng)
 
     def column(self, i: int, dim: int, categorical: bool, rng: np.random.Generator) -> Column:
@@ -320,8 +318,36 @@ class TablePrior:
         return Column(node, dims=slot, marginal=self.column_marginals.draw(rng), missing=missing)
 
 
-def _consume(mechanism: Node, effect: Effect) -> Node:
-    return replace(mechanism, effects=mechanism.effects + (effect,))
+def _wire(
+    scm: SCM,
+    sources: list[str],
+    consumers: list[str],
+    count: int,
+    tail: Callable[[str], tuple[Hashable, int]],
+    prior: TablePrior,
+    rng: np.random.Generator,
+) -> SCM:
+    """Give each of `count` drawn sources, as the tail and width `tail` makes of it, to a drawn
+    consumer as a new edge built by `prior`."""
+    nodes = dict(scm.nodes)
+    count = min(count, len(sources), len(consumers))
+    for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
+        consumer = str(rng.choice(consumers))
+        target = nodes[consumer]
+        parent, d_in = tail(source)
+        edge = prior.edge(parent, d_in, target.dim, target.onehot, rng)
+        nodes[consumer] = replace(target, edges=target.edges + (edge,))
+    return SCM(nodes, scm.columns, time_column=scm.time_column)
+
+
+def _plain(scm: SCM) -> list[str]:
+    """Nodes with no summary among their ancestors, the ones a key may read."""
+    tainted: set[str] = set()
+    for name in scm.order:
+        tails = scm.nodes[name].parents
+        if any(isinstance(tail, Summary) or tail in tainted for tail in tails):
+            tainted.add(name)
+    return [name for name in scm.nodes if name not in tainted]
 
 
 @dataclass(frozen=True)
@@ -329,9 +355,10 @@ class SchemaPrior:
     """Random multi-table schema prior.
 
     A table's parents in the table graph are the tables it references. Each table is a fresh
-    warp of `table_prior`. Gathered parent nodes become extra effects on existing child nodes;
-    aggregated child nodes become new observed nodes of the parent, so the node graph across
-    tables stays acyclic by construction.
+    warp of `table_prior`. Across each key, drawn parent nodes feed drawn child nodes and
+    summaries of drawn child nodes feed drawn parent nodes, both as extra edges on existing
+    nodes; summaries are wired first and keys never read a node downstream of one, so the node
+    graph across tables stays acyclic by construction.
 
     Tables nothing references hold events and get a time column; referenced tables are static,
     so no key ever points into the future and cutting a database at any time leaves every key
@@ -359,9 +386,9 @@ class SchemaPrior:
             key.
         self_reference_root_share: Share of roots in a self-referential tree.
         gather_count: Parent nodes gathered into the child per foreign key.
-        aggregate_count: Child nodes aggregated into the parent per foreign key between static
+        aggregate_count: Child node summaries fed into the parent per foreign key between static
             tables.
-        aggregates: Aggregation of an aggregate port.
+        aggregates: Aggregation a summary edge draws from.
     """
 
     table_count: Range = LogIntegersRange(2, 8)
@@ -401,29 +428,23 @@ class SchemaPrior:
 
     def realize(self, seed: Seed = None) -> Schema:
         rng, _ = generator(seed).spawn(2)
-        n = self.table_count.draw(rng)
-        parents = self.table_layouts.draw(rng).sample(n, rng)
-        referenced = {p for references in parents for p in references}
-        priors = [self.table_prior.warp(rng) for _ in range(n)]
-        tables = {f"t{i}": priors[i].build(rng, time=i not in referenced) for i in range(n)}
-        fkeys = []
-        for i, references in enumerate(parents):
-            for p in references:
-                fk = self.fkey(f"t{i}", f"t{p}", rng)
-                fkeys.append(fk)
-                self.gather(tables, fk, priors[i], rng)
-                if tables[fk.table].time_column is None:
-                    self.aggregate(tables, fk, rng)
-        for i in sorted(referenced):
-            if rng.random() < self.self_reference_probability:
-                fk = FK(
-                    f"t{i}",
-                    "parent_id",
-                    f"t{i}",
-                    TreeLink(self.self_reference_root_share.draw(rng)),
-                )
-                fkeys.append(fk)
-                self.gather(tables, fk, priors[i], rng)
+        layout = self.table_layouts.draw(rng).sample(self.table_count.draw(rng), rng)
+        names = [f"t{i}" for i in range(len(layout))]
+        references = {names[i]: [names[p] for p in parents] for i, parents in enumerate(layout)}
+        static = {parent for parents in references.values() for parent in parents}
+        priors = {name: self.table_prior.warp(rng) for name in names}
+        tables = {name: priors[name].build(rng, time=name not in static) for name in names}
+        fkeys = [self.fkey(name, parent, rng) for name in names for parent in references[name]]
+        for fk in fkeys:
+            if fk.table in static:
+                self.aggregate(tables, fk, priors[fk.parent], rng)
+        for fk in fkeys:
+            self.gather(tables, fk, priors[fk.table], rng)
+        for name in names:
+            if name in static and rng.random() < self.self_reference_probability:
+                link = TreeLink(self.self_reference_root_share.draw(rng))
+                fkeys.append(FK(name, "parent_id", name, link, fill=0.0))
+                self.gather(tables, fkeys[-1], priors[name], rng)
         return Schema(tables, tuple(fkeys))
 
     def rows(self, schema: Schema, seed: Seed = None) -> dict[str, int]:
@@ -452,44 +473,40 @@ class SchemaPrior:
 
     def fkey(self, child: str, parent: str, rng: np.random.Generator) -> FK:
         nullable = self.fk_nullable_rate.draw(rng) if rng.random() < self.fk_nullable_share else 0.0
-        return FK(child, f"{parent}_id", parent, self.link(rng), nullable=nullable)
+        return FK(child, f"{parent}_id", parent, self.link(rng), nullable=nullable, fill=0.0)
 
     def gather(
         self, tables: dict[str, SCM], fk: FK, prior: TablePrior, rng: np.random.Generator
     ) -> None:
+        """Give drawn parent nodes to drawn child nodes as edges reading through the key."""
         child, parent = tables[fk.table], tables[fk.parent]
-        sources = [name for name, m in parent.mechanisms.items() if not isinstance(m, Port)]
-        consumers = [
-            name
-            for name, m in child.mechanisms.items()
-            if not isinstance(m, Port) and name not in child.timestamp_nodes
-        ]
+        sources = _plain(parent)
+        consumers = [name for name in child.nodes if name not in child.timestamp_nodes]
         if fk.table == fk.parent:
-            sources = [name for name in sources if not parent.mechanisms[name].parents]
-            consumers = [name for name in consumers if child.mechanisms[name].parents]
-        mechanisms = dict(child.mechanisms)
-        count = min(self.gather_count.draw(rng), len(sources), len(consumers))
-        for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
-            consumer = str(rng.choice(consumers))
-            port = f"{fk.column}_{source}"
-            mechanisms[port] = Port(
-                fk.parent, source, via=fk.column, fill=0.0, dim=parent.mechanisms[source].dim
-            )
-            target = mechanisms[consumer]
-            block = target.onehot
-            effect = prior.effect(port, parent.mechanisms[source].dim, target.dim, block, rng)
-            mechanisms[consumer] = _consume(target, effect)
-        tables[fk.table] = SCM(mechanisms, child.columns, time_column=child.time_column)
+            sources = [name for name in sources if not parent.nodes[name].parents]
+            consumers = [name for name in consumers if child.nodes[name].parents]
 
-    def aggregate(self, tables: dict[str, SCM], fk: FK, rng: np.random.Generator) -> None:
+        def tail(source: str) -> tuple[Foreign, int]:
+            return Foreign(fk.column, source), parent.nodes[source].dim
+
+        count = self.gather_count.draw(rng)
+        tables[fk.table] = _wire(child, sources, consumers, count, tail, prior, rng)
+
+    def aggregate(
+        self, tables: dict[str, SCM], fk: FK, prior: TablePrior, rng: np.random.Generator
+    ) -> None:
+        """Feed summaries of drawn child nodes into drawn parent nodes as edges crossing the key.
+
+        Summaries are wired before any key is read, and keys read only nodes with no summary
+        among their ancestors, so the node graph across tables stays acyclic.
+        """
         child, parent = tables[fk.table], tables[fk.parent]
-        sources = [n for n, m in child.mechanisms.items() if m.dim == 1 and not isinstance(m, Port)]
-        mechanisms, columns = dict(parent.mechanisms), dict(parent.columns)
-        count = min(self.aggregate_count.draw(rng), len(sources))
-        for source in map(str, rng.choice(sources, count, replace=False)) if count else ():
+        sources = [name for name, node in child.nodes.items() if node.dim == 1]
+
+        def tail(source: str) -> tuple[Summary, int]:
             how = self.aggregates.draw(rng)
-            name = f"{fk.table}_{source}_{how}"
-            fill = None if how in ("count", "sum") else np.nan
-            mechanisms[name] = Port(fk.table, source, via=fk.column, aggregate=how, fill=fill)
-            columns[name] = Column(name)
-        tables[fk.parent] = SCM(mechanisms, columns, time_column=parent.time_column)
+            fill = None if how in COMPLETE else 0.0
+            return Summary(fk.table, fk.column, source, how, fill), 1
+
+        count = self.aggregate_count.draw(rng)
+        tables[fk.parent] = _wire(parent, sources, list(parent.nodes), count, tail, prior, rng)

@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 from plurel.distributions import Calendar, Distribution
-from plurel.mechanisms import bin_levels
+from plurel.graph import bin_levels
 
 Kind = Literal["numeric", "categorical", "timestamp", "key"]
 Binning = Literal["normal", "empirical"] | tuple[float, ...]

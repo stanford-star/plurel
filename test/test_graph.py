@@ -2,19 +2,18 @@ import numpy as np
 import pytest
 
 from plurel.distributions import Gumbel, Mixture, Normal
-from plurel.mechanisms import (
-    EFFECTS,
+from plurel.graph import (
+    EDGES,
     REDUCTIONS,
-    FourierEffect,
-    LinearEffect,
-    LookupEffect,
-    MatrixEffect,
-    Mechanism,
-    MLPEffect,
-    NearestEffect,
+    FourierEdge,
+    LinearEdge,
+    LookupEdge,
+    MatrixEdge,
+    MLPEdge,
+    NearestEdge,
     Node,
-    QuadraticEffect,
-    TreeEffect,
+    QuadraticEdge,
+    TreeEdge,
     bin_levels,
     nested_logits,
 )
@@ -23,31 +22,31 @@ N = 200
 PROBABILITIES = (0.2, 0.5, 0.3)
 CENTERS = np.eye(3)
 TERMS = (
-    LinearEffect("x", 1.5, "tanh"),
-    LookupEffect("s", (10.0, 20.0, 30.0), PROBABILITIES),
-    LinearEffect("y", 0.5, "exp"),
+    LinearEdge("x", 1.5, "tanh"),
+    LookupEdge("s", (10.0, 20.0, 30.0), PROBABILITIES),
+    LinearEdge("y", 0.5, "exp"),
 )
 SCORES = (
-    MatrixEffect("x", np.array([[1.0, -1.0, 0.0]])),
-    MatrixEffect("y", np.array([[0.0, 0.0, 2.0]])),
+    MatrixEdge("x", np.array([[1.0, -1.0, 0.0]])),
+    MatrixEdge("y", np.array([[0.0, 0.0, 2.0]])),
 )
 PARAMS = np.random.default_rng(0)
-MLP = MLPEffect("h", (PARAMS.standard_normal((3, 4)), PARAMS.standard_normal((4, 2))))
-TREE = TreeEffect(
+MLP = MLPEdge("h", (PARAMS.standard_normal((3, 4)), PARAMS.standard_normal((4, 2))))
+TREE = TreeEdge(
     "h", np.array([[0, 2], [1, 1]]), np.zeros((2, 2)), PARAMS.standard_normal((2, 4, 2))
 )
-FOURIER = FourierEffect(
+FOURIER = FourierEdge(
     "h",
     PARAMS.standard_normal((3, 5)),
     PARAMS.uniform(0.0, 2.0 * np.pi, 5),
     PARAMS.standard_normal((5, 2)),
 )
-QUADRATIC = QuadraticEffect("h", PARAMS.standard_normal((2, 4, 4)))
-EFFECT_EXAMPLES = {
+QUADRATIC = QuadraticEdge("h", PARAMS.standard_normal((2, 4, 4)))
+EDGE_EXAMPLES = {
     "linear": TERMS[0],
     "lookup": TERMS[1],
     "matrix": SCORES[0],
-    "nearest": NearestEffect("h", CENTERS),
+    "nearest": NearestEdge("h", CENTERS),
     "mlp": MLP,
     "tree": TREE,
     "fourier": FOURIER,
@@ -77,7 +76,7 @@ def latents():
 
 def test_every_registered_mechanism_meets_the_contract(latents):
     for mechanism in EXAMPLES.values():
-        assert isinstance(mechanism, Node) and isinstance(mechanism, Mechanism)
+        assert isinstance(mechanism, Node)
         exogenous = mechanism.sample_noise(N, np.random.default_rng(1))
         again = mechanism.sample_noise(N, np.random.default_rng(1))
         np.testing.assert_array_equal(exogenous, again)
@@ -107,16 +106,16 @@ def test_one_node_type_covers_roots_combines_and_one_hot_nodes(latents):
             bad()
 
 
-def test_every_registered_effect_declares_its_width(latents):
-    assert set(EFFECT_EXAMPLES) == set(EFFECTS)
-    for effect in EFFECT_EXAMPLES.values():
-        x = latents[effect.parent]
-        assert effect.apply(x).shape == (N, effect.dim)
+def test_every_registered_edge_declares_its_width(latents):
+    assert set(EDGE_EXAMPLES) == set(EDGES)
+    for edge in EDGE_EXAMPLES.values():
+        x = latents[edge.parent]
+        assert edge.apply(x).shape == (N, edge.dim)
 
 
 def test_every_reduction_reduces_the_transformed_parents(latents):
     assert set(REFERENCE) == set(REDUCTIONS)
-    terms = np.stack([effect.apply(latents[effect.parent]) for effect in TERMS])
+    terms = np.stack([edge.apply(latents[edge.parent]) for edge in TERMS])
     for op, reference in REFERENCE.items():
         mechanism = Node(TERMS, op, noise=None)
         exogenous = mechanism.sample_noise(N, np.random.default_rng(0))
@@ -124,32 +123,32 @@ def test_every_reduction_reduces_the_transformed_parents(latents):
         np.testing.assert_allclose(mechanism.evaluate(latents, exogenous), reference(terms))
 
 
-def test_block_effects_set_the_width_and_broadcast(latents):
-    block = MatrixEffect("h", np.ones((3, 2)))
-    mixed = Node((block, LinearEffect("x")), noise=None)
+def test_block_edges_set_the_width_and_broadcast(latents):
+    block = MatrixEdge("h", np.ones((3, 2)))
+    mixed = Node((block, LinearEdge("x")), noise=None)
     assert mixed.dim == 2
     expected = np.repeat(latents["h"].sum(1, keepdims=True) + latents["x"], 2, axis=1)
     np.testing.assert_allclose(mixed.evaluate(latents, np.zeros((N, 2))), expected)
-    assert Node((block, LinearEffect("x")), op="concat").dim == 3
-    assert Node((LinearEffect("h", dim=3),)).dim == 3
+    assert Node((block, LinearEdge("x")), op="concat").dim == 3
+    assert Node((LinearEdge("h", dim=3),)).dim == 3
     node = Node((MLP, TREE), op="logsumexp")
     assert node.dim == 2
     assert node.evaluate(latents, node.sample_noise(N, np.random.default_rng(0))).shape == (N, 2)
 
 
-def test_lookup_effects_share_the_level_binning(latents):
+def test_lookup_edges_share_the_level_binning(latents):
     levels = bin_levels(latents["s"], PROBABILITIES)
-    lookup = LookupEffect("s", (10.0, 20.0, 30.0), PROBABILITIES).apply(latents["s"])
+    lookup = LookupEdge("s", (10.0, 20.0, 30.0), PROBABILITIES).apply(latents["s"])
     np.testing.assert_array_equal(lookup, np.asarray([10.0, 20.0, 30.0])[levels])
     assert set(np.unique(levels)) == {0, 1, 2}
 
 
 def test_interactions_are_product_nodes(latents):
     zeros = np.zeros((N, 1))
-    product = Node((LinearEffect("x"), LinearEffect("y")), op="product")
+    product = Node((LinearEdge("x"), LinearEdge("y")), op="product")
     interaction = product.evaluate(latents, zeros)
     np.testing.assert_allclose(interaction, latents["x"] * latents["y"])
-    target = Node((LinearEffect("x", 2.0), LinearEffect("h", -0.5)))
+    target = Node((LinearEdge("x", 2.0), LinearEdge("h", -0.5)))
     out = target.evaluate({**latents, "h": interaction}, zeros)
     np.testing.assert_allclose(out, 2.0 * latents["x"] - 0.5 * latents["x"] * latents["y"])
     assert target.parents == ("x", "h")
@@ -172,7 +171,7 @@ def test_nested_levels_are_a_softmax_over_masked_logits():
     rng = np.random.default_rng(0)
     country = Node(bias=(0.0,) * 3, onehot=True, noise=Gumbel())
     city = Node(
-        (MatrixEffect("country", nested_logits(allowed, (0.2,) * 5)),), onehot=True, noise=Gumbel()
+        (MatrixEdge("country", nested_logits(allowed, (0.2,) * 5)),), onehot=True, noise=Gumbel()
     )
     countries = country.evaluate({}, country.sample_noise(N, rng))
     cities = city.evaluate({"country": countries}, city.sample_noise(N, rng))
@@ -181,27 +180,27 @@ def test_nested_levels_are_a_softmax_over_masked_logits():
         assert set(cities[countries.argmax(1) == code].argmax(1)) <= set(subset)
 
 
-def test_nearest_effect_one_hot_encodes_the_closest_center(latents):
-    one_hot = NearestEffect("h", CENTERS).apply(latents["h"])
+def test_nearest_edge_one_hot_encodes_the_closest_center(latents):
+    one_hot = NearestEdge("h", CENTERS).apply(latents["h"])
     assert (one_hot.sum(1) == 1).all()
     np.testing.assert_array_equal(one_hot.argmax(1), latents["h"].argmax(1))
     table = np.arange(9.0).reshape(3, 3)
-    np.testing.assert_array_equal(MatrixEffect("c", table).apply(one_hot), table[one_hot.argmax(1)])
+    np.testing.assert_array_equal(MatrixEdge("c", table).apply(one_hot), table[one_hot.argmax(1)])
 
 
-def test_mlp_effect_places_activations_between_layers(latents):
+def test_mlp_edge_places_activations_between_layers(latents):
     h = latents["h"]
     w1, w2 = MLP.weights
     np.testing.assert_allclose(MLP.apply(h), h @ w1 @ w2)
-    hidden = MLPEffect("h", (w1, w2), activations=("identity", "tanh", "identity"))
+    hidden = MLPEdge("h", (w1, w2), activations=("identity", "tanh", "identity"))
     np.testing.assert_allclose(hidden.apply(h), np.tanh(h @ w1) @ w2)
-    first = MLPEffect("h", (w1,), activations=("tanh", "identity"))
+    first = MLPEdge("h", (w1,), activations=("tanh", "identity"))
     np.testing.assert_allclose(first.apply(h), np.tanh(h) @ w1)
     with pytest.raises(ValueError):
-        MLPEffect("h", (w1,), activations=("tanh",))
+        MLPEdge("h", (w1,), activations=("tanh",))
 
 
-def test_tree_effect_averages_oblivious_tree_leaves(latents):
+def test_tree_edge_averages_oblivious_tree_leaves(latents):
     h = latents["h"]
     expected = np.zeros((N, 2))
     for tree, (dims, points) in enumerate(zip(TREE.split_dims, TREE.split_points)):
@@ -210,7 +209,7 @@ def test_tree_effect_averages_oblivious_tree_leaves(latents):
     np.testing.assert_allclose(TREE.apply(h), expected / 2)
 
 
-def test_fourier_and_quadratic_effects_match_their_formulas(latents):
+def test_fourier_and_quadratic_edges_match_their_formulas(latents):
     h = latents["h"]
     features = np.cos(h @ FOURIER.frequencies + FOURIER.phases)
     np.testing.assert_allclose(FOURIER.apply(h), features @ FOURIER.weights)

@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
 from functools import reduce
 from statistics import NormalDist
@@ -70,8 +70,10 @@ def _draw(distribution: Distribution, n: int, rng: np.random.Generator, dim: int
 
 
 @dataclass(frozen=True)
-class Effect:
-    parent: str
+class Edge:
+    """One parent's contribution to a node; the tail is a node name or a crossing reference."""
+
+    parent: Hashable
     dim = 1
 
     def apply(self, x: np.ndarray) -> np.ndarray:
@@ -79,7 +81,7 @@ class Effect:
 
 
 @dataclass(frozen=True)
-class LinearEffect(Effect):
+class LinearEdge(Edge):
     weight: float = 1.0
     transform: Function = "identity"
     dim: int = 1
@@ -89,7 +91,7 @@ class LinearEffect(Effect):
 
 
 @dataclass(frozen=True)
-class LookupEffect(Effect):
+class LookupEdge(Edge):
     values: tuple[float, ...]
     probabilities: tuple[float, ...] | None = None
 
@@ -104,7 +106,7 @@ class LookupEffect(Effect):
 
 
 @dataclass(frozen=True)
-class MatrixEffect(Effect):
+class MatrixEdge(Edge):
     matrix: np.ndarray
 
     @property
@@ -116,7 +118,7 @@ class MatrixEffect(Effect):
 
 
 @dataclass(frozen=True)
-class NearestEffect(Effect):
+class NearestEdge(Edge):
     centers: np.ndarray
 
     @property
@@ -129,7 +131,7 @@ class NearestEffect(Effect):
 
 
 @dataclass(frozen=True)
-class MLPEffect(Effect):
+class MLPEdge(Edge):
     weights: tuple[np.ndarray, ...]
     biases: tuple[np.ndarray, ...] | None = None
     activations: tuple[Function, ...] | None = None
@@ -157,7 +159,7 @@ class MLPEffect(Effect):
 
 
 @dataclass(frozen=True)
-class TreeEffect(Effect):
+class TreeEdge(Edge):
     split_dims: np.ndarray
     split_points: np.ndarray
     leaves: np.ndarray
@@ -178,7 +180,7 @@ class TreeEffect(Effect):
 
 
 @dataclass(frozen=True)
-class FourierEffect(Effect):
+class FourierEdge(Edge):
     frequencies: np.ndarray
     phases: np.ndarray
     weights: np.ndarray
@@ -196,7 +198,7 @@ class FourierEffect(Effect):
 
 
 @dataclass(frozen=True)
-class QuadraticEffect(Effect):
+class QuadraticEdge(Edge):
     tensor: np.ndarray
 
     def __post_init__(self) -> None:
@@ -213,37 +215,25 @@ class QuadraticEffect(Effect):
 
 
 @dataclass(frozen=True)
-class Mechanism:
-    noise: Distribution | None = field(default_factory=Normal, kw_only=True)
-    dim = 1
-    parents = ()
+class Node:
+    """The one node type: a reduction over per-parent edges, plus bias and noise.
 
-    def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
-        return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, self.dim))
-
-    def evaluate(self, latents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
-        raise NotImplementedError
-
-
-@dataclass(frozen=True)
-class Node(Mechanism):
-    """The one node type: a reduction over per-parent effects, plus bias and noise.
-
-    Without effects the node is a root whose value is its noise, `dim` wide. With `onehot`
+    Without edges the node is a root whose value is its noise, `dim` wide. With `onehot`
     the node emits the one-hot argmax of its scores; with Gumbel noise that samples the
     class from the softmax of the scores.
     """
 
-    effects: tuple[Effect, ...] = ()
+    edges: tuple[Edge, ...] = ()
     op: str = "sum"
     bias: tuple[float, ...] | None = None
     onehot: bool = False
     dim: int | None = None
+    noise: Distribution | None = field(default_factory=Normal, kw_only=True)
 
     def __post_init__(self) -> None:
         if self.op not in REDUCTIONS:
             raise ValueError(f"op must be one of {tuple(REDUCTIONS)}")
-        dims = [effect.dim for effect in self.effects]
+        dims = [edge.dim for edge in self.edges]
         if dims:
             derived = sum(dims) if self.op == "concat" else max(dims)
         else:
@@ -251,31 +241,94 @@ class Node(Mechanism):
         if self.dim is None:
             object.__setattr__(self, "dim", derived)
         elif self.dim != derived:
-            raise ValueError(f"dim {self.dim} does not match the effects or bias, {derived}")
+            raise ValueError(f"dim {self.dim} does not match the edges or bias, {derived}")
         if self.bias is not None and len(self.bias) != self.dim:
             raise ValueError("one bias per dimension")
         if self.onehot and self.dim < 2:
             raise ValueError("a one-hot node needs at least two classes")
 
     @property
-    def parents(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(effect.parent for effect in self.effects))
+    def parents(self) -> tuple[Hashable, ...]:
+        return tuple(dict.fromkeys(edge.parent for edge in self.edges))
 
-    def evaluate(self, latents: dict[str, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
-        terms = [effect.apply(latents[effect.parent]) for effect in self.effects]
+    def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, self.dim))
+
+    def evaluate(self, latents: Mapping[Hashable, np.ndarray], exogenous: np.ndarray) -> np.ndarray:
+        terms = [edge.apply(latents[edge.parent]) for edge in self.edges]
         value = REDUCTIONS[self.op](terms) + exogenous if terms else exogenous
         if self.bias is not None:
             value = value + np.asarray(self.bias)
         return np.eye(self.dim)[value.argmax(1)] if self.onehot else value
 
 
-EFFECTS: dict[str, type] = {
-    "linear": LinearEffect,
-    "lookup": LookupEffect,
-    "matrix": MatrixEffect,
-    "nearest": NearestEffect,
-    "mlp": MLPEffect,
-    "tree": TreeEffect,
-    "fourier": FourierEffect,
-    "quadratic": QuadraticEffect,
+COMPLETE = ("count", "sum")
+
+
+def _sum(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
+    out = np.zeros((n, values.shape[1]))
+    np.add.at(out, indices, values)
+    return out
+
+
+def _mean(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
+    count = np.bincount(indices, minlength=n)[:, None]
+    total = _sum(values, indices, n)
+    return np.divide(total, count, out=np.full_like(total, np.nan), where=count > 0)
+
+
+def _extreme(op: np.ufunc, start: float) -> Callable[..., np.ndarray]:
+    def aggregate(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
+        out = np.full((n, values.shape[1]), start)
+        op.at(out, indices, values)
+        out[np.bincount(indices, minlength=n) == 0] = np.nan
+        return out
+
+    return aggregate
+
+
+AGGREGATES: dict[str, Callable[..., np.ndarray]] = {
+    "count": lambda values, indices, n: np.bincount(indices, minlength=n)[:, None].astype(float),
+    "sum": lambda values, indices, n: _sum(values, indices, n),
+    "mean": _mean,
+    "max": _extreme(np.maximum, -np.inf),
+    "min": _extreme(np.minimum, np.inf),
+}
+
+
+@dataclass(frozen=True)
+class Foreign:
+    """Tail of an edge crossing a key: `node` of the row that `key` points at."""
+
+    key: str
+    node: str
+
+
+@dataclass(frozen=True)
+class Summary:
+    """Tail of an edge aggregating, per row, the rows of `table` that point at it through
+    `key`; `fill` is read where no row does, needed for mean, max and min."""
+
+    table: str
+    key: str
+    node: str
+    how: str
+    fill: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.how not in AGGREGATES:
+            raise ValueError(f"how must be one of {tuple(AGGREGATES)}")
+        if self.fill is not None and (self.how in COMPLETE or not np.isfinite(self.fill)):
+            raise ValueError("fill is a finite value for mean, max or min only")
+
+
+EDGES: dict[str, type] = {
+    "linear": LinearEdge,
+    "lookup": LookupEdge,
+    "matrix": MatrixEdge,
+    "nearest": NearestEdge,
+    "mlp": MLPEdge,
+    "tree": TreeEdge,
+    "fourier": FourierEdge,
+    "quadratic": QuadraticEdge,
 }

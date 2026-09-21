@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
+from plurel.graph import EDGES, Foreign, Summary
 from plurel.io import create_database
 from plurel.links import TreeLink
-from plurel.mechanisms import EFFECTS
 from plurel.prior import (
     FAMILIES,
     Choices,
@@ -14,6 +14,11 @@ from plurel.prior import (
     SchemaPrior,
     TablePrior,
 )
+from plurel.schema import Schema
+
+
+def sample(scm, n, *, seed=None):
+    return Schema({"t": scm}).sample({"t": n}, seed=seed)["t"]
 
 
 def test_choices_and_ranges_draw_within_their_declarations():
@@ -48,15 +53,15 @@ def test_table_prior_realizes_valid_diverse_tables():
     for seed in range(40):
         scm = prior.realize(seed, time=seed % 2 == 1)
         assert prior.realize(seed, time=seed % 2 == 1).order == scm.order
-        frame = scm.sample(200, seed=seed)
-        assert frame.equals(scm.sample(200, seed=seed)) and len(frame) == 200
+        frame = sample(scm, 200, seed=seed)
+        assert frame.equals(sample(scm, 200, seed=seed)) and len(frame) == 200
         assert scm.pkey_column == "id" and 4 <= len(frame.columns) <= 14
-        assert 3 <= sum(name.startswith("n") for name in scm.mechanisms) <= 16
-        for mechanism in scm.mechanisms.values():
-            assert 1 <= mechanism.dim <= 8
-            families.update(type(effect) for effect in getattr(mechanism, "effects", ()))
+        assert 3 <= sum(name.startswith("n") for name in scm.nodes) <= 16
+        for node in scm.nodes.values():
+            assert 1 <= node.dim <= 8
+            families.update(type(edge) for edge in node.edges)
         kinds.update(column.kind for column in scm.columns.values())
-    assert families == {EFFECTS[name] for name in FAMILIES}
+    assert families == {EDGES[name] for name in FAMILIES}
     assert kinds == {"key", "numeric", "categorical", "timestamp"}
 
 
@@ -68,17 +73,17 @@ def test_table_prior_knobs_are_respected():
     )
     for seed in range(10):
         scm = plain.realize(seed)
-        assert not any(m.onehot for m in scm.mechanisms.values())
+        assert not any(m.onehot for m in scm.nodes.values())
         assert scm.time_column is None
         assert all(c.kind != "categorical" for c in scm.columns.values())
         assert all(c.missing == 0.0 for c in scm.columns.values())
-        assert not scm.sample(50, seed=seed).isna().any().any()
+        assert not sample(scm, 50, seed=seed).isna().any().any()
     with pytest.raises(ValueError, match="change width"):
-        TablePrior(effect_families=Choices(("linear",)))
+        TablePrior(edge_families=Choices(("linear",)))
     single = TablePrior(node_count=IntegersRange(1, 1), column_count=IntegersRange(1, 1))
     scm = single.realize(0)
-    assert len(scm.mechanisms) <= 2 and not scm.mechanisms["n0"].parents
-    assert scm.sample(5, seed=0).shape[0] == 5
+    assert len(scm.nodes) <= 2 and not scm.nodes["n0"].parents
+    assert sample(scm, 5, seed=0).shape[0] == 5
 
 
 def test_warping_gives_each_realization_its_own_style():
@@ -92,19 +97,16 @@ def test_warping_gives_each_realization_its_own_style():
     choices = Choices(("a", "b", "c"), (1.0, 1.0, 0.0)).warp(rng)
     assert choices.values == ("a", "b", "c") and choices.weights[2] == 0.0
     prior = TablePrior().warp(rng)
-    assert prior.node_count.shape is not None and prior.effect_families.weights is not None
+    assert prior.node_count.shape is not None and prior.edge_families.weights is not None
     assert prior.node_categorical_share == TablePrior().node_categorical_share
     meta = [
-        np.mean([m.dim for m in TablePrior().realize(seed).mechanisms.values()])
-        for seed in range(60)
+        np.mean([m.dim for m in TablePrior().realize(seed).nodes.values()]) for seed in range(60)
     ]
     flat = [
         np.mean(
             [
                 m.dim
-                for m in TablePrior()
-                .build(np.random.default_rng(seed), time=False)
-                .mechanisms.values()
+                for m in TablePrior().build(np.random.default_rng(seed), time=False).nodes.values()
             ]
         )
         for seed in range(60)
@@ -113,6 +115,16 @@ def test_warping_gives_each_realization_its_own_style():
 
 
 SMALL = dict(entity_row_count=IntegersRange(60, 120), activity_row_count=IntegersRange(300, 600))
+
+
+def summarized(scm):
+    """Nodes with a summary among their ancestors, which no key may read."""
+    tainted = set()
+    for name in scm.order:
+        tails = scm.nodes[name].parents
+        if any(isinstance(tail, Summary) or tail in tainted for tail in tails):
+            tainted.add(name)
+    return tainted
 
 
 def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
@@ -129,18 +141,21 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
             assert (table in referenced) == (schema.tables[table].time_column is None)
         frames, latents = schema.sample_with_latents(rows, seed=seed)
         assert all(len(frames[t]) == n for t, n in rows.items())
-        for (table, name), (port, fk) in schema.ports.items():
-            seen.add("aggregate" if port.aggregate else "gather")
-            if port.aggregate:
-                assert schema.tables[fk.table].time_column is None
-                assert schema.tables[table].time_column is None
-            if isinstance(fk.link, TreeLink):
-                seen.add("self")
-                assert schema.tables[fk.table].time_column is None
-            if port.aggregate in ("mean", "max", "min"):
-                keys = frames[fk.table][fk.column].dropna().astype(int)
-                childless = ~np.isin(np.arange(rows[table]), keys)
-                assert frames[table][name].isna().to_numpy().tolist() == childless.tolist()
+        for table, scm in schema.tables.items():
+            for name, node in scm.nodes.items():
+                for tail in node.parents:
+                    if isinstance(tail, Summary):
+                        seen.add("aggregate")
+                        assert scm.time_column is None
+                        assert schema.tables[tail.table].time_column is None
+                        assert (tail.fill is None) == (tail.how in ("count", "sum"))
+                    elif isinstance(tail, Foreign):
+                        seen.add("gather")
+                        origin = schema.tables[schema.keys[table, tail.key].parent]
+                        assert tail.node not in summarized(origin)
+                        if isinstance(schema.keys[table, tail.key].link, TreeLink):
+                            seen.add("self")
+                            assert scm.time_column is None
         db = create_database(schema, frames)
         cut = db.upto(db.min_timestamp + (db.max_timestamp - db.min_timestamp) / 2)
         for table in cut.table_dict.values():
@@ -159,7 +174,8 @@ def test_schema_prior_knobs_switch_cross_table_structure_off():
     )
     for seed in range(8):
         schema = quiet.realize(seed)
-        assert not schema.ports and all(fk.nullable == 0.0 for fk in schema.fkeys)
+        assert not any(scm.inputs for scm in schema.tables.values())
+        assert all(fk.nullable == 0.0 for fk in schema.fkeys)
         assert all(fk.table != fk.parent for fk in schema.fkeys)
         frames = schema.sample(quiet.rows(schema, seed), seed=seed)
         assert all(frames[fk.table][fk.column].notna().all() for fk in schema.fkeys)
@@ -182,8 +198,11 @@ def test_schema_prior_edge_cases():
     for seed in range(12):
         schema = tiny.realize(seed)
         assert sum(fk.table == fk.parent for fk in schema.fkeys) == 1
-        for (table, name), (port, fk) in schema.ports.items():
-            assert name != port.node
+        for table, scm in schema.tables.items():
+            for name, node in scm.nodes.items():
+                for tail in node.parents:
+                    if isinstance(tail, Foreign) and schema.keys[table, tail.key].parent == table:
+                        assert tail.node != name and not scm.nodes[tail.node].parents
         schema.sample(tiny.rows(schema, seed), seed=seed)
     with pytest.raises(ValueError, match="clusters"):
         SchemaPrior(entity_row_count=IntegersRange(5, 10), activity_row_count=IntegersRange(5, 10))
