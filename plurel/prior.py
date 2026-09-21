@@ -526,11 +526,12 @@ class SchemaPrior:
     """Random multi-table schema prior.
 
     A table's parents in the table graph are the tables it references, some through two keys.
-    Each table is a fresh warp of `table_prior`, built as a local plan first. The crossing edges are then decided on
-    the built tables and given to the Schema: across each key, a drawn share of the child's
-    nodes read drawn parent nodes, and a drawn share of the parent's nodes read summaries of
-    drawn child nodes. Summaries are wired first and keys never read a node downstream of one,
-    so the node graph across tables stays acyclic by construction.
+    Each table is a fresh warp of `table_prior`, built as a local plan first. The crossing
+    edges are then decided on the built tables and given to the Schema: across each key, a
+    drawn share of the child's nodes read drawn parent nodes; across a drawn subset of the keys
+    between static tables, a drawn share of the parent's nodes read summaries of drawn child
+    nodes. Summaries are wired first and keys never read a node downstream of one, so the node
+    graph across tables stays acyclic by construction.
 
     Tables nothing references hold events and get a time column; referenced tables are static,
     so no key ever points into the future and cutting a database at any time leaves every key
@@ -560,8 +561,9 @@ class SchemaPrior:
             key.
         self_reference_root_share: Share of roots in a self-referential tree.
         gather_count: Parent nodes gathered into the child per foreign key.
-        aggregate_count: Child node summaries fed into the parent per foreign key between static
-            tables.
+        aggregate_share: Probability that a key between static tables feeds summaries of the
+            child into the parent.
+        aggregate_count: Child node summaries fed into the parent per such key.
         aggregates: Aggregation a summary edge draws from.
     """
 
@@ -593,7 +595,8 @@ class SchemaPrior:
     self_reference_probability: float = 0.3
     self_reference_root_share: Range = Range(0.05, 0.5)
     gather_count: Range = IntegersRange(0, 3)
-    aggregate_count: Range = IntegersRange(0, 2)
+    aggregate_share: float = 0.5
+    aggregate_count: Range = IntegersRange(1, 2)
     aggregates: Choices = Choices(("count", "sum", "mean", "max", "min"))
 
     def __post_init__(self) -> None:
@@ -618,7 +621,7 @@ class SchemaPrior:
         crossings: dict[tuple[str, str], tuple[Edge, ...]] = {}
         tainted: dict[str, set[str]] = {name: set() for name in names}
         for fk in fkeys:
-            if fk.table in static:
+            if fk.table in static and rng.random() < self.aggregate_share:
                 child, parent = tables[fk.table], tables[fk.parent]
                 tails = {n: self.summary(fk, n, node.dim, rng) for n, node in child.nodes.items()}
                 count = self.aggregate_count.draw(rng)

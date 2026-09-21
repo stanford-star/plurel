@@ -248,6 +248,15 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
         pairs = [(fk.table, fk.parent) for fk in schema.fkeys]
         if len(pairs) > len(set(pairs)):
             seen.add("duplicate")
+        summarized_keys = {
+            (e.parent.table, e.parent.key)
+            for edges in schema.crossings.values()
+            for e in edges
+            if isinstance(e.parent, Summary)
+        }
+        for fk in schema.fkeys:
+            if fk.table != fk.parent and schema.tables[fk.table].time_column is None:
+                seen.add("aggregate" if (fk.table, fk.column) in summarized_keys else "silent key")
         for (table, name), edges in schema.crossings.items():
             scm = schema.tables[table]
             for tail in (edge.parent for edge in edges):
@@ -271,14 +280,14 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
         for table in cut.table_dict.values():
             for column, parent in table.fkey_col_to_pkey_table.items():
                 assert table.df[column].dropna().lt(len(cut.table_dict[parent].df)).all()
-    assert seen == {"gather", "aggregate", "self", "duplicate", "wide aggregate"}
+    assert seen == {"gather", "aggregate", "silent key", "self", "duplicate", "wide aggregate"}
 
 
 def test_schema_prior_knobs_switch_cross_table_structure_off():
     quiet = SchemaPrior(
         **SMALL,
         gather_count=IntegersRange(0, 0),
-        aggregate_count=IntegersRange(0, 0),
+        aggregate_share=0.0,
         self_reference_probability=0.0,
         fk_nullable_share=0.0,
         fk_duplicate_share=0.0,
