@@ -1,7 +1,17 @@
 import numpy as np
 import pytest
 
-from plurel.distributions import Beta, Exponential, Mixture, Normal, Poisson, TimeSeries, Uniform
+from plurel.distributions import (
+    Beta,
+    Exponential,
+    LogNormal,
+    Mixture,
+    Normal,
+    Pareto,
+    Poisson,
+    TimeSeries,
+    Uniform,
+)
 from plurel.graph import EDGES, REDUCTIONS, Foreign, LookupEdge, MatrixEdge, NearestEdge, Summary
 from plurel.io import create_database
 from plurel.links import TreeLink
@@ -50,7 +60,7 @@ def test_choices_and_ranges_draw_within_their_declarations():
 
 def test_table_prior_realizes_valid_diverse_tables():
     prior = TablePrior()
-    families, kinds, ops, noises, binnings, missing = (set() for _ in range(6))
+    families, kinds, ops, noises, binnings, missing, calendars = (set() for _ in range(7))
     for seed in range(40):
         time = seed % 2 == 1
         scm = prior.realize(seed, time=time)
@@ -63,21 +73,38 @@ def test_table_prior_realizes_valid_diverse_tables():
             if node.op == "concat":
                 assert node.dim == sum(scm.nodes[p].dim for p in node.parents)
             else:
-                assert 1 <= node.dim <= 8
+                assert 1 <= node.dim <= 10
             families.update(type(edge) for edge in node.edges)
             ops.add(node.op)
             if not node.parents and not node.onehot and name != "time":
                 noises.add(type(node.noise))
                 assert time or not isinstance(node.noise, TimeSeries)
-        for column in scm.columns.values():
+        for name, column in scm.columns.items():
             kinds.add(column.kind)
             binnings.add(column.binning)
             missing.add(type(column.missing))
+            if isinstance(column.marginal, Mixture) and column.marginal.components[0] == Normal(
+                0.0, 0.0
+            ):
+                assert (frame[name].dropna() == 0.0).mean() > 0.2
+        if time:
+            calendars.add(scm.nodes["time"].noise)
     assert families == {EDGES[name] for name in FAMILIES} and set(FAMILIES) == set(EDGES)
     assert kinds == {"key", "numeric", "categorical", "timestamp"}
     assert ops == set(REDUCTIONS)
-    assert noises == {Normal, Uniform, Mixture, Beta, Exponential, Poisson, TimeSeries}
+    assert noises == {
+        Normal,
+        Uniform,
+        Mixture,
+        Beta,
+        Exponential,
+        LogNormal,
+        Pareto,
+        Poisson,
+        TimeSeries,
+    }
     assert binnings == {"normal", "empirical"} and missing == {float, str}
+    assert len(calendars) > 1
 
 
 def test_table_prior_knobs_are_respected():
@@ -185,7 +212,11 @@ def test_warping_gives_each_realization_its_own_style():
     assert np.var(meta) > 1.5 * np.var(flat)
 
 
-SMALL = dict(entity_row_count=IntegersRange(60, 120), activity_row_count=IntegersRange(300, 600))
+SMALL = dict(
+    entity_row_count=IntegersRange(60, 120),
+    activity_row_count=IntegersRange(300, 600),
+    link_level_count=IntegersRange(1, 3),
+)
 
 
 def summarized(schema, table):

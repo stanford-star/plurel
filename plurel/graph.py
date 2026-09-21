@@ -17,6 +17,11 @@ TRANSFORMS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
     "step": lambda x: np.where(x > 0.0, 0.8, -0.8),
     "cube": lambda x: np.clip(x, -3.0, 3.0) ** 3 / 9.0,
     "exp": lambda x: np.exp(np.clip(x, -2.5, 2.5)),
+    "sigmoid": lambda x: np.tanh(x / 2.0) / 2.0,
+    "softplus": lambda x: np.logaddexp(0.0, x) - 0.7,
+    "abs": lambda x: np.abs(x) - 0.8,
+    "sin": np.sin,
+    "log": lambda x: np.sign(x) * np.log1p(np.abs(x)),
 }
 TRANSFORM_NAMES = tuple(TRANSFORMS)
 

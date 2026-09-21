@@ -7,7 +7,6 @@ from plurel.columns import DEFAULT_CALENDAR, Column
 from plurel.distributions import (
     AutoRegressive,
     Beta,
-    Calendar,
     Cycle,
     Exponential,
     Gumbel,
@@ -51,6 +50,19 @@ from plurel.random import Seed, generator
 from plurel.schema import FK, SCM, Schema
 
 ACTIVATIONS = tuple(name for name in TRANSFORM_NAMES if name != "identity")
+WORKWEEK = (1.0,) * 5 + (0.3, 0.3)
+LEISURE = (0.6,) * 4 + (0.8, 1.0, 1.0)
+EVENING_HOURS = (0.2,) * 8 + (0.5,) * 9 + (1.0,) * 5 + (0.4,) * 2
+CALENDARS = (
+    DEFAULT_CALENDAR,
+    replace(DEFAULT_CALENDAR, weekday_weights=WORKWEEK),
+    replace(DEFAULT_CALENDAR, weekday_weights=LEISURE, hour_weights=EVENING_HOURS),
+    replace(DEFAULT_CALENDAR, hour_weights=(1.0,) * 24),
+)
+ZERO_INFLATED = tuple(
+    Mixture((Normal(0.0, 0.0), Exponential()), (share, 1.0 - share)) for share in (0.3, 0.7)
+)
+OUTLIERS = Mixture((Normal(), Normal(0.0, 8.0)), (0.97, 0.03))
 
 
 def _linear(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
@@ -72,13 +84,12 @@ def _nearest(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator
 
 
 def _mlp(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
-    hidden = prior.mlp_hidden_width.draw(rng)
-    weights = (
-        rng.normal(0.0, 1.0 / np.sqrt(d_in), (d_in, hidden)),
-        rng.normal(0.0, 1.0 / np.sqrt(hidden), (hidden, d_out)),
-    )
-    biases = (rng.normal(0.0, 0.5, hidden), np.zeros(d_out))
-    return MLPEdge(parent, weights, biases, ("identity", str(rng.choice(ACTIVATIONS)), "identity"))
+    hidden = [prior.mlp_hidden_width.draw(rng) for _ in range(prior.mlp_layer_count.draw(rng))]
+    widths, gain = [d_in, *hidden, d_out], prior.mlp_weight_scale.draw(rng)
+    weights = tuple(rng.normal(0.0, gain / np.sqrt(a), (a, b)) for a, b in zip(widths, widths[1:]))
+    biases = tuple(rng.normal(0.0, 0.5, b) for b in hidden) + (np.zeros(d_out),)
+    activations = ("identity", *(str(rng.choice(ACTIVATIONS)) for _ in hidden), "identity")
+    return MLPEdge(parent, weights, biases, activations)
 
 
 def _tree(prior, parent: str, d_in: int, d_out: int, rng: np.random.Generator) -> Edge:
@@ -237,11 +248,15 @@ class TablePrior:
         series_rho: Autocorrelation of the noise of a time series.
         series_noise_std: Standard deviation of that noise.
         mlp_hidden_width: Hidden width of an MLP edge.
+        mlp_layer_count: Hidden layers of an MLP edge.
+        mlp_weight_scale: Gain of the weights of an MLP edge over the 1/sqrt(fan-in) scale.
         tree_count: Oblivious trees in a tree edge.
         tree_depth: Depth of each oblivious tree.
         fourier_frequency_count: Random Fourier features in a Fourier edge.
         column_count: Observed columns besides the key.
-        column_marginals: Marginal a numeric column is rank-mapped onto; None keeps the latent.
+        column_marginals: Marginal a numeric column is rank-mapped onto; None keeps the latent,
+            a mixture with a point mass gives a zero-inflated column, one with a wide component
+            gives outliers.
         column_binned_share: Probability that a numeric column is binned into categories instead.
         column_bin_count: Categories of a binned column.
         column_binning: Bin edges of a binned column: normal quantiles or the latent's own.
@@ -249,7 +264,8 @@ class TablePrior:
         column_missing_share: Probability that a column has missingness.
         column_missing_structured_share: Probability that such a column is missing where an
             indicator node says so, a two-class node reading a drawn node, instead of at random.
-        time_calendar: Calendar the time column is drawn from.
+        time_calendars: Calendar the time column is drawn from: business hours over flat
+            weekdays, a work week, evenings and weekends, or always on.
     """
 
     node_count: Range = LogIntegersRange(3, 16)
@@ -260,6 +276,8 @@ class TablePrior:
             BarabasiAlbert(2),
             Layered(3, 0.2),
             ErdosRenyi(0.3),
+            ErdosRenyi(0.6),
+            Layered(6, 0.1),
             RandomTree(),
             ReverseRandomTree(),
             WattsStrogatz(2),
@@ -267,12 +285,12 @@ class TablePrior:
     )
     node_width: Range = LogIntegersRange(1, 4)
     node_categorical_share: float = 0.3
-    node_class_count: Range = IntegersRange(2, 8)
+    node_class_count: Range = IntegersRange(2, 10)
     node_nested_share: float = 0.5
     node_ops: Choices = Choices(
         ("sum", "product", "max", "min", "logsumexp", "concat"), (6.0, 1.0, 1.0, 1.0, 1.0, 2.0)
     )
-    node_noise_std: Range = LogRange(0.01, 0.5)
+    node_noise_std: Range = LogRange(0.001, 0.5)
     key_reader_share: Range = Range(0.1, 1.0)
     edge_families: Choices = Choices(FAMILIES)
     root_noise: Choices = Choices(
@@ -281,32 +299,48 @@ class TablePrior:
             Uniform(-1.7, 1.7),
             Mixture((Normal(-1.5, 0.5), Normal(1.5, 0.5))),
             Beta(0.5, 0.5, -1.7, 1.7),
+            Beta(2.0, 5.0, -1.7, 1.7),
             Exponential(),
+            LogNormal(),
+            Pareto(2.0),
+            Poisson(0.5),
             Poisson(3.0),
         )
     )
     root_series_share: float = 0.3
-    series_trend_alpha: Range = LogRange(0.5, 2.0)
+    series_trend_alpha: Range = Range(0.0, 2.0)
     series_trend_scale: Range = Range(-1.5, 1.5)
     series_cycle_periods: Range = LogRange(1.0, 12.0)
     series_cycle_scale: Range = Range(0.0, 1.0)
     series_rho: Range = Range(0.0, 0.9)
     series_noise_std: Range = LogRange(0.1, 1.0)
     mlp_hidden_width: Range = LogIntegersRange(2, 16)
+    mlp_layer_count: Range = IntegersRange(1, 3)
+    mlp_weight_scale: Range = LogRange(0.1, 3.0)
     tree_count: Range = LogIntegersRange(1, 8)
     tree_depth: Range = IntegersRange(1, 4)
     fourier_frequency_count: int = 16
     column_count: Range = IntegersRange(3, 12)
     column_marginals: Choices = Choices(
-        (None, Uniform(), LogNormal(), Pareto(2.0), Exponential()), (3.0, 1.0, 1.0, 1.0, 1.0)
+        (
+            None,
+            Normal(),
+            Uniform(),
+            LogNormal(),
+            Pareto(2.0),
+            Exponential(),
+            *ZERO_INFLATED,
+            OUTLIERS,
+        ),
+        (3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5),
     )
     column_binned_share: float = 0.2
-    column_bin_count: Range = IntegersRange(2, 8)
+    column_bin_count: Range = IntegersRange(2, 10)
     column_binning: Choices = Choices(("normal", "empirical"))
     column_missing_rate: Range = Range(0.01, 0.1)
     column_missing_share: float = 0.3
     column_missing_structured_share: float = 0.5
-    time_calendar: Calendar = DEFAULT_CALENDAR
+    time_calendars: Choices = Choices(CALENDARS)
 
     def __post_init__(self) -> None:
         if set(self.edge_families.values) <= set(FITS):
@@ -356,7 +390,7 @@ class TablePrior:
                     missing = f"m{c}"
             columns[f"col{c}"] = self.column(i, dims[i], categorical[i], missing, rng)
         if time:
-            nodes["time"] = Node(noise=self.time_calendar)
+            nodes["time"] = Node(noise=self.time_calendars.draw(rng))
             columns["time"] = Column("time", "timestamp")
         return SCM(nodes, columns, time_column="time" if time else None)
 
@@ -531,7 +565,7 @@ class SchemaPrior:
         aggregates: Aggregation a summary edge draws from.
     """
 
-    table_count: Range = LogIntegersRange(2, 8)
+    table_count: Range = LogIntegersRange(2, 20)
     table_layouts: Choices = Choices(
         (
             BarabasiAlbert(2),
@@ -545,7 +579,7 @@ class SchemaPrior:
     table_prior: TablePrior = TablePrior()
     entity_row_count: Range = LogIntegersRange(500, 1000)
     activity_row_count: Range = LogIntegersRange(10_000, 30_000)
-    link_level_count: Range = IntegersRange(1, 3)
+    link_level_count: Range = IntegersRange(1, 5)
     link_cluster_count: Range = IntegersRange(1, 3)
     link_within: Choices = Choices((0.9, Uniform(0.4, 0.95)))
     link_between: Choices = Choices((Uniform(0.001, 0.002), Pareto(1.0, 0.01)))

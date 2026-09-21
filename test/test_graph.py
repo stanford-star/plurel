@@ -5,6 +5,7 @@ from plurel.distributions import Gumbel, Mixture, Normal
 from plurel.graph import (
     EDGES,
     REDUCTIONS,
+    TRANSFORM_NAMES,
     FourierEdge,
     LinearEdge,
     LookupEdge,
@@ -14,6 +15,7 @@ from plurel.graph import (
     Node,
     QuadraticEdge,
     TreeEdge,
+    apply_transform,
     bin_levels,
     nested_logits,
     standardize,
@@ -236,3 +238,10 @@ def test_standardize_gives_a_unit_scale_signal_that_crossing_terms_join():
     assert np.allclose(
         raw.evaluate({"x": x[:, :1]}, zeros + 1.0, across), 2.0 * x[:, :1] + 1.0 + across
     )
+
+
+def test_transforms_stay_finite_on_wide_inputs():
+    x = np.linspace(-50.0, 50.0, 1001)
+    for name in TRANSFORM_NAMES:
+        y = apply_transform(name, x)
+        assert y.shape == x.shape and np.isfinite(y).all() and len(np.unique(y)) > 1
