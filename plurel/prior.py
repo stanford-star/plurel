@@ -537,8 +537,8 @@ class SchemaPrior:
             key.
         self_reference_root_share: Share of roots in a self-referential tree.
         gather_count: Parent nodes gathered into the child per foreign key.
-        aggregate_share: Probability that a key between static tables feeds summaries of the
-            child into the parent.
+        aggregate_share: Share of the keys between static tables that feed summaries of the
+            child into the parent, drawn once per database.
         aggregate_count: Child node summaries fed into the parent per such key.
         aggregates: Aggregation a summary edge draws from.
     """
@@ -571,7 +571,7 @@ class SchemaPrior:
     self_reference_probability: float = 0.3
     self_reference_root_share: Range = Range(0.05, 0.5)
     gather_count: Range = IntegersRange(0, 3)
-    aggregate_share: float = 0.5
+    aggregate_share: Range = Range(0.0, 1.0)
     aggregate_count: Range = IntegersRange(1, 2)
     aggregates: Choices = Choices(("count", "sum", "mean", "max", "min"))
 
@@ -596,8 +596,9 @@ class SchemaPrior:
                     fkeys.append(self.fkey(name, f"{parent}_id2", parent, rng))
         crossings: dict[tuple[str, str], tuple[Edge, ...]] = {}
         tainted: dict[str, set[str]] = {name: set() for name in names}
+        summarizing = self.aggregate_share.draw(rng)
         for fk in fkeys:
-            if fk.table in static and rng.random() < self.aggregate_share:
+            if fk.table in static and rng.random() < summarizing:
                 child, parent = tables[fk.table], tables[fk.parent]
                 tails = {n: self.summary(fk, n, node.dim, rng) for n, node in child.nodes.items()}
                 count = self.aggregate_count.draw(rng)

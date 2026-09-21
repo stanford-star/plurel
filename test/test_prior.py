@@ -266,7 +266,7 @@ def test_schema_prior_knobs_switch_cross_table_structure_off():
     quiet = SchemaPrior(
         **SMALL,
         gather_count=IntegersRange(0, 0),
-        aggregate_share=0.0,
+        aggregate_share=Range(0.0, 0.0),
         self_reference_probability=0.0,
         fk_nullable_share=0.0,
         fk_duplicate_share=0.0,
