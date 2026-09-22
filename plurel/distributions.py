@@ -213,7 +213,6 @@ class Calendar:
     end: pd.Timestamp
     weekday_weights: tuple[float, ...] = (1.0,) * 7
     hour_weights: tuple[float, ...] = BUSINESS_HOURS
-    oversampling: int = 5
 
     def __post_init__(self) -> None:
         if self.start >= self.end:
@@ -223,20 +222,22 @@ class Calendar:
         for weights in (self.weekday_weights, self.hour_weights):
             if min(weights) < 0 or max(weights) <= 0:
                 raise ValueError("weights must be non-negative with a positive entry")
-        if self.oversampling < 1:
-            raise ValueError("oversampling must be at least one")
 
     def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        """Sorted epoch seconds, uniform over the span and thinned by the weekday and hour
+        weights: a draw is kept with probability its weight over the largest weight."""
         if n == 0:
             return np.empty(0)
-        span = (self.end - self.start).total_seconds()
-        candidates = n * self.oversampling
-        seconds = self.start.timestamp() + rng.uniform(0.0, span, candidates)
-        weekdays = ((seconds // 86400.0 + 3) % 7).astype(int)
-        hours = (seconds % 86400.0 // 3600.0).astype(int)
-        weights = np.asarray(self.weekday_weights)[weekdays] * np.asarray(self.hour_weights)[hours]
-        chosen = rng.choice(candidates, n, p=weights / weights.sum())
-        return np.sort(seconds[chosen])
+        span, start = (self.end - self.start).total_seconds(), self.start.timestamp()
+        weekday, hour = np.asarray(self.weekday_weights), np.asarray(self.hour_weights)
+        top, kept, count = weekday.max() * hour.max(), [], 0
+        while count < n:
+            seconds = start + rng.uniform(0.0, span, n)
+            weights = weekday[((seconds // 86400.0 + 3) % 7).astype(int)]
+            weights = weights * hour[(seconds % 86400.0 // 3600.0).astype(int)]
+            kept.append(seconds[rng.uniform(0.0, top, n) < weights])
+            count += len(kept[-1])
+        return np.sort(np.concatenate(kept)[:n])
 
 
 DISTRIBUTIONS: dict[str, type] = {

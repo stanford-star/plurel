@@ -82,7 +82,7 @@ def test_calendar_is_sorted_within_range_and_honors_zero_weights():
     hour = tuple(1.0 if 9 <= h < 17 else 0.0 for h in range(24))
     values = Calendar(START, END, weekday, hour).sample(500, np.random.default_rng(5))
     stamps = pd.to_datetime(values, unit="s")
-    assert np.all(np.diff(values) >= 0)
+    assert np.all(np.diff(values) >= 0) and len(np.unique(values)) == 500
     assert stamps.min() >= START and stamps.max() <= END
     assert set(stamps.weekday) <= {0, 1, 2, 3, 4}
     assert set(stamps.hour) <= set(range(9, 17))

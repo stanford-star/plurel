@@ -179,9 +179,15 @@ class TreeEdge(Edge):
         return self.leaves.shape[2]
 
     def apply(self, x: np.ndarray) -> np.ndarray:
-        sides = x[:, self.split_dims] > self.split_points
-        index = sides @ (2 ** np.arange(self.split_dims.shape[1]))
-        return self.leaves[np.arange(len(self.leaves)), index].mean(1)
+        trees, depth = self.split_dims.shape
+        out = np.zeros((len(x), self.dim))
+        for tree in range(trees):
+            index = np.zeros(len(x), dtype=np.int64)
+            for level in range(depth):
+                split = x[:, self.split_dims[tree, level]] > self.split_points[tree, level]
+                index |= split << level
+            out += self.leaves[tree, index]
+        return out / trees
 
 
 @dataclass(frozen=True)
@@ -216,7 +222,8 @@ class QuadraticEdge(Edge):
 
     def apply(self, x: np.ndarray) -> np.ndarray:
         x = np.concatenate([x, np.ones((len(x), 1))], axis=1)
-        return np.einsum("oij,ni,nj->no", self.tensor, x, x)
+        mixed = x @ self.tensor.transpose(1, 0, 2).reshape(x.shape[1], -1)
+        return (mixed.reshape(len(x), self.dim, -1) * x[:, None, :]).sum(-1)
 
 
 @dataclass(frozen=True)
