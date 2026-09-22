@@ -4,11 +4,15 @@ import pytest
 from plurel.distributions import (
     Beta,
     Exponential,
+    Gamma,
+    Laplace,
     LogNormal,
     Mixture,
+    NegativeBinomial,
     Normal,
     Pareto,
     Poisson,
+    StudentT,
     TimeSeries,
     Uniform,
 )
@@ -101,6 +105,10 @@ def test_table_prior_realizes_valid_diverse_tables():
         LogNormal,
         Pareto,
         Poisson,
+        Laplace,
+        StudentT,
+        Gamma,
+        NegativeBinomial,
         TimeSeries,
     }
     assert binnings == {"normal", "empirical"} and missing == {float, str}
