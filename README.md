@@ -23,11 +23,6 @@ PluRel synthesizes relational databases from structural causal models: every tab
 causal graph, foreign keys carry causal influence between tables, and a prior draws thousands of
 different databases in the [relbench](https://github.com/stanford-star/relbench) format.
 
-> [!NOTE]
-> Pretraining on PluRel data (preprocessing, checkpoints, inference with the
-> [Relational Transformer](https://github.com/rishabh-ranjan/relational-transformer)) is covered in
-> [`examples/relational_transformer/`](examples/relational_transformer/).
-
 ## Installation
 
 PluRel needs Python 3.12 or newer.
