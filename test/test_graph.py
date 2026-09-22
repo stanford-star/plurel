@@ -66,6 +66,7 @@ REFERENCE = {
     "min": lambda t: t.min(0),
     "logsumexp": lambda t: np.log(np.exp(t).sum(0)),
     "concat": lambda t: np.concatenate(t, axis=1),
+    "compound": lambda t: np.expm1(np.clip(t.sum(0), -2.5, 2.5)),
 }
 
 
@@ -154,6 +155,19 @@ def test_interactions_are_product_nodes(latents):
     out = target.evaluate({**latents, "h": interaction}, zeros)
     np.testing.assert_allclose(out, 2.0 * latents["x"] - 0.5 * latents["x"] * latents["y"])
     assert target.parents == ("x", "h")
+
+
+def test_scale_edges_set_the_noise_spread_from_the_parents(latents):
+    node = Node((LinearEdge("x"),), noise=Normal(), scale=(LinearEdge("y", 1.0),))
+    assert node.parents == ("x", "y") and node.dim == 1
+    exogenous = node.sample_noise(N, np.random.default_rng(0))
+    value = node.evaluate(latents, exogenous)
+    spread = np.exp(np.clip(latents["y"], -3.0, 3.0))
+    np.testing.assert_allclose(value, latents["x"] + spread * exogenous)
+    wide = Node(noise=Normal(), scale=(LinearEdge("y", 5.0),)).evaluate(latents, exogenous)
+    assert np.abs(wide).max() <= np.exp(3.0) * np.abs(exogenous).max() + 1e-12
+    with pytest.raises(ValueError, match="one-dimensional"):
+        Node(scale=(MatrixEdge("h", np.ones((3, 2))),))
 
 
 def test_one_hot_node_is_a_gumbel_argmax_over_the_combined_scores(latents):
