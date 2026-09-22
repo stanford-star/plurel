@@ -5,16 +5,21 @@ import numpy as np
 
 from plurel.columns import DEFAULT_CALENDAR, Column
 from plurel.distributions import (
+    Affine,
     AutoRegressive,
     Beta,
     Cycle,
     Exponential,
+    Gamma,
     Gumbel,
+    Laplace,
     LogNormal,
     Mixture,
+    NegativeBinomial,
     Normal,
     Pareto,
     Poisson,
+    StudentT,
     TimeSeries,
     Trend,
     Uniform,
@@ -238,7 +243,9 @@ class TablePrior:
         node_categorical_share: Share of the nodes that are categorical, one-hot nodes.
         node_class_count: Classes of a categorical node, and levels of a lookup edge.
         node_ops: Reduction over the edges of a numeric node with several parents.
-        node_noise_std: Standard deviation of the Gaussian noise of a numeric node, relative
+        node_noise_shapes: Unit-scale shape of a numeric node's noise: normal, heavier-tailed
+            (Laplace, Student-t) or skewed (a centred gamma); ``node_noise_std`` scales it.
+        node_noise_std: Standard deviation of the noise of a numeric node, relative
             to its standardized signal.
         key_reader_share: Share of the table's nodes that read the edges crossing one key, drawn
             per key; at least one node reads.
@@ -297,6 +304,10 @@ class TablePrior:
         (6.0, 1.0, 1.0, 1.0, 1.0, 2.0, 1.0),
     )
     node_noise_std: Range = LogRange(0.001, 0.5)
+    node_noise_shapes: Choices = Choices(
+        (Normal(), Laplace(scale=0.7), StudentT(4.0, 0.7), Affine(Gamma(2.0), -2.0, 0.7)),
+        (4.0, 1.0, 1.0, 1.0),
+    )
     key_reader_share: Range = Range(0.1, 1.0)
     edge_families: Choices = Choices(FAMILIES)
     root_noise: Choices = Choices(
@@ -311,6 +322,10 @@ class TablePrior:
             Pareto(2.0),
             Poisson(0.5),
             Poisson(3.0),
+            Laplace(scale=0.7),
+            StudentT(4.0, 0.7),
+            Gamma(2.0, 0.7),
+            NegativeBinomial(2.0, 0.4),
         )
     )
     root_series_share: Range = Range(0.0, 0.6)
@@ -335,10 +350,15 @@ class TablePrior:
             LogNormal(),
             Pareto(2.0),
             Exponential(),
+            Laplace(),
+            StudentT(4.0),
+            Gamma(2.0),
+            Affine(LogNormal(), scale=-1.0),
+            NegativeBinomial(3.0, 0.4),
             *ZERO_INFLATED,
             OUTLIERS,
         ),
-        (3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5),
+        (3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.7, 0.7, 0.7, 0.7, 0.7, 1.0, 1.0, 0.5),
     )
     column_binned_share: Range = Range(0.0, 0.4)
     column_bin_count: Range = IntegersRange(2, 10)
@@ -415,7 +435,7 @@ class TablePrior:
             return Node(dim=dims[i], noise=noise, standardize=True)
         widths = [dims[p] if op == "concat" else dims[i] for p in sources]
         edges = tuple(self.edge(f"n{p}", dims[p], w, False, rng) for p, w in zip(sources, widths))
-        noise = Normal(std=self.node_noise_std.draw(rng))
+        noise = Affine(self.node_noise_shapes.draw(rng), scale=self.node_noise_std.draw(rng))
         return Node(edges, op, noise=noise, standardize=True)
 
     def edge(

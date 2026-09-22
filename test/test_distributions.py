@@ -4,18 +4,23 @@ import pytest
 
 from plurel.distributions import (
     DISTRIBUTIONS,
+    Affine,
     AutoRegressive,
     Beta,
     Calendar,
     Cycle,
     Distribution,
     Exponential,
+    Gamma,
     Gumbel,
+    Laplace,
     LogNormal,
     Mixture,
+    NegativeBinomial,
     Normal,
     Pareto,
     Poisson,
+    StudentT,
     TimeSeries,
     Trend,
     Uniform,
@@ -33,6 +38,11 @@ EXAMPLES = {
     "pareto": Pareto(),
     "poisson": Poisson(3.0),
     "gumbel": Gumbel(),
+    "laplace": Laplace(),
+    "student_t": StudentT(4.0),
+    "gamma": Gamma(2.0, 0.5),
+    "negative_binomial": NegativeBinomial(3.0, 0.4),
+    "affine": Affine(LogNormal(), 1.0, -2.0),
     "mixture": Mixture((Normal(-3.0, 0.1), Normal(3.0, 0.1)), (0.25, 0.75)),
     "time_series": TimeSeries(noise=AutoRegressive(0.5, 0.1)),
     "calendar": Calendar(START, END),
@@ -52,6 +62,23 @@ def test_sample_shape_dtype_and_determinism(name):
     assert first.shape == (50,)
     assert first.dtype == np.float64
     np.testing.assert_array_equal(first, second)
+
+
+def test_heavy_tails_skew_counts_and_mirroring():
+    rng = np.random.default_rng(0)
+    kurtosis = lambda x: float(((x - x.mean()) ** 4).mean() / x.var() ** 2)  # noqa: E731
+    normal, laplace, student = (
+        d.sample(200_000, rng) for d in (Normal(), Laplace(), StudentT(4.0))
+    )
+    assert kurtosis(normal) < 3.2 < kurtosis(laplace) < kurtosis(student)
+    gamma = Gamma(2.0, 0.5).sample(100_000, rng)
+    assert gamma.min() > 0 and abs(gamma.mean() - 1.0) < 0.02 and np.median(gamma) < gamma.mean()
+    counts = NegativeBinomial(3.0, 0.4).sample(100_000, rng)
+    assert (counts == np.round(counts)).all() and counts.var() > counts.mean() * 1.5
+    mirrored = Affine(LogNormal(), 1.0, -2.0).sample(100_000, rng)
+    assert mirrored.max() <= 1.0 and np.median(mirrored) > mirrored.mean()
+    with pytest.raises(ValueError):
+        Affine(Normal(), scale=0.0)
 
 
 def test_mixture_follows_its_weights():

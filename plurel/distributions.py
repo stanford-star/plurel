@@ -121,6 +121,85 @@ class Gumbel:
 
 
 @dataclass(frozen=True)
+class Laplace:
+    """Symmetric with heavier tails than the normal: a double exponential."""
+
+    loc: float = 0.0
+    scale: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.scale <= 0:
+            raise ValueError("scale must be positive")
+
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        return rng.laplace(self.loc, self.scale, n)
+
+
+@dataclass(frozen=True)
+class StudentT:
+    """Symmetric with power-law tails: the fewer the degrees of freedom, the more outliers."""
+
+    df: float = 5.0
+    scale: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.df <= 0 or self.scale <= 0:
+            raise ValueError("df and scale must be positive")
+
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        return self.scale * rng.standard_t(self.df, n)
+
+
+@dataclass(frozen=True)
+class Gamma:
+    """Positive and right-skewed, from exponential-like at shape 1 to near-normal at large shapes;
+    the chi-square family is its shape-and-scale special case."""
+
+    shape: float = 2.0
+    scale: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.shape <= 0 or self.scale <= 0:
+            raise ValueError("shape and scale must be positive")
+
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        return rng.gamma(self.shape, self.scale, n)
+
+
+@dataclass(frozen=True)
+class NegativeBinomial:
+    """Overdispersed counts: failures before ``successes`` successes at probability ``p``; the
+    geometric family is its one-success case, the Poisson its limit."""
+
+    successes: float = 2.0
+    p: float = 0.5
+
+    def __post_init__(self) -> None:
+        if self.successes <= 0 or not 0.0 < self.p <= 1.0:
+            raise ValueError("successes must be positive and p in (0, 1]")
+
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        return rng.negative_binomial(self.successes, self.p, n).astype(float)
+
+
+@dataclass(frozen=True)
+class Affine:
+    """``loc + scale * distribution``: a location and scale on any distribution; a negative scale
+    mirrors it, which turns a right skew into a left one."""
+
+    distribution: Distribution
+    loc: float = 0.0
+    scale: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.scale == 0:
+            raise ValueError("scale must be non-zero")
+
+    def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        return self.loc + self.scale * self.distribution.sample(n, rng)
+
+
+@dataclass(frozen=True)
 class Mixture:
     components: tuple[Distribution, ...]
     weights: tuple[float, ...] | None = None
@@ -258,6 +337,11 @@ DISTRIBUTIONS: dict[str, type] = {
     "pareto": Pareto,
     "poisson": Poisson,
     "gumbel": Gumbel,
+    "laplace": Laplace,
+    "student_t": StudentT,
+    "gamma": Gamma,
+    "negative_binomial": NegativeBinomial,
+    "affine": Affine,
     "mixture": Mixture,
     "time_series": TimeSeries,
     "calendar": Calendar,
