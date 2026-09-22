@@ -21,8 +21,7 @@ Synthetic Data unlocks Scaling Laws for Relational Foundation Models
 
 PluRel synthesizes relational databases from structural causal models: every table is a small
 causal graph, foreign keys carry causal influence between tables, and a prior draws thousands of
-different databases in the [relbench](https://github.com/stanford-star/relbench) format. It is the
-reference implementation of the [PluRel paper](https://arxiv.org/abs/2602.04029).
+different databases in the [relbench](https://github.com/stanford-star/relbench) format.
 
 > [!NOTE]
 > Pretraining on PluRel data (preprocessing, checkpoints, inference with the
