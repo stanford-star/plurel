@@ -31,7 +31,9 @@ PluRel needs Python 3.12 or newer.
 pip install plurel
 ```
 
-## Step 1: one table, by hand
+## Getting Started
+
+### Build a table
 
 A table is a small causal graph. Each `Node` holds a block of latent values, one row per table
 row and `dim` columns; its value is a reduction over the `Edge`s from its parents plus bias and
@@ -73,7 +75,7 @@ The edge families are `LinearEdge` (a weight and a transform), `MatrixEdge`, `ML
 scalar) and `NearestEdge` (one-hot of the closest center); every one is a frozen dataclass
 whose parameters you can read and set.
 
-## Step 2: one table, from the prior
+### Draw a table from the prior
 
 `TablePrior` draws such plans. Every knob is a `Range` or a `Choices`, warped once per table so
 that each table has its own style, then drawn per use. Its docstring lists every knob.
@@ -90,7 +92,7 @@ With `time=True` the table gets a calendar time column and its rows come out in 
 The realized plan is inspectable: `events.nodes` are the nodes with their edges, `events.columns`
 the columns, `events.order` the topological order.
 
-## Step 3: a database, by hand
+### Link tables into a database
 
 A `Schema` links tables through foreign keys and through *crossings*, the edges that read
 across a key. A `Foreign(key, node)` tail reads the node of the row the key points at; a
@@ -134,7 +136,7 @@ frames, latents = schema.sample_with_latents(
 )
 ```
 
-## Step 4: a database, from the prior
+### Draw a database from the prior
 
 `SchemaPrior` draws whole schemas: the table graph, a fresh `TablePrior` warp per table, the
 keys, and the crossings. Then the database is written in the
@@ -169,7 +171,7 @@ database at any time leaves every key valid. Summaries run only from static tabl
 tables, so no row summarizes later events. Latents are always finite; missing values enter only
 when columns are observed.
 
-## Step 5: a corpus
+### Generate a corpus
 
 The generator script runs one process per database:
 
