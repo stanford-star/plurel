@@ -293,7 +293,8 @@ class TablePrior:
     node_categorical_share: Range = Range(0.0, 0.6)
     node_class_count: Range = IntegersRange(2, 10)
     node_ops: Choices = Choices(
-        ("sum", "product", "max", "min", "logsumexp", "concat"), (6.0, 1.0, 1.0, 1.0, 1.0, 2.0)
+        ("sum", "product", "max", "min", "logsumexp", "concat", "compound"),
+        (6.0, 1.0, 1.0, 1.0, 1.0, 2.0, 1.0),
     )
     node_noise_std: Range = LogRange(0.001, 0.5)
     key_reader_share: Range = Range(0.1, 1.0)
