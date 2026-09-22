@@ -89,3 +89,8 @@ def test_calendar_is_sorted_within_range_and_honors_zero_weights():
     early = Calendar(pd.Timestamp("1965-01-01"), pd.Timestamp("1966-01-01"), weekday, hour)
     stamps = pd.to_datetime(early.sample(300, np.random.default_rng(6)), unit="s")
     assert set(stamps.weekday) <= {0, 1, 2, 3, 4} and set(stamps.hour) <= set(range(9, 17))
+    monday = Calendar(pd.Timestamp("2024-06-10"), pd.Timestamp("2024-06-11"), weekday, hour)
+    assert len(monday.sample(5, np.random.default_rng(0))) == 5
+    weekend = Calendar(pd.Timestamp("2024-06-08"), pd.Timestamp("2024-06-09 12:00"), weekday, hour)
+    with pytest.raises(ValueError, match="no weight"):
+        weekend.sample(5, np.random.default_rng(0))

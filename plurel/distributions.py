@@ -223,19 +223,28 @@ class Calendar:
             if min(weights) < 0 or max(weights) <= 0:
                 raise ValueError("weights must be non-negative with a positive entry")
 
+    def weights(self, seconds: np.ndarray) -> np.ndarray:
+        """The weight of each epoch second: its weekday's times its hour's."""
+        weekday = np.asarray(self.weekday_weights)[((seconds // 86400.0 + 3) % 7).astype(int)]
+        return weekday * np.asarray(self.hour_weights)[(seconds % 86400.0 // 3600.0).astype(int)]
+
     def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
-        """Sorted epoch seconds, uniform over the span and thinned by the weekday and hour
-        weights: a draw is kept with probability its weight over the largest weight."""
+        """Sorted epoch seconds, uniform over the span and thinned by the weights: a draw is
+        kept with probability its weight over the largest weight."""
         if n == 0:
             return np.empty(0)
-        span, start = (self.end - self.start).total_seconds(), self.start.timestamp()
+        start, end = self.start.timestamp(), self.end.timestamp()
+        if end - start < 8 * 86400.0:
+            cells = np.arange(np.floor(start / 3600.0), np.ceil(end / 3600.0)) * 3600.0
+            if not self.weights(np.maximum(cells, start)).any():
+                raise ValueError("the calendar puts no weight on its span")
         weekday, hour = np.asarray(self.weekday_weights), np.asarray(self.hour_weights)
-        top, kept, count = weekday.max() * hour.max(), [], 0
+        top, typical = weekday.max() * hour.max(), weekday.mean() * hour.mean()
+        kept, count = [], 0
         while count < n:
-            seconds = start + rng.uniform(0.0, span, n)
-            weights = weekday[((seconds // 86400.0 + 3) % 7).astype(int)]
-            weights = weights * hour[(seconds % 86400.0 // 3600.0).astype(int)]
-            kept.append(seconds[rng.uniform(0.0, top, n) < weights])
+            draws = int(1.1 * (n - count) * top / typical) + 16
+            seconds = rng.uniform(start, end, draws)
+            kept.append(seconds[rng.uniform(0.0, top, draws) < self.weights(seconds)])
             count += len(kept[-1])
         return np.sort(np.concatenate(kept)[:n])
 
