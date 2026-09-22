@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
 
-import plurel.links
 from plurel.distributions import Pareto, Uniform
 from plurel.links import LINKS, HSBMLink, Link, RandomLink, TreeLink, clusters
 
@@ -130,13 +129,6 @@ def test_hsbm_raises_when_exclusions_leave_no_linkable_parent():
             outcomes.add("linked")
             assert not parents.any()
     assert outcomes == {"raised", "linked"}
-
-
-def test_hsbm_draws_do_not_depend_on_chunking(monkeypatch):
-    link = HSBMLink((2, 2), (3, 2), popularity=Pareto(2.0), inactive=0.2)
-    whole = link.sample(500, 300, np.random.default_rng(3))
-    monkeypatch.setattr(plurel.links, "CHUNK_BYTES", 8 * 300 * 7)
-    np.testing.assert_array_equal(link.sample(500, 300, np.random.default_rng(3)), whole)
 
 
 def test_hsbm_matches_the_closed_form_distribution():

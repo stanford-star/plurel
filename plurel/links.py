@@ -5,8 +5,6 @@ import numpy as np
 
 from plurel.distributions import Distribution, Uniform
 
-CHUNK_BYTES = 20_000_000
-
 
 @runtime_checkable
 class Link(Protocol):
@@ -47,12 +45,6 @@ class RandomLink:
         if n_child == 0:
             return np.empty(0, dtype=np.int64)
         return rng.integers(0, n_parent, n_child)
-
-
-def _draw(log_p: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    cdf = np.cumsum(np.exp(log_p - log_p.max(axis=0, keepdims=True)), axis=0)
-    draws = rng.uniform(0.0, 1.0, (1, log_p.shape[1])) * cdf[-1]
-    return (cdf > draws).argmax(axis=0)
 
 
 @dataclass(frozen=True)
@@ -118,15 +110,18 @@ class HSBMLink:
             for parent, child in zip(self.parent_clusters, self.child_clusters)
         ]
         log_weight = self.log_weights(n_parent, rng)
+        groups, membership = np.unique(child_labels, axis=0, return_inverse=True)
+        order = np.argsort(membership.reshape(-1), kind="stable")
+        bounds = np.searchsorted(membership.reshape(-1)[order], np.arange(len(groups) + 1))
+        draws = rng.uniform(0.0, 1.0, n_child)
         parents = np.empty(n_child, dtype=np.int64)
-        chunk = max(1, min(n_child, CHUNK_BYTES // (8 * n_parent)))
-        for start in range(0, n_child, chunk):
-            block = child_labels[start : start + chunk]
-            log_p = log_weight[:, None] + sum(
-                level[parent_labels[:, index][:, None], block[:, index][None, :]]
-                for index, level in enumerate(levels)
+        for group, label in enumerate(groups):
+            log_p = log_weight + sum(
+                level[parent_labels[:, index], label[index]] for index, level in enumerate(levels)
             )
-            parents[start : start + chunk] = _draw(log_p, rng)
+            cdf = np.cumsum(np.exp(log_p - log_p.max()))
+            members = order[bounds[group] : bounds[group + 1]]
+            parents[members] = np.searchsorted(cdf[:-1], draws[members] * cdf[-1], side="right")
         return parents
 
 

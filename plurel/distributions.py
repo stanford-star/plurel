@@ -179,9 +179,20 @@ class AutoRegressive:
             raise ValueError("scale must be non-negative")
 
     def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
-        out = rng.normal(0.0, self.scale, n)
-        for index in range(1, n):
-            out[index] += self.rho * out[index - 1]
+        """The AR(1) recursion as a scan over blocks short enough for the powers of `rho` to
+        stay finite."""
+        noise = rng.normal(0.0, self.scale, n)
+        if not self.rho or not n:
+            return noise
+        block = max(1, min(n, int(250.0 / -np.log10(self.rho))))
+        powers = self.rho ** np.arange(1, block + 1)
+        out, carry = np.empty(n), 0.0
+        for start in range(0, n, block):
+            steps = powers[: min(block, n - start)]
+            out[start : start + block] = steps * (
+                np.cumsum(noise[start : start + block] / steps) + carry
+            )
+            carry = out[start + len(steps) - 1]
         return out
 
 
@@ -202,7 +213,6 @@ class Calendar:
     end: pd.Timestamp
     weekday_weights: tuple[float, ...] = (1.0,) * 7
     hour_weights: tuple[float, ...] = BUSINESS_HOURS
-    oversampling: int = 5
 
     def __post_init__(self) -> None:
         if self.start >= self.end:
@@ -212,22 +222,31 @@ class Calendar:
         for weights in (self.weekday_weights, self.hour_weights):
             if min(weights) < 0 or max(weights) <= 0:
                 raise ValueError("weights must be non-negative with a positive entry")
-        if self.oversampling < 1:
-            raise ValueError("oversampling must be at least one")
+
+    def weights(self, seconds: np.ndarray) -> np.ndarray:
+        """The weight of each epoch second: its weekday's times its hour's."""
+        weekday = np.asarray(self.weekday_weights)[((seconds // 86400.0 + 3) % 7).astype(int)]
+        return weekday * np.asarray(self.hour_weights)[(seconds % 86400.0 // 3600.0).astype(int)]
 
     def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
+        """Sorted epoch seconds, uniform over the span and thinned by the weights: a draw is
+        kept with probability its weight over the largest weight."""
         if n == 0:
             return np.empty(0)
-        span = (self.end - self.start).total_seconds()
-        candidates = n * self.oversampling
-        offsets = rng.uniform(0.0, span, candidates)
-        stamps = self.start + pd.to_timedelta(offsets, unit="s")
-        weights = (
-            np.asarray(self.weekday_weights)[stamps.weekday]
-            * np.asarray(self.hour_weights)[stamps.hour]
-        )
-        chosen = rng.choice(candidates, n, p=weights / weights.sum())
-        return np.sort(self.start.timestamp() + offsets[chosen])
+        start, end = self.start.timestamp(), self.end.timestamp()
+        if end - start < 8 * 86400.0:
+            cells = np.arange(np.floor(start / 3600.0), np.ceil(end / 3600.0)) * 3600.0
+            if not self.weights(np.maximum(cells, start)).any():
+                raise ValueError("the calendar puts no weight on its span")
+        weekday, hour = np.asarray(self.weekday_weights), np.asarray(self.hour_weights)
+        top, typical = weekday.max() * hour.max(), weekday.mean() * hour.mean()
+        kept, count = [], 0
+        while count < n:
+            draws = int(1.1 * (n - count) * top / typical) + 16
+            seconds = rng.uniform(start, end, draws)
+            kept.append(seconds[rng.uniform(0.0, top, draws) < self.weights(seconds)])
+            count += len(kept[-1])
+        return np.sort(np.concatenate(kept)[:n])
 
 
 DISTRIBUTIONS: dict[str, type] = {
