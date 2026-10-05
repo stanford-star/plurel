@@ -240,6 +240,10 @@ class TablePrior:
         node_layouts: DAG generator for the node graph.
         node_width: Latent dimensions of a numeric node; a concat node has its parents' widths
             together.
+        node_max_width: Widest a concat node may be; one whose parents' widths sum past it
+            reduces them with sum instead. Concat widths compound through a DAG with several
+            paths (thousands at 16 nodes), and a quadratic edge holds width^3 numbers. None
+            leaves them unbounded.
         node_categorical_share: Share of the nodes that are categorical, one-hot nodes.
         node_class_count: Classes of a categorical node, and levels of a lookup edge.
         node_ops: Reduction over the edges of a numeric node with several parents.
@@ -297,6 +301,7 @@ class TablePrior:
         )
     )
     node_width: Range = LogIntegersRange(1, 4)
+    node_max_width: int | None = None
     node_categorical_share: Range = Range(0.0, 0.6)
     node_class_count: Range = IntegersRange(2, 10)
     node_ops: Choices = Choices(
@@ -389,6 +394,9 @@ class TablePrior:
         ]
         dims: list[int] = []
         for i in range(n):
+            if ops[i] == "concat" and self.node_max_width is not None:
+                if sum(dims[p] for p in parents[i]) > self.node_max_width:
+                    ops[i] = "sum"
             if categorical[i]:
                 dims.append(self.node_class_count.draw(rng))
             elif ops[i] == "concat":
