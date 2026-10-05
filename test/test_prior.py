@@ -158,6 +158,21 @@ def test_table_prior_knobs_are_respected():
     assert sample(scm, 5, seed=0).shape[0] == 5
 
 
+def test_table_prior_caps_concat_widths():
+    concat_heavy = {
+        "node_ops": Choices(("concat", "sum"), (1.0, 1.0)),
+        "node_count": IntegersRange(16, 16),
+    }
+    free = [TablePrior(**concat_heavy).realize(seed) for seed in range(30)]
+    assert max(m.dim for scm in free for m in scm.nodes.values() if not m.onehot) > 16
+    capped = [TablePrior(**concat_heavy, node_max_width=16).realize(seed) for seed in range(30)]
+    assert all(m.dim <= 16 for scm in capped for m in scm.nodes.values() if not m.onehot)
+    # concat nodes wider than any drawn width remain
+    assert any(m.op == "concat" and m.dim > 4 for scm in capped for m in scm.nodes.values())
+    for seed, scm in enumerate(capped):
+        sample(scm, 50, seed=seed)
+
+
 def test_structured_missingness_follows_its_indicator_node():
     always = Range(1.0, 1.0)
     prior = TablePrior(column_missing_share=always, column_missing_structured_share=always)
