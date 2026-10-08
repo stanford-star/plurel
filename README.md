@@ -6,14 +6,22 @@ Synthetic Data unlocks Scaling Laws for Relational Foundation Models
 
 [![Project Page](https://img.shields.io/badge/Project-Page-blue?style=flat&logo=github)](https://star-project.stanford.edu/plurel)
 [![arXiv](https://img.shields.io/badge/arXiv-2602.04029-b31b1b?style=flat&logo=arxiv)](https://arxiv.org/abs/2602.04029)
+[![Model: rt-plurel](https://img.shields.io/badge/%F0%9F%A4%97%20Model-rt--plurel-yellow?style=flat)](https://huggingface.co/stanford-star/rt-plurel)
+[![Dataset: plurel](https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-plurel-yellow?style=flat)](https://huggingface.co/datasets/stanford-star/plurel)
 [![PyPI](https://img.shields.io/pypi/v/plurel.svg?style=flat&logo=pypi&logoColor=white)](https://pypi.org/project/plurel/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat)](LICENSE)
 
 <img src="docs/static/images/scaling_law.png" alt="Scaling Law Plot"/>
 </div>
 <br>
 
+Models pretrained on PluRel data lead public relational benchmarks (at the time of submission):  
+🥇 **RT-PluRel**, a [Relational Transformer](https://github.com/stanford-star/relational-transformer) pretrained on PluRel synthetic data, is #1 on the combined system + model leaderboard on [RelArena-α](https://star-project.stanford.edu/relarena-alpha) ([repro](https://github.com/stanford-star/relational-transformer/tree/main/examples/finetune)).  
+🥇 **RT-J**, warm-started from RT-PluRel, is the #1 in-context model on the [RelBench leaderboard](https://star-project.stanford.edu/relbench/leaderboard) ([repro](https://github.com/stanford-star/relational-transformer/tree/main/examples/icl)).
+
 ## Latest Updates
 
+- [10/2026] 🥇 **RT-PluRel** takes the top spot on [RelArena-α](https://star-project.stanford.edu/relarena-alpha). Checkpoints are on [Hugging Face](https://huggingface.co/stanford-star/rt-plurel).
 - [07/2026] Released **v1.1.0** on [PyPI](https://pypi.org/project/plurel/) with the latest features and performance improvements.
 - [04/2026] PluRel is accepted to **ICML 2026!**
 
@@ -22,7 +30,7 @@ Synthetic Data unlocks Scaling Laws for Relational Foundation Models
 PluRel is an open-source library for synthesizing diverse relational and tabular data using Structural Causal Models (SCMs). It is the reference implementation for the [PluRel paper](https://arxiv.org/abs/2602.04029).
 
 > [!NOTE]
-> Pretraining models on PluRel data (preprocessing, checkpoints, inference with [Relational Transformer](https://github.com/rishabh-ranjan/relational-transformer)) is covered in [`examples/relational_transformer/`](examples/relational_transformer/).
+> Pretraining models on PluRel data (preprocessing, checkpoints, inference with [Relational Transformer](https://github.com/stanford-star/relational-transformer)) is covered in [`examples/relational_transformer/`](examples/relational_transformer/).
 
 ## Framework Design
 
@@ -88,7 +96,7 @@ from plurel import Config, DatabaseParams, SCMParams
 config = Config(
     database_params=DatabaseParams(num_tables_choices=Choices(kind="range", value=[5, 10])),
     schema_file="path/to/schema.sql",  # optional: generate from SQL schema
-    cache_dir="~/.cache/relbench",       # optional: cache generated databases
+    cache_dir="~/.cache/relbench",  # optional: cache generated databases
 )
 ```
 
