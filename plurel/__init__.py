@@ -43,13 +43,6 @@ from plurel.graph import (
     bin_levels,
     standardize,
 )
-from plurel.io import (
-    create_database,
-    order_by_time,
-    read_database,
-    split_timestamps,
-    write_database,
-)
 from plurel.layouts import (
     LAYOUTS,
     BarabasiAlbert,
@@ -153,3 +146,20 @@ __all__ = [
     "standardize",
     "write_database",
 ]
+
+# relbench takes most of this package's import time and only the database functions need it
+_DATABASE_FUNCTIONS = (
+    "create_database",
+    "order_by_time",
+    "read_database",
+    "split_timestamps",
+    "write_database",
+)
+
+
+def __getattr__(name: str):
+    if name in _DATABASE_FUNCTIONS:
+        from plurel import io
+
+        return getattr(io, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
