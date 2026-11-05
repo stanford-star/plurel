@@ -30,7 +30,9 @@ Models pretrained on PluRel data lead public relational benchmarks (at the time 
 PluRel synthesizes relational databases from structural causal models: every table is a small
 causal graph, foreign keys carry causal influence between tables, and a prior draws thousands of
 different databases in the [relbench](https://github.com/stanford-star/relbench) format. It is the
-reference implementation for the [PluRel paper](https://arxiv.org/abs/2602.04029).
+reference implementation for the [PluRel paper](https://arxiv.org/abs/2602.04029). People and agents
+can also [write semi-synthetic tables](#write-your-own-tables) in a schema language that plurel
+realizes as the same causal graphs.
 
 > [!NOTE]
 > Pretraining models on PluRel data (preprocessing, checkpoints, inference with [Relational Transformer](https://github.com/stanford-star/relational-transformer)) is covered in [`examples/relational_transformer/`](examples/relational_transformer/).
@@ -169,6 +171,49 @@ python scripts/synthetic_gen.py --seed_offset 0 --num_dbs 1000 --num_proc 16
 
 Databases land in `~/.cache/relbench/plurel-<seed>`; see `--help` for the output directory,
 name prefix and validation and test shares.
+
+## Write your own tables
+
+A `WorldSchema` says what a table means: what each column is, on what scale, and how it depends on
+the others. A schema authors signs and strength classes; a seed draws the magnitudes, so one schema
+gives many tables. `validate()` names the first rule a schema breaks, which makes the language easy
+for an agent to write against.
+
+```python
+from plurel.world import Edge, Node, WorldSchema, realize_world
+
+schema = WorldSchema(
+    schema_id="clinic_referral_outcome",
+    target="outcome",
+    description="Each row is one referral a clinic received; outcome records how it ended.",
+    nodes={
+        "age": Node(kind="numeric", units="duration", dist="right", scale=(0, 90), desc="the patient's age"),
+        "wait_days": Node(
+            kind="numeric", units="duration", scale=(0, 60), rounding=1,
+            parents={"age": Edge(effect=+0.5)}, noise_scale="low", noise_dist="gaussian",
+            desc="days waited",
+        ),
+        "outcome": Node(
+            kind="categorical", levels=["declined", "accepted"], level_probs={"declined": 0.7, "accepted": 0.3},
+            parents={"wait_days": Edge(effect=-1, shape="saturating")},
+            noise_scale="medium", noise_dist="gaussian", desc="how it ended",
+        ),
+    },
+)
+population = realize_world(schema, seed=0)
+rows = population.rows(n=1000, draw=0)
+```
+
+Nodes can also declare hidden causes, nominal parents, interactions, non-additive mechanisms, derived
+columns and what the record rounds, caps or leaves blank; `compile_schema` returns the plain `SCM`.
+`realize_random(seed, columns=...)` in `plurel.random_scm` gives a table of the same shape from the
+prior, with no text.
+
+A catalog of schemas is a package whose file layout is its taxonomy (`load_catalog`), declared by one
+plan per sector (`Taxonomy`). It can live in any repository. `plurel.world.authoring.realism.check`
+is the gate on a new schema, `plurel.world.authoring.dedupe` lists near-duplicates, and `brief` and
+`lint` support writing a schema's world knowledge. [`examples/world/`](examples/world/) shows them
+together.
 
 ## Development
 

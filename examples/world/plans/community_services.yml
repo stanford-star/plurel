@@ -1,0 +1,18 @@
+sector: community_services
+title: Community services
+scope: Records that volunteer groups keep about the people and things they help.
+row_entities:
+- an item brought to a repair event
+anchors:
+- the RepairMonitor results of the Repair Cafe International Foundation
+exclusions:
+- commercial repair shops
+divisions:
+  repair_and_reuse:
+    title: Repair and reuse
+    groups:
+      repair_cafes:
+        title: Repair cafes
+        batches:
+          item_visits:
+          - an item brought to a volunteer repair cafe, how the visit ended
