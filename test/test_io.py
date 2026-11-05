@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -269,3 +272,12 @@ def test_split_timestamps_follow_the_pooled_time_columns(schema):
     for bad in ((0.0, 0.1), (0.5, 0.5), (-0.1, 0.2)):
         with pytest.raises(ValueError, match="share"):
             split_timestamps(db, *bad)
+
+
+def test_importing_plurel_leaves_relbench_unloaded_until_a_database_function_is_asked_for():
+    code = (
+        "import sys, plurel\n"
+        "assert 'relbench' not in sys.modules\n"
+        "assert callable(plurel.create_database) and 'relbench' in sys.modules\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
