@@ -1889,6 +1889,7 @@ packages:
   - pandas
   - pyyaml
   - relbench>=3.0.0
+  - scipy
   requires_python: '>=3.12'
 - pypi: https://files.pythonhosted.org/packages/12/98/e976540c1addf70442be7842a18cf70884a964abbf69442504f4d2939989/pandas-3.0.5-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl
   name: pandas
