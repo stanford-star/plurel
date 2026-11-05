@@ -1,0 +1,177 @@
+import numpy as np
+import pytest
+
+from plurel import SCM, Column, Gumbel, LinearEdge, LookupEdge, MatrixEdge, Node
+from plurel.causal import class_scores, node_of, sample
+from plurel.population import Grouping, Population, TableMetadata, entity_cut, table_id
+
+
+def plan() -> SCM:
+    nodes = {
+        "cause": Node(),
+        "effect": Node((LinearEdge("cause", 1.0),)),
+        "hidden": Node(),
+        "label": Node((LinearEdge("effect", 1.0), LinearEdge("hidden", 1.0))),
+    }
+    columns = {
+        "cause": Column("cause"),
+        "effect": Column("effect"),
+        "label": Column("label", "categorical", categories=("no", "yes")),
+    }
+    return SCM(nodes, columns)
+
+
+def population(grouping: Grouping | None = None) -> Population:
+    metadata = TableMetadata(
+        feature_names=["cause", "effect"],
+        feature_types=["numeric", "numeric"],
+        target="label",
+        plan=plan(),
+        realization={"table_id": table_id("case", 3), "seed": 3},
+    )
+    return Population(metadata=metadata, lanes=(1, 2), render=None, grouping=grouping)
+
+
+def test_a_hidden_product_node_multiplies_its_parents_and_stays_hidden():
+    nodes = {
+        "a": Node(),
+        "b": Node(),
+        "a_b": Node((LinearEdge("a"), LinearEdge("b")), op="product", noise=None),
+        "y": Node((LinearEdge("a"), LinearEdge("a_b", 2.0)), noise=None),
+    }
+    scm = SCM(nodes, {name: Column(name) for name in ("a", "b", "y")})
+    a, b = np.array([1.0, -1.0, 0.5]), np.array([0.0, 2.0, -5.0])
+    frame, latents = sample(scm, 3, interventions={"a": a, "b": b})
+    np.testing.assert_allclose(latents["y"][:, 0], a + 2.0 * a * b)
+    assert list(frame) == ["a", "b", "y"] and "a_b" in latents
+
+
+def test_a_lookup_times_a_parent_is_a_per_level_slope():
+    nodes = {
+        "segment": Node(),
+        "x": Node(),
+        "slope": Node(
+            (LookupEdge("segment", (-1.0, 2.0), (0.5, 0.5)), LinearEdge("x")),
+            op="product",
+            noise=None,
+        ),
+        "y": Node((LinearEdge("slope"),), noise=None),
+    }
+    columns = {
+        "segment": Column("segment", "categorical", categories=("lo", "hi"), binning="normal"),
+        "x": Column("x"),
+        "y": Column("y"),
+    }
+    segment, x = np.array([-2.0, -2.0, 2.0, 2.0]), np.array([1.0, 3.0, 1.0, 3.0])
+    latents = sample(SCM(nodes, columns), 4, interventions={"segment": segment, "x": x})[1]
+    np.testing.assert_allclose(latents["y"][:, 0], [-1.0, -3.0, 2.0, 6.0])
+
+
+def test_a_nominal_target_is_a_one_hot_node_over_matrix_edge_scores():
+    target = Node(
+        (MatrixEdge("x", np.array([[-2.0, 0.0, 2.0]])),),
+        bias=(0.0, 1.0, 0.0),
+        onehot=True,
+        noise=None,
+    )
+    scm = SCM(
+        {"x": Node(), "y": target},
+        {"x": Column("x"), "y": Column("y", "categorical", categories=("a", "b", "c"))},
+    )
+    latents = sample(scm, 3, interventions={"x": np.array([-3.0, 0.0, 3.0])})[1]
+    assert latents["y"].argmax(1).tolist() == [0, 1, 2]
+    frame, latents = sample(scm, 400, seed=0)
+    assert set(frame["y"]) == {"a", "b", "c"}
+    scores = class_scores(scm, "y", 400, seed=0)
+    assert scores.shape == (400, 3)
+    assert np.array_equal(latents["y"].argmax(1), (scores + np.array([0.0, 1.0, 0.0])).argmax(1))
+    soft = SCM(
+        {"x": Node(), "y": Node(target.edges, bias=target.bias, onehot=True, noise=Gumbel())},
+        {"y": Column("y", "categorical", categories=("a", "b", "c"))},
+    )
+    assert 0.0 < (sample(soft, 4000)[1]["y"].argmax(1) == 1).mean() < 1.0
+    with pytest.raises(ValueError, match="one-hot"):
+        class_scores(scm, "x", 10)
+
+
+def test_two_columns_may_observe_one_node():
+    nodes = {"u": Node(), "y": Node((LinearEdge("u", -1.5),), noise=None)}
+    scm = SCM(nodes, {"first_u": Column("u"), "second_u": Column("u"), "y": Column("y")})
+    assert node_of(scm, "first_u") == node_of(scm, "second_u") == "u"
+    frame = sample(scm, 3, interventions={"u": np.array([1.0, 2.0, 3.0])})[0]
+    np.testing.assert_allclose(frame["y"], [-1.5, -3.0, -4.5])
+
+
+def test_a_one_hot_node_is_set_by_a_class_indicator():
+    nodes = {"kind": Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel(), dim=3), "x": Node()}
+    columns = {"kind": Column("kind", "categorical", categories=("a", "b", "c")), "x": Column("x")}
+    latents = sample(SCM(nodes, columns), 4, interventions={"kind": np.eye(3)[1]})[1]
+    assert latents["kind"].argmax(1).tolist() == [1, 1, 1, 1]
+
+
+def test_table_metadata_checks_its_feature_types():
+    with pytest.raises(ValueError, match="feature_names"):
+        TableMetadata(["a", "b"], ["numeric"])
+    with pytest.raises(ValueError, match="feature_types"):
+        TableMetadata(["a"], ["text"])
+
+
+def test_a_draw_is_a_pure_function_of_the_lanes_and_its_index():
+    first = population().rows(200, 0)
+    assert list(first.columns) == ["cause", "effect", "label"]
+    assert first.equals(population().rows(200, 0))
+    assert not first.equals(population().rows(200, 1))
+    assert population().id == "case--s3" and population().features == ["cause", "effect"]
+
+
+def test_an_intervention_takes_a_column_or_a_hidden_node():
+    plain = population().rows(2000, 0)
+    forced = population().rows(2000, 0, interventions={"cause": 3.0})
+    assert forced["effect"].mean() > plain["effect"].mean() + 1.0
+    hidden = population().rows(2000, 0, interventions={"hidden": 3.0})
+    assert (hidden["label"] == "yes").mean() > (plain["label"] == "yes").mean()
+
+
+def test_ungrouped_rows_are_their_own_entities():
+    assert population().entity_rows(5, 0)[1].tolist() == [0, 1, 2, 3, 4]
+
+
+def test_a_grouped_draw_holds_the_fixed_nodes_per_entity():
+    grouping = Grouping(mode="shared_causes", fixed=("cause",), rows=8.0, spread=0.5, measurement=0.0, column="id")  # fmt: skip
+    metadata = TableMetadata(
+        feature_names=["id", "cause", "effect"],
+        feature_types=["categorical", "numeric", "numeric"],
+        target="label",
+        plan=plan(),
+    )
+    grouped = Population(metadata=metadata, lanes=(1, 2), render=None, grouping=grouping)
+    frame, entities = grouped.entity_rows(500, 0)
+    assert len(frame) == 500 and list(frame.columns)[0] == "id"
+    assert np.all(np.diff(entities) >= 0) and entities[-1] > 10
+    assert frame.groupby(entities)["cause"].nunique().max() == 1  # the entity's value
+    assert frame.groupby(entities)["effect"].nunique().max() > 1  # the row's
+    assert frame.groupby(entities)["id"].nunique().max() == 1
+    assert frame.groupby("id").ngroups == entities[-1] + 1
+
+
+def test_a_grouped_draw_is_intervened_on_one_value_per_node():
+    grouping = Grouping(mode="shared_causes", fixed=("cause",), rows=4.0, spread=0.0, measurement=0.0, column=None)  # fmt: skip
+    with pytest.raises(ValueError, match="one value per node"):
+        population(grouping).rows(10, 0, interventions={"effect": np.zeros(10)})
+    assert len(population(grouping).rows(10, 0, interventions={"effect": 1.0})) == 10
+
+
+def test_entity_sizes_sum_to_the_rows_asked_for():
+    grouping = Grouping(mode="replicates", fixed=(), rows=6.0, spread=1.0, measurement=0.0, column=None)  # fmt: skip
+    for n in (0, 1, 7, 500):
+        assert grouping.sizes(n, np.random.default_rng(n)).sum() == n
+
+
+def test_an_entity_cut_never_splits_an_entity():
+    entities = np.array([0, 0, 1, 1, 1, 2])
+    assert entity_cut(entities, 0) == 0
+    assert entity_cut(entities, 1) == 2
+    assert entity_cut(entities, 3) == 5
+    assert entity_cut(entities, 6) == 6
+    assert entity_cut(np.arange(4), 2) == 2
+    assert entity_cut(np.array([], dtype=int), 3) == 0
