@@ -240,7 +240,7 @@ class QuadraticEdge(Edge):
     def apply(self, x: np.ndarray) -> np.ndarray:
         x = np.concatenate([x, np.ones((len(x), 1))], axis=1)
         mixed = x @ self.tensor.transpose(1, 0, 2).reshape(x.shape[1], -1)
-        return (mixed.reshape(len(x), self.dim, -1) * x[:, None, :]).sum(-1)
+        return (mixed.reshape(len(x), self.dim, x.shape[1]) * x[:, None, :]).sum(-1)
 
 
 @dataclass(frozen=True)

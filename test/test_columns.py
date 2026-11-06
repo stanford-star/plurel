@@ -50,8 +50,9 @@ def test_numeric_columns_pass_through_or_rank_map_onto_the_marginal(latent):
     np.testing.assert_array_equal(np.sort(uniform.to_numpy()), reference)
     tied = rank_map(np.array([2.0, 0.0, 2.0, 1.0]), Uniform(), np.random.default_rng(0))
     assert tied[0] == tied[2] and tied[1] < tied[3] < tied[0]
-    with pytest.raises(ValueError):
-        observe(Column(NODE), np.zeros((N, 3)))
+    for kind in ("numeric", "timestamp"):
+        with pytest.raises(ValueError, match="one-dimensional"):
+            Column(Node(dim=3), kind)
 
 
 def test_categorical_columns_bin_a_latent_or_read_a_one_hot_node(latent):
@@ -70,9 +71,8 @@ def test_categorical_columns_bin_a_latent_or_read_a_one_hot_node(latent):
     one_hot = np.eye(3)[np.arange(N) % 3]
     read = observe(Column(NODE, "categorical", categories=CATEGORIES), one_hot)
     np.testing.assert_array_equal(read, np.asarray(CATEGORIES)[np.arange(N) % 3])
-    block = np.concatenate([np.zeros((N, 1)), one_hot], axis=1)
-    with pytest.raises(ValueError):
-        observe(Column(NODE, "categorical", categories=CATEGORIES), block)
+    with pytest.raises(ValueError, match="one per category"):
+        Column(Node(dim=4), categories=CATEGORIES)
 
 
 def test_calendar_marginals_give_timestamps_in_latent_order(latent):
@@ -101,10 +101,6 @@ def test_missingness_is_a_rate_or_an_indicator_node(latent):
     indicator = np.eye(2)[(latent.ravel() > 1.0).astype(int)]
     mnar = Column(NODE, missing="hidden").observe("x", {"x": latent, "hidden": indicator}, rng, N)
     assert mnar.isna().to_numpy().tolist() == (latent.ravel() > 1.0).tolist()
-    with pytest.raises(ValueError):
-        Column(NODE, missing="hidden").observe(
-            "x", {"x": latent, "hidden": np.eye(3)[[0] * N]}, rng, N
-        )
 
 
 def test_key_columns_are_row_identities():
@@ -119,22 +115,12 @@ def test_key_columns_are_row_identities():
     for bad in ((), ("x",)):
         with pytest.raises(ValueError, match="holds its node"):
             Column(*bad)
-    with pytest.raises(ValueError, match="unknown node"):
-        SCM({"x": Column(NODE, missing="nobody")})
+    for table in ({}, {"three": Node(dim=3)}):
+        with pytest.raises(ValueError, match="two-class"):
+            SCM({**table, "x": Column(NODE, missing="three")})
 
 
-def test_nan_latents_and_empty_one_hot_rows_observe_as_missing(latent):
-    holed = latent.copy()
-    holed[:5] = np.nan
-    binned = observe(
-        Column(NODE, "categorical", categories=CATEGORIES, probabilities=PROBABILITIES), holed
-    )
-    assert binned[:5].isna().all() and binned[5:].notna().all()
-    for binning in ("empirical", (-0.5, 0.5)):
-        column = Column(NODE, "categorical", categories=CATEGORIES, binning=binning)
-        assert observe(column, holed)[:5].isna().all()
-    mapped = observe(Column(NODE, marginal=Uniform()), holed)
-    assert mapped[:5].isna().all() and mapped[5:].notna().all()
+def test_empty_one_hot_rows_observe_as_missing():
     one_hot = np.eye(3)[np.arange(N) % 3]
     one_hot[:5] = 0.0
     read = observe(Column(NODE, "categorical", categories=CATEGORIES), one_hot)

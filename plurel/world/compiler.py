@@ -15,7 +15,6 @@ import numpy as np
 import pandas as pd
 
 from plurel import (
-    REDUCTIONS,
     SCM,
     Affine,
     Column,
@@ -30,6 +29,7 @@ from plurel import (
     StudentT,
 )
 from plurel import Node as PlanNode
+from plurel.graph import REDUCTIONS
 from plurel.population import Grouping, Population, TableMetadata, category_order, levels, table_id
 from plurel.world.distributions import shape
 from plurel.world.schema import (

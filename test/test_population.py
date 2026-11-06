@@ -114,6 +114,15 @@ def test_a_column_reading_a_held_node_records_its_entitys_value():
     assert frame.groupby(entities)["x"].nunique().max() > 1
 
 
+def test_a_noisy_reading_keeps_the_columns_blanks():
+    plan = SCM(
+        {"u": Column(Node(), marginal=Uniform(0.0, 1.0), missing=0.3), "raw": Column(Node())}
+    )
+    grouping = Grouping("shared_causes", ("u",), rows=5.0, spread=0.2, measurement=0.3, column=None)
+    frame = grouping.draw(plan, 1000, np.random.default_rng(0))[0]
+    assert 0.25 < frame["u"].isna().mean() < 0.35 and frame["u"].dropna().between(0.0, 1.0).all()
+
+
 def test_table_metadata_checks_its_feature_types():
     with pytest.raises(ValueError, match="feature_names"):
         TableMetadata(["a", "b"], ["numeric"])

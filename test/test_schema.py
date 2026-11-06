@@ -120,7 +120,7 @@ def test_sample_observes_columns_from_one_draw(scm):
     frame, latents = mnar
     assert frame["y"].isna().to_numpy().tolist() == (latents["hidden"][:, 1] == 1.0).tolist()
     assert latents["y"][frame["y"].isna()].mean() > latents["y"][frame["y"].notna()].mean()
-    with pytest.raises(ValueError, match="unknown node"):
+    with pytest.raises(ValueError, match="two-class"):
         SCM({**NODES, "c": Column(NODES["y"], missing="nobody")})
     with pytest.raises(ValueError, match="a Node or a Column"):
         SCM({"x": "y"})

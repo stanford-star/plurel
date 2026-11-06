@@ -75,8 +75,10 @@ class SCM:
                 raise ValueError(f"{child!r} refers to unknown parents {sorted(unknown)}")
         self.order = topological({name: node.parents for name, node in self.nodes.items()})
         for name, column in self.columns.items():
-            if isinstance(column.missing, str) and column.missing not in self.nodes:
-                raise ValueError(f"column {name!r} refers to unknown node {column.missing!r}")
+            if isinstance(column.missing, str) and (
+                column.missing not in self.nodes or self.nodes[column.missing].dim != 2
+            ):
+                raise ValueError(f"column {name!r} needs a two-class node {column.missing!r}")
         kinds = {name: column.kind for name, column in self.columns.items()}
         keys = [name for name, kind in kinds.items() if kind == "key"]
         if len(keys) > 1:
