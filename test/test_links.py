@@ -35,9 +35,14 @@ def test_every_link_meets_the_contract():
 
 def test_hsbm_links_within_blocks_with_skewed_and_inactive_parents():
     rng = np.random.default_rng(0)
-    parents = HSBMLink((2,), (2,)).sample(4000, 400, rng)
-    same_block = clusters(400, (2,))[parents, 0] == clusters(4000, (2,))[:, 0]
-    assert same_block.mean() > 0.95
+    link = HSBMLink((2,), (2,))
+    parents = link.sample(4000, 400, rng)
+    draws = np.random.default_rng(0)
+    parent_labels = link.labels(400, (2,), draws)[:, 0]
+    child_labels = link.labels(4000, (2,), draws)[:, 0]
+    assert (parent_labels[parents] == child_labels).mean() > 0.95
+    assert abs(np.corrcoef(child_labels, np.arange(4000))[0, 1]) < 0.1
+    assert abs(np.corrcoef(parents, np.arange(4000))[0, 1]) < 0.1
     skewed = HSBMLink(popularity=Pareto(1.5), inactive=0.5).sample(4000, 400, rng)
     degrees = np.bincount(skewed, minlength=400)
     assert (degrees == 0).sum() >= 200 and degrees.max() > 5 * degrees[degrees > 0].mean()

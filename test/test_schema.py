@@ -102,6 +102,15 @@ def test_a_reading_moves_no_other_draw():
     np.testing.assert_array_equal(grown["first"], plain["a"])
 
 
+def test_adding_a_node_or_a_column_moves_no_other_draw():
+    table = {"a": Column(Node(), marginal=Uniform()), "b": Column(Node(LinearEdge("a")))}
+    plain = SCM(table).sample(N, seed=0)
+    grown = SCM(
+        {"early": Node(), **table, "late": Column(Node(LinearEdge("early")), marginal=Uniform())}
+    ).sample(N, seed=0)
+    pd.testing.assert_frame_equal(grown[list(plain)], plain)
+
+
 def test_construction_rejects_unknown_parents_and_cycles():
     with pytest.raises(ValueError):
         SCM({"y": Node((LinearEdge("x"),))})
@@ -595,7 +604,7 @@ def test_the_short_forms_mean_the_same_tables():
             ),
         }
     )
-    expected = wired({"t": spelled}).sample({"t": 50}, seed=0)["t"]
+    expected = wired({"table": spelled}).sample({"table": 50}, seed=0)["table"]
     pd.testing.assert_frame_equal(short.sample(50, seed=0), expected)
     with pytest.raises(ValueError, match="one tuple"):
         Node(LinearEdge("x"), LinearEdge("y"))
