@@ -285,6 +285,22 @@ def test_sample_propagates_latents_in_both_directions(schema):
     assert not latents["employees"]["manager_level"][roots].any()
 
 
+def test_keys_read_integer_parents_as_floats():
+    parent = SCM({"x": Node()})
+    child = SCM(
+        {
+            "k": FK("p", nullable=0.5, fill=0.5),
+            "y": Node(LinearEdge(Foreign("k", "x"), 2.0), noise=None),
+        }
+    )
+    schema = Schema({"p": parent, "c": child})
+    x = np.arange(4)[:, None]
+    frames, latents = schema.sample_with_latents({"p": 4, "c": 200}, seed=0, held={"p": {"x": x}})
+    null = frames["c"]["k"].isna().to_numpy()
+    assert null.any() and (latents["c"]["y"][null] == 1.0).all()
+    assert latents["c"]["y"].dtype == float
+
+
 def test_sampling_is_deterministic(schema):
     frames, _ = schema.sample_with_latents(ROWS, seed=0)
     again, _ = schema.sample_with_latents(ROWS, seed=0)

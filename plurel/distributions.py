@@ -304,8 +304,9 @@ class Calendar:
 
     def weights(self, seconds: np.ndarray) -> np.ndarray:
         """The weight of each epoch second: its weekday's times its hour's."""
-        weekday = np.asarray(self.weekday_weights)[((seconds // 86400.0 + 3) % 7).astype(int)]
-        return weekday * np.asarray(self.hour_weights)[(seconds % 86400.0 // 3600.0).astype(int)]
+        whole = np.floor(seconds).astype(np.int64)
+        weekday = np.asarray(self.weekday_weights)[(whole // 86400 + 3) % 7]
+        return weekday * np.asarray(self.hour_weights)[whole % 86400 // 3600]
 
     def sample(self, n: int, rng: np.random.Generator) -> np.ndarray:
         """Sorted epoch seconds, uniform over the span and thinned by the weights: a draw is

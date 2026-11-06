@@ -25,6 +25,7 @@ TRANSFORMS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
 }
 TRANSFORM_NAMES = tuple(TRANSFORMS)
 
+QUADRATIC_CHUNK = 65536  # rows a quadratic edge expands at once: its product is features^2 wide
 COMPOUND_SPAN = 2.5  # the compounding sum is clipped here, so the product stays within decades
 
 REDUCTIONS: dict[str, Callable[[list[np.ndarray]], np.ndarray]] = {
@@ -203,8 +204,9 @@ class TreeEdge(Edge):
             for level in range(depth):
                 split = x[:, self.split_dims[tree, level]] > self.split_points[tree, level]
                 index |= split << level
-            out += self.leaves[tree, index]
-        return out / trees
+            out += self.leaves[tree].take(index, axis=0)
+        out /= trees
+        return out
 
 
 @dataclass(frozen=True)
@@ -239,8 +241,14 @@ class QuadraticEdge(Edge):
 
     def apply(self, x: np.ndarray) -> np.ndarray:
         x = np.concatenate([x, np.ones((len(x), 1))], axis=1)
-        mixed = x @ self.tensor.transpose(1, 0, 2).reshape(x.shape[1], -1)
-        return (mixed.reshape(len(x), self.dim, x.shape[1]) * x[:, None, :]).sum(-1)
+        tensor = self.tensor.transpose(1, 0, 2).reshape(x.shape[1], -1)
+        out = np.empty((len(x), self.dim))
+        for start in range(0, len(x), QUADRATIC_CHUNK):
+            rows = x[start : start + QUADRATIC_CHUNK]
+            mixed = (rows @ tensor).reshape(len(rows), self.dim, x.shape[1])
+            mixed *= rows[:, None, :]
+            out[start : start + QUADRATIC_CHUNK] = mixed.sum(-1)
+        return out
 
 
 @dataclass(frozen=True)
@@ -337,8 +345,9 @@ COMPLETE = ("count", "sum")
 
 
 def _sum(values: np.ndarray, indices: np.ndarray, n: int) -> np.ndarray:
-    out = np.zeros((n, values.shape[1]))
-    np.add.at(out, indices, values)
+    out = np.empty((n, values.shape[1]))
+    for d in range(values.shape[1]):
+        out[:, d] = np.bincount(indices, values[:, d], minlength=n)
     return out
 
 
