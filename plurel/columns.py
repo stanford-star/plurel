@@ -14,7 +14,7 @@ DEFAULT_CALENDAR = Calendar(pd.Timestamp("1990-01-01"), pd.Timestamp("2025-01-01
 
 
 def rank_map(latent: np.ndarray, marginal: Distribution, rng: np.random.Generator) -> np.ndarray:
-    reference = np.sort(marginal.sample(len(latent), rng))
+    reference = np.sort(marginal.sample(len(latent), rng)).astype(float)
     return reference[np.searchsorted(np.sort(latent), latent)]
 
 

@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from plurel.columns import DEFAULT_CALENDAR, Column, rank_map
-from plurel.distributions import Calendar, Uniform
+from plurel.distributions import Calendar, Poisson, Uniform
 from plurel.graph import Node
 from plurel.schema import SCM
 
@@ -48,6 +48,7 @@ def test_numeric_columns_pass_through_or_rank_map_onto_the_marginal(latent):
     assert np.array_equal(np.argsort(uniform.to_numpy()), np.argsort(latent.ravel()))
     reference = np.sort(Uniform(-1.0, 1.0).sample(N, np.random.default_rng(1)))
     np.testing.assert_array_equal(np.sort(uniform.to_numpy()), reference)
+    assert rank_map(np.arange(4.0), Poisson(3.0), np.random.default_rng(0)).dtype == float
     tied = rank_map(np.array([2.0, 0.0, 2.0, 1.0]), Uniform(), np.random.default_rng(0))
     assert tied[0] == tied[2] and tied[1] < tied[3] < tied[0]
     for kind in ("numeric", "timestamp"):
