@@ -49,6 +49,8 @@ def test_numeric_columns_pass_through_or_rank_map_onto_the_marginal(latent):
     reference = np.sort(Uniform(-1.0, 1.0).sample(N, np.random.default_rng(1)))
     np.testing.assert_array_equal(np.sort(uniform.to_numpy()), reference)
     assert rank_map(np.arange(4.0), Poisson(3.0), np.random.default_rng(0)).dtype == float
+    discrete = rank_map(np.repeat([0.0, 0.0, 0.0, 1.0], 500), Uniform(), np.random.default_rng(0))
+    assert 0.3 < discrete[0] < 0.45
     tied = rank_map(np.array([2.0, 0.0, 2.0, 1.0]), Uniform(), np.random.default_rng(0))
     assert tied[0] == tied[2] and tied[1] < tied[3] < tied[0]
     for kind in ("numeric", "timestamp"):
@@ -74,6 +76,9 @@ def test_categorical_columns_bin_a_latent_or_read_a_one_hot_node(latent):
     np.testing.assert_array_equal(read, np.asarray(CATEGORIES)[np.arange(N) % 3])
     with pytest.raises(ValueError, match="one per category"):
         Column(Node(dim=4), categories=CATEGORIES)
+    for options in ({"probabilities": PROBABILITIES}, {"binning": "empirical"}):
+        with pytest.raises(ValueError, match="sets its own shares"):
+            Column(Node(dim=3), categories=CATEGORIES, **options)
 
 
 def test_calendar_marginals_give_timestamps_in_latent_order(latent):

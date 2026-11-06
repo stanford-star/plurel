@@ -43,6 +43,8 @@ def test_hsbm_links_within_blocks_with_skewed_and_inactive_parents():
     assert (parent_labels[parents] == child_labels).mean() > 0.95
     assert abs(np.corrcoef(child_labels, np.arange(4000))[0, 1]) < 0.1
     assert abs(np.corrcoef(parents, np.arange(4000))[0, 1]) < 0.1
+    second = link.sample(4000, 400, np.random.default_rng(1))
+    assert (parent_labels[second] == child_labels).mean() > 0.95
     skewed = HSBMLink(popularity=Pareto(1.5), inactive=0.5).sample(4000, 400, rng)
     degrees = np.bincount(skewed, minlength=400)
     assert (degrees == 0).sum() >= 200 and degrees.max() > 5 * degrees[degrees > 0].mean()

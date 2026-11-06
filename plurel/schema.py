@@ -70,7 +70,9 @@ class SCM:
         self.order = topological({name: node.parents for name, node in self.nodes.items()})
         for name, column in self.columns.items():
             if isinstance(column.missing, str) and (
-                column.missing not in self.nodes or self.nodes[column.missing].dim != 2
+                column.missing not in self.nodes
+                or self.nodes[column.missing].dim != 2
+                or not self.nodes[column.missing].onehot
             ):
                 raise ValueError(f"column {name!r} needs a two-class node {column.missing!r}")
         kinds = {name: column.kind for name, column in self.columns.items()}
@@ -267,6 +269,8 @@ class Schema:
             raise ValueError("rows must give a non-negative count for every table")
         held = dict(held or {})
         for table, nodes in held.items():
+            if table not in self.tables:
+                raise ValueError(f"held values for unknown table {table!r}")
             if unknown := set(nodes) - set(self.tables[table].nodes):
                 raise ValueError(f"held values for unknown nodes {sorted(unknown)} of {table!r}")
         root = int(generator(seed).integers(2**63))

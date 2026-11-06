@@ -1,4 +1,4 @@
-import zlib
+import hashlib
 
 import numpy as np
 
@@ -14,4 +14,5 @@ def generator(seed: Seed) -> np.random.Generator:
 def lane(root: int, *names: str) -> np.random.Generator:
     """The stream of a named thing: it depends on the root and the names alone, so adding a node,
     a column or a key moves no other draw."""
-    return np.random.default_rng([root, *(zlib.crc32(name.encode()) for name in names)])
+    keys = (hashlib.blake2b(name.encode(), digest_size=8).digest() for name in names)
+    return np.random.default_rng([root, *(int.from_bytes(key) for key in keys)])

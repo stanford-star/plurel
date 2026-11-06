@@ -111,6 +111,14 @@ def test_adding_a_node_or_a_column_moves_no_other_draw():
     pd.testing.assert_frame_equal(grown[list(plain)], plain)
 
 
+def test_held_values_name_known_tables_and_nodes():
+    schema = Schema({"t": SCM({"x": Node()})})
+    with pytest.raises(ValueError, match="unknown table"):
+        schema.sample_with_latents({"t": 3}, seed=0, held={"nope": {}})
+    with pytest.raises(ValueError, match="two-class"):
+        SCM({"m": Node(dim=2), "x": Column(Node(), missing="m")})
+
+
 def test_construction_rejects_unknown_parents_and_cycles():
     with pytest.raises(ValueError):
         SCM({"y": Node((LinearEdge("x"),))})

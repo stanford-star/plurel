@@ -71,7 +71,9 @@ class HSBMLink:
         shares = None
         if self.cluster_weights is not None:
             shares = self.cluster_weights.sample(int(np.prod(counts)), rng)
-        return clusters(n, counts, shares)[rng.permutation(n)]
+        # rows follow time, and labels must not; the same order for a table's every key keeps
+        # its blocks shared across them
+        return clusters(n, counts, shares)[np.random.default_rng(n).permutation(n)]
 
     def block_affinity(self, parent: int, child: int, rng: np.random.Generator) -> np.ndarray:
         block_affinity = self.between.sample(parent * child, rng).reshape(parent, child)

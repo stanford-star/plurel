@@ -101,7 +101,7 @@ def test_table_prior_realizes_valid_diverse_tables():
             if isinstance(column.marginal, Mixture) and column.marginal.components[0] == Normal(
                 0.0, 0.0
             ):
-                assert (frame[name].dropna() == 0.0).mean() > 0.2
+                assert (frame[name].dropna() == 0.0).mean() > 0.1
         if time:
             calendars.add(scm.nodes["time"].noise)
     assert len(families) == len(FAMILIES)

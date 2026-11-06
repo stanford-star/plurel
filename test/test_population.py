@@ -123,6 +123,12 @@ def test_a_noisy_reading_keeps_the_columns_blanks():
     assert 0.25 < frame["u"].isna().mean() < 0.35 and frame["u"].dropna().between(0.0, 1.0).all()
 
 
+def test_a_grouping_rejects_sizes_that_mean_nothing():
+    for kwargs in ({"rows": 0.0}, {"rows": float("nan")}, {"spread": -1.0}, {"measurement": -1.0}):
+        with pytest.raises(ValueError, match="positive"):
+            Grouping(**{"mode": "m", "fixed": (), "rows": 5.0, "spread": 0.0, "measurement": 0.0, "column": None, **kwargs})  # fmt: skip
+
+
 def test_table_metadata_checks_its_feature_types():
     with pytest.raises(ValueError, match="feature_names"):
         TableMetadata(["a", "b"], ["numeric"])

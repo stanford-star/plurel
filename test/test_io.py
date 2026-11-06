@@ -58,6 +58,18 @@ def schema():
     return Schema({"customers": customers(), "orders": orders()})
 
 
+def test_a_key_may_be_named_self_over_a_temporal_parent():
+    parent = SCM(
+        {"id": Column(kind="key"), "t": Column(Node(), "timestamp", marginal=DEFAULT_CALENDAR)},
+        time_column="t",
+    )
+    child = SCM({"self": FK("parent"), "x": Column(Node())})
+    schema = Schema({"parent": parent, "child": child})
+    frames = schema.sample({"parent": 10, "child": 40}, seed=0)
+    db = create_database(schema, frames)
+    assert db.table_dict["child"].df["self"].between(0, 9).all()
+
+
 def test_tables_declare_their_keys_and_time():
     assert orders().pkey_column == "order_id" and orders().time_column == "when"
     assert orders(key=False, time_column=None).pkey_column is None

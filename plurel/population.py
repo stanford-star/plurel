@@ -87,6 +87,10 @@ class Grouping:
     measurement: float
     column: str | None
 
+    def __post_init__(self) -> None:
+        if not (self.rows > 0 and self.spread >= 0 and self.measurement >= 0):
+            raise ValueError("rows must be positive, spread and measurement non-negative")
+
     def sizes(self, n: int, rng: np.random.Generator) -> np.ndarray:
         """The rows per entity of an ``n``-row draw, in order, summing to ``n``."""
         if n == 0:

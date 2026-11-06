@@ -276,9 +276,9 @@ class WorldSchema:
                       f"{name!r}: the target and derived columns are never blank")  # fmt: skip
                 if node.missing_by is not None:
                     by, side = node.missing_by
-                    check(by in self.nodes and self.nodes[by].kind == "numeric"
+                    check(by in self.nodes and self.nodes[by].kind == "numeric" and not self.nodes[by].hidden
                           and self.nodes[by].formula is None and side in ("high", "low"),
-                          f"{name!r}: missing_by names a numeric column and high or low")  # fmt: skip
+                          f"{name!r}: missing_by names a recorded numeric column and high or low")  # fmt: skip
 
             if node.formula is not None:
                 check(node.kind == "numeric", f"{name!r}: formula nodes must be numeric")

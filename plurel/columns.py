@@ -14,8 +14,11 @@ DEFAULT_CALENDAR = Calendar(pd.Timestamp("1990-01-01"), pd.Timestamp("2025-01-01
 
 
 def rank_map(latent: np.ndarray, marginal: Distribution, rng: np.random.Generator) -> np.ndarray:
+    """The marginal's values in the latent's order; tied latents share their middle rank."""
     reference = np.sort(marginal.sample(len(latent), rng)).astype(float)
-    return reference[np.searchsorted(np.sort(latent), latent)]
+    ordered = np.sort(latent)
+    first = np.searchsorted(ordered, latent, side="left")
+    return reference[(first + np.searchsorted(ordered, latent, side="right") - 1) // 2]
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,8 @@ class Column:
             raise ValueError("categorical columns need at least two distinct categories")
         if self.node.dim not in (1, len(self.categories)):
             raise ValueError("a categorical column needs one dimension or one per category")
+        if self.node.dim > 1 and (self.probabilities is not None or self.binning != "normal"):
+            raise ValueError("a one-hot node sets its own shares: no probabilities or binning")
         probabilities = self.category_probabilities
         if len(probabilities) != len(self.categories):
             raise ValueError("one probability per category")
