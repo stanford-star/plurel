@@ -70,6 +70,17 @@ def test_a_held_node_takes_its_values_and_keeps_the_other_noise(scm):
         scm.sample_with_latents(N, seed=0, held={"h": np.ones((N, 2))})
 
 
+def test_a_noiseless_node_moves_no_other_draw():
+    table = {"a": Column(Node()), "b": Column(Node(LinearEdge("a"))), "c": Column(Node())}
+    read = Node(LinearEdge("a"), noise=None)
+    plain = SCM(table).sample(N, seed=0)
+    for name in ("first", "second"):
+        table = {name: Column(read), **table}
+    grown = SCM(table).sample(N, seed=0)
+    pd.testing.assert_frame_equal(grown[list(plain)], plain)
+    np.testing.assert_array_equal(grown["first"], plain["a"])
+
+
 def test_construction_rejects_unknown_parents_and_cycles():
     with pytest.raises(ValueError):
         SCM({"y": Node((LinearEdge("x"),))})

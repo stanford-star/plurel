@@ -37,7 +37,7 @@ def test_the_draws_are_pinned():
     """A change that moves the prior's draws must say so here."""
     assert digest(realize_random(0, columns=8).rows(200, 0)) == "edacbbc8414339fb"
     assert digest(realize_random(1, columns=(3, 24)).rows(200, 0)) == "0d7584dc77798fd7"
-    assert digest(realize_random(7, columns=12).rows(200, 0)) == "1a567c726525f2ca"
+    assert digest(realize_random(7, columns=12).rows(200, 0)) == "b98ca2e29ef62a8c"
 
 
 def test_the_prior_caps_a_concat_node_at_128_wide(monkeypatch):

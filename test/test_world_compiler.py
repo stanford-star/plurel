@@ -71,10 +71,10 @@ def test_the_draws_are_pinned():
     """A change that moves a realization's rows must say so here."""
     frame = realize_world(CASE, 3, target_noise=0.25, share_concentration=100.0).rows(200, 0)
     digest = hashlib.sha256(frame.round(4).to_csv(index=False).encode()).hexdigest()[:16]
-    assert digest == "2f0bc4a45d21a359"
+    assert digest == "a6f0b21688b50f9f"
     grouped = realize_world(GROUPED, 3, grouping=REPLICATES).rows(64, 0)
     digest = hashlib.sha256(grouped.round(4).to_csv(index=False).encode()).hexdigest()[:16]
-    assert digest == "632e62d918043948"
+    assert digest == "0764b4f8b03d49a4"
 
 
 def test_the_card_carries_the_authored_text():
@@ -287,6 +287,20 @@ def test_a_numeric_leaf_joins_the_target_by_its_median_band():
     assert a[joint.features].equals(b[joint.features]) and b[joint.target].notna().all()
     band = b[joint.target].astype(str).str.split(" / ").str[1]
     assert a["aftermath"][band == "low"].max() < a["aftermath"][band == "high"].min()
+
+
+def test_a_numeric_band_leaves_the_features_draws_whatever_the_leafs_place():
+    early = Node(kind="numeric", units="duration", scale=(0, 60), parents={"cause": Edge(effect=+1)},
+                 noise_scale="low", noise_dist="gaussian", desc="a leaf drawn early")  # fmt: skip
+    schema = with_nodes(CASE, "early_case", early=early)
+    kept = 0
+    for seed in range(20):
+        joint = realize_world(schema, seed, joint="early")
+        if "joint" in joint.metadata.realization:
+            kept += 1
+            a, b = realize_world(schema, seed).rows(200, 0), joint.rows(200, 0)
+            assert a[joint.features].equals(b[joint.features])
+    assert kept
 
 
 def test_a_joint_part_too_rare_or_given_away_stays_out():

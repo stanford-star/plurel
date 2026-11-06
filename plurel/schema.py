@@ -216,16 +216,18 @@ class Schema:
         rng: np.random.Generator,
         held: Mapping[str, Mapping[str, np.ndarray]],
     ) -> dict[str, dict[str, np.ndarray]]:
-        """Evaluate every node of every table once, in topological order, each with its own
-        noise stream: a held node takes its values, any other its local edges plus its crossing
-        edges plus noise."""
+        """Evaluate every node of every table once, in topological order, each noisy node with
+        its own stream, so a noiseless node moves no other draw: a held node takes its values,
+        any other its local edges plus its crossing edges plus noise."""
         latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
-        for (table, name), stream in zip(self.order, rng.spawn(len(self.order))):
+        noisy = [key for key in self.order if self.tables[key[0]].nodes[key[1]].noise is not None]
+        streams = dict(zip(noisy, rng.spawn(len(noisy))))
+        for table, name in self.order:
             node, n = self.tables[table].nodes[name], rows[table]
             if name in held.get(table, {}):
                 latents[table][name] = checked(name, node, held[table][name], n)
                 continue
-            exogenous, across = node.sample_noise(n, stream), None
+            exogenous, across = node.sample_noise(n, streams.get((table, name))), None
             for edge in self.crossings.get((table, name), ()):
                 term = edge.apply(self.resolve(table, edge.parent, rows, latents, links))
                 across = term if across is None else across + term

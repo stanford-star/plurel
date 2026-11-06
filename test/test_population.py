@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from plurel import SCM, Column, Gumbel, LinearEdge, LookupEdge, MatrixEdge, Node
+from plurel import SCM, Column, Gumbel, LinearEdge, LookupEdge, MatrixEdge, Node, Uniform
 from plurel.population import Grouping, Population, TableMetadata, entity_cut, table_id
 
 
@@ -93,6 +93,25 @@ def test_a_second_reading_of_a_node_is_a_node_of_its_own():
     frame = scm.sample_with_latents(3, held={"u": np.array([[1.0], [2.0], [3.0]])})[0]
     np.testing.assert_allclose(frame["again"], frame["u"])
     np.testing.assert_allclose(frame["y"], [-1.5, -3.0, -4.5])
+
+
+def test_a_column_reading_a_held_node_records_its_entitys_value():
+    plan = SCM(
+        {
+            "u": Node(),
+            "x": Column(Node(LinearEdge("u"), noise=None), marginal=Uniform(0.0, 1.0)),
+            "raw": Column(Node()),
+        }
+    )
+    grouping = Grouping(
+        "shared_causes", ("u",), rows=50.0, spread=0.0, measurement=0.0, column=None
+    )
+    frame, entities, _ = grouping.draw(plan, 100, np.random.default_rng(0))
+    assert frame.groupby(entities)["x"].nunique().max() == 1
+    assert frame.groupby(entities)["raw"].nunique().max() > 1
+    noisy = Grouping("shared_causes", ("u",), rows=50.0, spread=0.0, measurement=0.5, column=None)
+    frame, entities, _ = noisy.draw(plan, 100, np.random.default_rng(0))
+    assert frame.groupby(entities)["x"].nunique().max() > 1
 
 
 def test_table_metadata_checks_its_feature_types():

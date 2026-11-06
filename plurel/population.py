@@ -112,8 +112,13 @@ class Grouping:
         each, latents = plan.sample_with_latents(len(sizes), seed=entity_rng)
         held = {node: latents[node][entities] for node in self.fixed}
         frame = plan.sample_with_latents(n, seed=row_rng, held=held)[0]
+        fixed = set(self.fixed)
+        for name in plan.order:
+            node = plan.nodes[name]
+            if node.noise is None and node.parents and fixed.issuperset(node.parents):
+                fixed.add(name)
         for name, column in plan.columns.items():
-            if name not in self.fixed:
+            if name not in fixed:
                 continue
             if column.kind == "numeric" and self.measurement > 0:
                 # a reading of the entity's value: noise on its latent, observed on the column's marginal as any
