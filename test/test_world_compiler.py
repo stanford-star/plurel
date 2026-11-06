@@ -234,7 +234,8 @@ def test_shared_cause_rows_hold_their_entity_roots_and_redraw_the_rest():
 
 def test_a_grouped_draw_holds_the_rows_asked_for_under_unique_ids():
     population = realize_world(GROUPED, 0, grouping=dict(REPLICATES, spread=1.0))
-    for n in (1, 7, 3000):
+    assert population.grouping.sizes(1, np.random.default_rng(0)).tolist() == [1]
+    for n in (2, 7, 3000):
         frame, entities = population.entity_rows(n, 0)
         assert len(frame) == len(entities) == n and frame.columns[0] == "subject_id"
         assert entities[0] == 0 and set(np.diff(entities)) <= {0, 1}
@@ -301,6 +302,13 @@ def test_a_numeric_band_leaves_the_features_draws_whatever_the_leafs_place():
             a, b = realize_world(schema, seed).rows(200, 0), joint.rows(200, 0)
             assert a[joint.features].equals(b[joint.features])
     assert kept
+
+
+def test_a_single_row_has_no_scale_to_render_on():
+    population = realize_world(CASE, 0)
+    with pytest.raises(ValueError, match="at least two"):
+        population.rows(1, 0)
+    assert len(population.rows(2, 0)) == 2
 
 
 def test_a_joint_part_too_rare_or_given_away_stays_out():

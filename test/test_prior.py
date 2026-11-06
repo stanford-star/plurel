@@ -182,6 +182,16 @@ def test_table_prior_columns_read_the_hidden_blocks():
             np.testing.assert_array_equal(latents[name], read)
 
 
+def test_table_prior_columns_repeat_a_slot_only_when_none_is_left():
+    for seed in range(40):
+        scm = TablePrior().realize(seed)
+        observed = [column.node for column in scm.columns.values() if column.kind != "key"]
+        read = [(node.parents[0], node.edges[0].slot) for node in observed]
+        blocks = [scm.nodes[n] for n in scm.hidden if n.startswith("n")]
+        offered = sum(1 if block.onehot else block.dim for block in blocks)
+        assert len(set(read)) == min(len(read), offered)
+
+
 def test_table_prior_caps_concat_widths():
     concat_heavy = {
         "node_ops": Choices(("concat", "sum"), (1.0, 1.0)),
