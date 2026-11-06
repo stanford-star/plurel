@@ -247,10 +247,12 @@ class QuadraticEdge(Edge):
 class Node:
     """The one node type: a reduction over per-parent edges, plus bias and noise.
 
-    Without edges the node is a root whose value is its noise, `dim` wide. With `onehot`
+    An edge whose tail is a `Foreign` or a `Summary` reads across a key; such terms add to the
+    signal whatever the reduction. Without edges the node is a root whose value is its noise,
+    `dim` wide. With `onehot`
     the node emits the one-hot argmax of its scores; with Gumbel noise that samples the
     class from the softmax of the scores. With `standardize` the signal, the reduction plus
-    any crossing terms, is standardized per dimension before noise and bias are added, so
+    any terms across keys, is standardized per dimension before noise and bias are added, so
     the noise is relative to a unit-scale signal.
     """
 
@@ -269,11 +271,15 @@ class Node:
             raise ValueError("several edges go in one tuple: Node((first, second))")
         if self.op not in REDUCTIONS:
             raise ValueError(f"op must be one of {tuple(REDUCTIONS)}")
-        dims = [edge.dim for edge in self.edges]
+        dims = [edge.dim for edge in self.local]
         if dims:
             derived = sum(dims) if self.op == "concat" else max(dims)
+        elif self.bias:
+            derived = len(self.bias)
+        elif self.dim is None:
+            derived = max((edge.dim for edge in self.across), default=1)
         else:
-            derived = len(self.bias) if self.bias else (1 if self.dim is None else self.dim)
+            derived = self.dim
         if self.dim is None:
             object.__setattr__(self, "dim", derived)
         elif self.dim != derived:
@@ -284,13 +290,25 @@ class Node:
             raise ValueError("a one-hot node needs at least two classes")
 
     @property
-    def parents(self) -> tuple[Hashable, ...]:
-        return tuple(dict.fromkeys(edge.parent for edge in self.edges))
+    def local(self) -> tuple[Edge, ...]:
+        return tuple(edge for edge in self.edges if isinstance(edge.parent, str))
+
+    @property
+    def across(self) -> tuple[Edge, ...]:
+        return tuple(edge for edge in self.edges if not isinstance(edge.parent, str))
+
+    @property
+    def parents(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(edge.parent for edge in self.local))
 
     @property
     def reads(self) -> bool:
         """Whether the node only reads its parent: it draws nothing and moves no other draw."""
-        return self.noise is None and len(self.edges) == 1 and isinstance(self.edges[0], ReadEdge)
+        return (
+            self.noise is None
+            and len(self.edges) == len(self.local) == 1
+            and isinstance(self.edges[0], ReadEdge)
+        )
 
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, self.dim))
@@ -302,8 +320,8 @@ class Node:
         across: np.ndarray | None = None,
     ) -> np.ndarray:
         """The value from the parents' latents, the exogenous term and, if given, the summed
-        contributions of the crossing edges."""
-        terms = [edge.apply(latents[edge.parent]) for edge in self.edges]
+        terms read across keys."""
+        terms = [edge.apply(latents[edge.parent]) for edge in self.local]
         signal = REDUCTIONS[self.op](terms) if terms else np.zeros_like(exogenous)
         if across is not None:
             signal = signal + across

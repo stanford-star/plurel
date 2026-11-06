@@ -27,7 +27,6 @@ from plurel.schema import FK, Schema
 def random_schema(rng):
     names = [f"t{i}" for i in range(int(rng.integers(1, 4)))]
     tables = {t: {f"{t}_id": Column(kind="key")} for t in names}
-    fkeys, crossings = [], {}
     for t in names:
         roots = [f"c{j}" for j in range(int(rng.integers(1, 4)))]
         for root in roots:
@@ -70,37 +69,37 @@ def random_schema(rng):
             ]
         )
         key = f"{parent}_fk"
-        fkeys.append(FK(t, key, parent, link, nullable=float(rng.choice([0.0, 0.2])), fill=0.0))
+        tables[t][key] = FK(parent, link, nullable=float(rng.choice([0.0, 0.2])), fill=0.0)
         observed = bool(rng.random() < 0.5)
         width = tables[parent]["seg"].node.dim
-        crossings[t, "g_c0"] = (LinearEdge(Foreign(key, "c0")),)
-        crossings[t, "g_seg"] = (LinearEdge(Foreign(key, "seg"), dim=width),)
+        gathered = Node(LinearEdge(Foreign(key, "c0")), noise=None)
         tables[t]["g_seg"] = Column(
-            Node(dim=width, noise=None), categories=tuple(f"p{i}" for i in range(width))
+            Node(LinearEdge(Foreign(key, "seg"), dim=width), noise=None),
+            categories=tuple(f"p{i}" for i in range(width)),
         )
         if observed:
-            tables[t]["g_c0"] = Column(Node(noise=None), marginal=Uniform())
+            tables[t]["g_c0"] = Column(gathered, marginal=Uniform())
         else:
-            tables[t]["g_c0"] = Node(noise=None)
+            tables[t]["g_c0"] = gathered
             edges = (LinearEdge("g_c0", 2.0), MatrixEdge("g_seg", np.ones((width, 1))))
             tables[t]["z"] = Column(Node(edges, noise=Normal(std=0.1)))
         how = str(rng.choice(["count", "sum", "mean", "max"]))
         summary = Summary(t, key, "y", how, fill=None if how in COMPLETE else 0.0)
-        crossings[parent, f"a_{t}"] = (LinearEdge(summary),)
-        tables[parent][f"a_{t}"] = Column(Node(noise=None))
+        tables[parent][f"a_{t}"] = Column(Node(LinearEdge(summary), noise=None))
         tables[parent][f"w_{t}"] = Column(Node((LinearEdge(f"a_{t}", 0.5),), noise=Normal()))
     if rng.random() < 0.4:
         t = names[0]
-        fkeys.append(FK(t, "boss", t, TreeLink(roots=0.3), fill=0.0))
-        tables[t]["boss_c0"] = Node(noise=None)
-        tables[t]["reports"] = Column(Node(noise=None))
-        crossings[t, "boss_c0"] = (LinearEdge(Foreign("boss", "c0")),)
-        crossings[t, "reports"] = (LinearEdge(Summary(t, "boss", "c0", "count")),)
-    tables = {
-        t: SCM(table, time_column="stamp" if "stamp" in table else None)
-        for t, table in tables.items()
-    }
-    return Schema(tables, tuple(fkeys), crossings)
+        tables[t]["boss"] = FK(t, TreeLink(roots=0.3), fill=0.0)
+        tables[t]["boss_c0"] = Node(LinearEdge(Foreign("boss", "c0")), noise=None)
+        tables[t]["reports"] = Column(
+            Node(LinearEdge(Summary(t, "boss", "c0", "count")), noise=None)
+        )
+    return Schema(
+        {
+            t: SCM(table, time_column="stamp" if "stamp" in table else None)
+            for t, table in tables.items()
+        }
+    )
 
 
 @pytest.mark.parametrize("seed", range(30))
@@ -108,7 +107,7 @@ def test_random_schemas_sample_wrap_and_round_trip(seed, tmp_path):
     rng = np.random.default_rng(seed)
     schema = random_schema(rng)
     rows = {t: int(rng.choice([0, 2, 7, 40, 150])) for t in schema.tables}
-    for fk in schema.fkeys:
+    for fk in schema.keys.values():
         rows[fk.parent] = max(rows[fk.parent], 4)
     frames, latents = schema.sample_with_latents(rows, seed=seed)
     again, _ = schema.sample_with_latents(rows, seed=seed)
@@ -123,18 +122,18 @@ def test_random_schemas_sample_wrap_and_round_trip(seed, tmp_path):
                 assert frames[t][name].dropna().isin(column.categories).all()
             if column.kind == "timestamp":
                 assert frames[t][name].dtype == "datetime64[ns]"
-    for fk in schema.fkeys:
-        keys = frames[fk.table][fk.column]
+    for (table, column), fk in schema.keys.items():
+        keys = frames[table][column]
         linked = keys.dropna().astype(int)
         assert keys.dtype == "Int64" and linked.between(0, rows[fk.parent] - 1).all()
         if isinstance(fk.link, TreeLink):
             assert (linked.to_numpy() < linked.index.to_numpy()).all()
         elif fk.nullable == 0:
             assert keys.notna().all()
-    for fk in schema.fkeys:
-        if fk.table != fk.parent:
-            orphan = frames[fk.table][fk.column].isna().to_numpy()
-            assert frames[fk.table]["g_seg"].isna().to_numpy()[orphan].all()
+    for (table, column), fk in schema.keys.items():
+        if table != fk.parent:
+            orphan = frames[table][column].isna().to_numpy()
+            assert frames[table]["g_seg"].isna().to_numpy()[orphan].all()
     db = create_database(schema, frames)
     timed = [t for t, scm in schema.tables.items() if scm.time_column and rows[t]]
     if timed:

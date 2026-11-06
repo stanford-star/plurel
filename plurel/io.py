@@ -23,13 +23,13 @@ def order_by_time(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> dict[st
         if scm.pkey_column is not None:
             frames[name][scm.pkey_column] = np.arange(len(order))
         positions[name] = np.argsort(order)
-    for fk in schema.fkeys:
+    for (table, column), fk in schema.keys.items():
         if fk.parent in positions:
-            keys = frames[fk.table][fk.column]
+            keys = frames[table][column]
             known = keys.notna().to_numpy()
             moved = keys.copy()
             moved[known] = positions[fk.parent][keys[known].to_numpy(dtype=int)]
-            frames[fk.table] = frames[fk.table].assign(**{fk.column: moved})
+            frames[table] = frames[table].assign(**{column: moved})
     return frames
 
 
@@ -37,7 +37,7 @@ def create_database(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> Datab
     if set(frames) != set(schema.tables):
         raise ValueError("one frame per table of the schema")
     if missing := {
-        fk.parent for fk in schema.fkeys if schema.tables[fk.parent].pkey_column is None
+        fk.parent for fk in schema.keys.values() if schema.tables[fk.parent].pkey_column is None
     }:
         raise ValueError(
             f"tables referenced by a foreign key need a primary key: {sorted(missing)}"
@@ -53,7 +53,7 @@ def create_database(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> Datab
     tables = {
         name: Table(
             frame.reset_index(drop=True),
-            {fk.column: fk.parent for fk in schema.fkeys if fk.table == name},
+            {column: fk.parent for column, fk in schema.tables[name].fkeys.items()},
             schema.tables[name].pkey_column,
             schema.tables[name].time_column,
         )

@@ -103,9 +103,10 @@ frame = events.sample(1000, seed=0)
 
 ### Link tables into a database
 
-A `Schema` links tables through foreign keys and through *crossings*, edges that read across a
-key: `Foreign(key, node)` reads the row the key points at, `Summary(table, key, node, how)`
-aggregates the rows pointing back.
+A table can hold an `FK` to another table, and any edge can read across a key: `Foreign(key, node)`
+reads the row the key points at, `Summary(table, key, node, how)` aggregates the rows pointing back.
+A term read across a key adds to the node's signal whatever its `op`. A `Schema` joins the tables,
+and a table with keys samples only through one.
 
 ```python
 import pandas as pd
@@ -118,17 +119,15 @@ orders = SCM(
             Node(noise=Calendar(pd.Timestamp("2020-01-01"), pd.Timestamp("2024-01-01"))),
             kind="timestamp",
         ),
-        "amount": Column(Node(noise=Normal(std=0.5), standardize=True), marginal=LogNormal()),
+        "customer_id": FK("customers", HSBMLink(popularity=Pareto(2.5)), nullable=0.02, fill=0.0),
+        "amount": Column(
+            Node(LinearEdge(Foreign("customer_id", "spend"), 1.0), noise=Normal(std=0.5), standardize=True),
+            marginal=LogNormal(),
+        ),
     },
     time_column="time",
 )
-schema = Schema(
-    tables={"customers": customers, "orders": orders},
-    fkeys=(
-        FK("orders", "customer_id", "customers", HSBMLink(popularity=Pareto(2.5)), nullable=0.02, fill=0.0),
-    ),
-    crossings={("orders", "amount"): LinearEdge(Foreign("customer_id", "spend"), 1.0)},
-)
+schema = Schema({"customers": customers, "orders": orders})
 frames = schema.sample({"customers": 500, "orders": 5000}, seed=0)
 ```
 
@@ -141,7 +140,7 @@ frames, latents = schema.sample_with_latents({"customers": 500, "orders": 5000},
 
 ### Draw a database from the prior
 
-`SchemaPrior` draws the table graph, one table plan per table, the keys and the crossings.
+`SchemaPrior` draws the table graph, one table per node of it, the keys and the edges across them.
 `create_database` orders event tables by time and `write_database` saves the
 [relbench](https://github.com/stanford-star/relbench) layout that `read_database` loads back.
 
