@@ -61,28 +61,28 @@ categorical, timestamp or key column. Together they form the table's `SCM`.
 
 ```python
 import numpy as np
-from plurel import SCM, Column, Gumbel, LinearEdge, LogNormal, MatrixEdge, Node, Normal, Schema, Uniform
+from plurel import SCM, Column, Gumbel, LinearEdge, LogNormal, MatrixEdge, Node, Normal, Uniform
 
 customers = SCM(
     nodes={
         "age": Node(noise=Uniform(-1.7, 1.7)),
         "segment": Node(
-            (MatrixEdge("age", np.array([[1.0, -1.0, 0.3]])),),
+            MatrixEdge("age", np.array([[1.0, -1.0, 0.3]])),
             bias=(0.0, 0.0, -0.5), onehot=True, noise=Gumbel(), standardize=True,
         ),
-        "spend": Node((LinearEdge("age", 0.8, "tanh"),), noise=Normal(std=0.3), standardize=True),
+        "spend": Node(LinearEdge("age", 0.8, "tanh"), noise=Normal(std=0.3), standardize=True),
     },
     columns={
         "id": Column(kind="key"),
-        "age": Column("age", marginal=Uniform(18.0, 80.0)),
-        "segment": Column("segment", "categorical", categories=("bronze", "silver", "gold")),
-        "spend": Column("spend", marginal=LogNormal(3.0, 0.5), missing=0.05),
+        "age": Column(marginal=Uniform(18.0, 80.0)),
+        "segment": Column(categories=("bronze", "silver", "gold")),
+        "spend": Column(marginal=LogNormal(3.0, 0.5), missing=0.05),
     },
 )
-frame = Schema({"customers": customers}).sample({"customers": 500}, seed=0)["customers"]
+frame = customers.sample(500, seed=0)
 ```
 
-A `Schema` executes the plan, here for one table. Sampling is deterministic in the seed.
+Sampling is deterministic in the seed.
 
 ### Draw a table from the prior
 
@@ -94,7 +94,7 @@ from plurel import IntegersRange, Range, TablePrior
 
 prior = TablePrior(node_count=IntegersRange(4, 8), column_missing_share=Range(0.0, 0.0))
 events = prior.realize(seed=0, time=True)
-frame = Schema({"events": events}).sample({"events": 1000}, seed=0)["events"]
+frame = events.sample(1000, seed=0)
 ```
 
 ### Link tables into a database
@@ -105,7 +105,7 @@ aggregates the rows pointing back.
 
 ```python
 import pandas as pd
-from plurel import FK, Calendar, Foreign, HSBMLink, Pareto
+from plurel import FK, Calendar, Foreign, HSBMLink, Pareto, Schema
 
 orders = SCM(
     nodes={
@@ -114,8 +114,8 @@ orders = SCM(
     },
     columns={
         "id": Column(kind="key"),
-        "amount": Column("amount", marginal=LogNormal()),
-        "time": Column("time", "timestamp"),
+        "amount": Column(marginal=LogNormal()),
+        "time": Column(kind="timestamp"),
     },
     time_column="time",
 )
@@ -124,7 +124,7 @@ schema = Schema(
     fkeys=(
         FK("orders", "customer_id", "customers", HSBMLink(popularity=Pareto(2.5)), nullable=0.02, fill=0.0),
     ),
-    crossings={("orders", "amount"): (LinearEdge(Foreign("customer_id", "spend"), 1.0),)},
+    crossings={("orders", "amount"): LinearEdge(Foreign("customer_id", "spend"), 1.0)},
 )
 frames = schema.sample({"customers": 500, "orders": 5000}, seed=0)
 ```

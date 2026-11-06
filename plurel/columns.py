@@ -24,7 +24,7 @@ def rank_map(latent: np.ndarray, marginal: Distribution, rng: np.random.Generato
 @dataclass(frozen=True)
 class Column:
     node: str | None = None
-    kind: Kind = "numeric"
+    kind: Kind | None = None
     dims: int | tuple[int, ...] | None = None
     categories: tuple[object, ...] | None = None
     probabilities: tuple[float, ...] | None = None
@@ -34,6 +34,9 @@ class Column:
     after: str | None = None
 
     def __post_init__(self) -> None:
+        if self.kind is None:
+            kind = "categorical" if self.categories is not None else "numeric"
+            object.__setattr__(self, "kind", kind)
         if self.kind not in ("numeric", "categorical", "timestamp", "key"):
             raise ValueError(f"unknown column kind {self.kind!r}")
         if self.kind == "key":
@@ -52,15 +55,15 @@ class Column:
             ):
                 raise ValueError("a key column has no node and no options")
             return
-        if self.node is None:
-            raise ValueError("a column observes a node")
         if not isinstance(self.missing, str) and not 0.0 <= self.missing < 1.0:
             raise ValueError("missing must be a rate in [0, 1) or the name of a two-class node")
         if self.after is not None and self.kind != "timestamp":
             raise ValueError("only a timestamp column comes after another")
         if self.kind != "categorical":
-            if self.categories is not None or self.probabilities is not None:
-                raise ValueError("categories and probabilities belong to categorical columns")
+            if (self.categories, self.probabilities, self.binning) != (None, None, "normal"):
+                raise ValueError(
+                    "categories, probabilities and binning are for categorical columns"
+                )
             return
         if self.marginal is not None:
             raise ValueError("categorical columns have no marginal")

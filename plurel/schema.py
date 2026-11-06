@@ -1,5 +1,5 @@
 from collections.abc import Hashable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from graphlib import CycleError, TopologicalSorter
 from operator import index as as_int
 
@@ -67,7 +67,12 @@ class SCM:
             if unknown := set(node.parents) - set(self.nodes):
                 raise ValueError(f"{child!r} refers to unknown parents {sorted(unknown)}")
         self.order = topological({name: node.parents for name, node in self.nodes.items()})
-        self.columns = dict(columns)
+        self.columns = {
+            name: replace(column, node=name)
+            if column.node is None and column.kind != "key"
+            else column
+            for name, column in columns.items()
+        }
         for name, column in self.columns.items():
             if column.kind == "key":
                 continue
@@ -93,8 +98,20 @@ class SCM:
             column.node for column in self.columns.values() if column.kind == "timestamp"
         )
 
+    def sample(self, n: int, *, seed: Seed = None) -> pd.DataFrame:
+        return self.sample_with_latents(n, seed=seed)[0]
 
-Crossings = Mapping[tuple[str, str], tuple[Edge, ...]]
+    def sample_with_latents(
+        self, n: int, *, seed: Seed = None, held: Mapping[str, np.ndarray] | None = None
+    ) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
+        """This table alone, through a one-table Schema; `held` nodes take the given values."""
+        frames, latents = Schema({"table": self}).sample_with_latents(
+            {"table": n}, seed=seed, held={"table": held} if held else None
+        )
+        return frames["table"], latents["table"]
+
+
+Crossings = Mapping[tuple[str, str], Edge | tuple[Edge, ...]]
 
 
 class Schema:
@@ -121,7 +138,10 @@ class Schema:
         self.keys = {(fk.table, fk.column): fk for fk in self.fkeys}
         if len(self.keys) != len(self.fkeys):
             raise ValueError("foreign key columns must be unique per table")
-        self.crossings = {node: tuple(edges) for node, edges in (crossings or {}).items()}
+        self.crossings = {
+            node: (edges,) if isinstance(edges, Edge) else tuple(edges)
+            for node, edges in (crossings or {}).items()
+        }
         parents: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {}
         for table, scm in self.tables.items():
             for name, node in scm.nodes.items():

@@ -2,7 +2,6 @@ import hashlib
 from dataclasses import replace
 
 import plurel.random_scm as random_scm
-from plurel.causal import node_of
 from plurel.random_scm import realize_random
 
 
@@ -25,8 +24,8 @@ def test_the_target_is_categorical_with_parents_and_never_blank():
     assert plan.columns[population.target].kind == "categorical"
     assert plan.columns[population.target].missing == 0.0
     if any(plan.nodes[c.node].edges for c in plan.columns.values() if c.kind == "categorical"):
-        assert plan.nodes[node_of(plan, population.target)].edges
-    assert all(node_of(plan, name) in plan.nodes for name in plan.columns)
+        assert plan.nodes[plan.columns[population.target].node].edges
+    assert all(column.node in plan.nodes for column in plan.columns.values())
 
 
 def test_the_column_count_is_pinned_or_bounded():

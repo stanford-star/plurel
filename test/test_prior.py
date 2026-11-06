@@ -29,11 +29,6 @@ from plurel.prior import (
     SchemaPrior,
     TablePrior,
 )
-from plurel.schema import Schema
-
-
-def sample(scm, n, *, seed=None):
-    return Schema({"t": scm}).sample({"t": n}, seed=seed)["t"]
 
 
 def test_choices_and_ranges_draw_within_their_declarations():
@@ -69,8 +64,8 @@ def test_table_prior_realizes_valid_diverse_tables():
         time = seed % 2 == 1
         scm = prior.realize(seed, time=time)
         assert prior.realize(seed, time=time).order == scm.order
-        frame = sample(scm, 200, seed=seed)
-        assert frame.equals(sample(scm, 200, seed=seed)) and len(frame) == 200
+        frame = scm.sample(200, seed=seed)
+        assert frame.equals(scm.sample(200, seed=seed)) and len(frame) == 200
         assert scm.pkey_column == "id" and 4 <= len(frame.columns) <= 14
         assert 3 <= sum(name.startswith("n") for name in scm.nodes) <= 16
         for name, node in scm.nodes.items():
@@ -129,7 +124,7 @@ def test_table_prior_knobs_are_respected():
         assert not any(isinstance(m.noise, TimeSeries) for m in scm.nodes.values())
         assert all(c.kind != "categorical" for c in scm.columns.values())
         assert all(c.missing == 0.0 for c in scm.columns.values())
-        assert not sample(scm, 50, seed=seed).isna().any().any()
+        assert not scm.sample(50, seed=seed).isna().any().any()
     seasonal = TablePrior(root_series_share=Range(1.0, 1.0), node_categorical_share=never)
     for seed in range(5):
         scm = seasonal.realize(seed, time=True)
@@ -148,14 +143,14 @@ def test_table_prior_knobs_are_respected():
                     assert scm.nodes[edge.parent].dim == 1 and width == 1 and not node.onehot
                 if isinstance(edge, NearestEdge):
                     assert edge.dim == width >= 2
-        sample(scm, 50, seed=seed)
+        scm.sample(50, seed=seed)
     for families in (("linear",), ("lookup", "nearest")):
         with pytest.raises(ValueError, match="fits any widths"):
             TablePrior(edge_families=Choices(families))
     single = TablePrior(node_count=IntegersRange(1, 1), column_count=IntegersRange(1, 1))
     scm = single.realize(0)
     assert len(scm.nodes) <= 2 and not scm.nodes["n0"].parents
-    assert sample(scm, 5, seed=0).shape[0] == 5
+    assert scm.sample(5, seed=0).shape[0] == 5
 
 
 def test_table_prior_caps_concat_widths():
@@ -170,7 +165,7 @@ def test_table_prior_caps_concat_widths():
     # concat nodes wider than any drawn width remain
     assert any(m.op == "concat" and m.dim > 4 for scm in capped for m in scm.nodes.values())
     for seed, scm in enumerate(capped):
-        sample(scm, 50, seed=seed)
+        scm.sample(50, seed=seed)
 
 
 def test_structured_missingness_follows_its_indicator_node():
@@ -178,14 +173,14 @@ def test_structured_missingness_follows_its_indicator_node():
     prior = TablePrior(column_missing_share=always, column_missing_structured_share=always)
     for seed in range(5):
         scm = prior.realize(seed)
-        frames, latents = Schema({"t": scm}).sample_with_latents({"t": 300}, seed=seed)
+        frame, latents = scm.sample_with_latents(300, seed=seed)
         for name, column in scm.columns.items():
             if column.kind == "key":
                 continue
             indicator = scm.nodes[column.missing]
             assert indicator.onehot and indicator.dim == 2 and len(indicator.parents) == 1
-            flagged = latents["t"][column.missing][:, 1] == 1.0
-            assert (frames["t"][name].isna().to_numpy() == flagged).all()
+            flagged = latents[column.missing][:, 1] == 1.0
+            assert (frame[name].isna().to_numpy() == flagged).all()
 
 
 def test_warping_gives_each_realization_its_own_style():

@@ -9,7 +9,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from plurel.causal import sample
 from plurel.columns import rank_map
 
 ENTITY_ROWS_MAX = 256  # the most rows one entity of a grouped population holds
@@ -47,6 +46,27 @@ class TableMetadata:
         bad = {t for t in self.feature_types if t not in ("numeric", "categorical")}
         if bad:
             raise ValueError(f"feature_types must be 'numeric'/'categorical'; got {sorted(bad)}")
+
+
+def levels(plan) -> dict[str, list[str]]:
+    """String levels per categorical column; integer-coded columns are absent."""
+    return {
+        name: list(column.categories)
+        for name, column in plan.columns.items()
+        if column.kind == "categorical"
+        and all(isinstance(level, str) for level in column.categories)
+    }
+
+
+def category_order(plan) -> dict[str, list[str]]:
+    """``{categorical column -> levels, low to high}`` in latent order: authored names where
+    present (index-aligned with the quantile bins), else the integer bin codes."""
+    named = levels(plan)
+    return {
+        name: named.get(name) or [str(i) for i in range(len(column.categories))]
+        for name, column in plan.columns.items()
+        if column.kind == "categorical"
+    }
 
 
 def table_id(source: str, seed: int) -> str:
@@ -89,9 +109,9 @@ class Grouping:
         sizes_rng, entity_rng, row_rng, noise_rng, id_rng = rng.spawn(5)
         sizes = self.sizes(n, sizes_rng)
         entities = np.repeat(np.arange(len(sizes)), sizes)
-        each, latents = sample(plan, len(sizes), seed=entity_rng)
+        each, latents = plan.sample_with_latents(len(sizes), seed=entity_rng)
         held = {node: latents[node][entities] for node in self.fixed}
-        frame = sample(plan, n, seed=row_rng, held=held)[0]
+        frame = plan.sample_with_latents(n, seed=row_rng, held=held)[0]
         for name, column in plan.columns.items():
             if column.node not in self.fixed:
                 continue
@@ -160,7 +180,7 @@ class Population:
         plan = self.plan
         rng = np.random.default_rng([*self.lanes, draw])
         if self.grouping is None:
-            frame = sample(plan, n, seed=rng)[0]
+            frame = plan.sample(n, seed=rng)
             return (self.render(frame, draw) if self.render else frame[[*self.features, self.target]]), np.arange(n)  # fmt: skip
         frame, entities, names = self.grouping.draw(plan, n, rng)
         column = self.grouping.column

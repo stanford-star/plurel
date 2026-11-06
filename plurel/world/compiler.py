@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from plurel import (
+    REDUCTIONS,
     SCM,
     Affine,
     Column,
@@ -28,8 +29,7 @@ from plurel import (
     StudentT,
 )
 from plurel import Node as PlanNode
-from plurel.causal import category_order, class_scores, levels, node_of, sample
-from plurel.population import Grouping, Population, TableMetadata, table_id
+from plurel.population import Grouping, Population, TableMetadata, category_order, levels, table_id
 from plurel.world.distributions import shape
 from plurel.world.schema import (
     MAGNITUDES,
@@ -308,13 +308,14 @@ def _joint_part(schema: WorldSchema, plan, target: str, leaf: str, rng: np.rando
     of the plan observing the leaf's node (after the others, so their draws are untouched); the part is kept when
     the other columns explain a :data:`JOINT_R2` share of its value (``r2``: linearly, on the latents, the target
     aside) and every joint class holds :data:`JOINT_FLOOR` of the draw."""
-    frame, latents = sample(plan, CALIBRATION_ROWS, seed=rng)
-    value = latents[node_of(plan, leaf)][:, 0]
+    frame, latents = plan.sample_with_latents(CALIBRATION_ROWS, seed=rng)
+    node = plan.columns[leaf].node
+    value = latents[node][:, 0]
     column, named = leaf, part_levels(schema, leaf)
     if schema.nodes[leaf].kind == "numeric":
         column = f"{leaf}.band"  # a dotted name no schema column takes
         edges = tuple(float(e) for e in np.quantile(value, np.arange(1, len(named)) / len(named)))
-        band = Column(node_of(plan, leaf), "categorical", categories=tuple(named), binning=edges)
+        band = Column(node, "categorical", categories=tuple(named), binning=edges)
         plan = SCM(plan.nodes, {**plan.columns, column: band})
         parts = np.asarray(named)[np.digitize(value, edges)]
     else:
@@ -398,7 +399,7 @@ def _fix_edges(plan, rng: np.random.Generator):
     """The plan with every empirically binned column cut at fixed edges: the quantiles of one
     ``CALIBRATION_ROWS`` draw of its latent at the column's cumulative shares. Later draws bin at
     the population's cuts, so a table's shares vary with its rows and a shift moves them; a per-draw quantile would meet the authored shares in every sample instead."""
-    values = sample(plan, CALIBRATION_ROWS, seed=rng)[1]
+    values = plan.sample_with_latents(CALIBRATION_ROWS, seed=rng)[1]
     columns = {}
     for name, column in plan.columns.items():
         if column.kind == "categorical" and column.binning == "empirical":
@@ -419,7 +420,8 @@ def _calibrate_argmax(plan, target: str, probabilities: list[float], rng: np.ran
     node = plan.nodes[target]
     noise_scale = node.noise.scale
     n = CALIBRATION_ROWS
-    scores = class_scores(plan, target, n, rng)
+    latents = plan.sample_with_latents(n, seed=rng)[1]
+    scores = REDUCTIONS[node.op]([edge.apply(latents[edge.parent]) for edge in node.edges])
     noise = rng.gumbel(0.0, noise_scale, size=(n, node.dim))
     wanted = np.asarray(probabilities, dtype=float)
     biases = np.zeros(len(wanted))

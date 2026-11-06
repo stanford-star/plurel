@@ -4,6 +4,7 @@ import pytest
 
 from plurel.columns import DEFAULT_CALENDAR, Column, rank_map
 from plurel.distributions import Calendar, Uniform
+from plurel.schema import SCM
 
 N = 2000
 CATEGORIES = ("low", "mid", "high")
@@ -24,7 +25,8 @@ def test_column_validation():
         {"kind": "text"},
         {"missing": 1.0},
         {"missing": -0.1},
-        {"categories": CATEGORIES},
+        {"kind": "numeric", "categories": CATEGORIES},
+        {"binning": "empirical"},
         {"kind": "categorical"},
         {"kind": "categorical", "categories": ("a", "a")},
         {"kind": "categorical", "categories": CATEGORIES, "probabilities": (0.5, 0.5)},
@@ -110,8 +112,9 @@ def test_key_columns_are_row_identities():
     for kwargs in ({"node": "x"}, {"missing": 0.1}, {"marginal": Uniform()}):
         with pytest.raises(ValueError):
             Column(kind="key", **kwargs)
-    with pytest.raises(ValueError):
-        Column()
+    assert Column().kind == "numeric" and Column(categories=CATEGORIES).kind == "categorical"
+    with pytest.raises(ValueError, match="unknown nodes"):
+        SCM({}, {"x": Column()})
 
 
 def test_nan_latents_and_empty_one_hot_rows_observe_as_missing(latent):
