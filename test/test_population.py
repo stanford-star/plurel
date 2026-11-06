@@ -2,7 +2,6 @@ import numpy as np
 import pytest
 
 from plurel import SCM, Column, Gumbel, LinearEdge, LookupEdge, MatrixEdge, Node
-from plurel.causal import class_scores, node_of, sample
 from plurel.population import Grouping, Population, TableMetadata, entity_cut, table_id
 
 
@@ -41,7 +40,7 @@ def test_a_hidden_product_node_multiplies_its_parents_and_stays_hidden():
     }
     scm = SCM(nodes, {name: Column(name) for name in ("a", "b", "y")})
     a, b = np.array([1.0, -1.0, 0.5]), np.array([0.0, 2.0, -5.0])
-    frame, latents = sample(scm, 3, held={"a": a[:, None], "b": b[:, None]})
+    frame, latents = scm.sample_with_latents(3, held={"a": a[:, None], "b": b[:, None]})
     np.testing.assert_allclose(latents["y"][:, 0], a + 2.0 * a * b)
     assert list(frame) == ["a", "b", "y"] and "a_b" in latents
 
@@ -63,7 +62,9 @@ def test_a_lookup_times_a_parent_is_a_per_level_slope():
         "y": Column("y"),
     }
     segment, x = np.array([-2.0, -2.0, 2.0, 2.0]), np.array([1.0, 3.0, 1.0, 3.0])
-    latents = sample(SCM(nodes, columns), 4, held={"segment": segment[:, None], "x": x[:, None]})[1]
+    latents = SCM(nodes, columns).sample_with_latents(
+        4, held={"segment": segment[:, None], "x": x[:, None]}
+    )[1]
     np.testing.assert_allclose(latents["y"][:, 0], [-1.0, -3.0, 2.0, 6.0])
 
 
@@ -78,27 +79,24 @@ def test_a_nominal_target_is_a_one_hot_node_over_matrix_edge_scores():
         {"x": Node(), "y": target},
         {"x": Column("x"), "y": Column("y", "categorical", categories=("a", "b", "c"))},
     )
-    latents = sample(scm, 3, held={"x": np.array([[-3.0], [0.0], [3.0]])})[1]
+    latents = scm.sample_with_latents(3, held={"x": np.array([[-3.0], [0.0], [3.0]])})[1]
     assert latents["y"].argmax(1).tolist() == [0, 1, 2]
-    frame, latents = sample(scm, 400, seed=0)
+    frame, latents = scm.sample_with_latents(400, seed=0)
     assert set(frame["y"]) == {"a", "b", "c"}
-    scores = class_scores(scm, "y", 400, seed=0)
-    assert scores.shape == (400, 3)
-    assert np.array_equal(latents["y"].argmax(1), (scores + np.array([0.0, 1.0, 0.0])).argmax(1))
+    scores = latents["x"] @ np.array([[-2.0, 0.0, 2.0]]) + np.array(target.bias)
+    assert np.array_equal(latents["y"].argmax(1), scores.argmax(1))
     soft = SCM(
         {"x": Node(), "y": Node(target.edges, bias=target.bias, onehot=True, noise=Gumbel())},
         {"y": Column("y", "categorical", categories=("a", "b", "c"))},
     )
-    assert 0.0 < (sample(soft, 4000)[1]["y"].argmax(1) == 1).mean() < 1.0
-    with pytest.raises(ValueError, match="one-hot"):
-        class_scores(scm, "x", 10)
+    assert 0.0 < (soft.sample_with_latents(4000)[1]["y"].argmax(1) == 1).mean() < 1.0
 
 
 def test_two_columns_may_observe_one_node():
     nodes = {"u": Node(), "y": Node((LinearEdge("u", -1.5),), noise=None)}
     scm = SCM(nodes, {"first_u": Column("u"), "second_u": Column("u"), "y": Column("y")})
-    assert node_of(scm, "first_u") == node_of(scm, "second_u") == "u"
-    frame = sample(scm, 3, held={"u": np.array([[1.0], [2.0], [3.0]])})[0]
+    assert scm.columns["first_u"].node == scm.columns["second_u"].node == "u"
+    frame = scm.sample_with_latents(3, held={"u": np.array([[1.0], [2.0], [3.0]])})[0]
     np.testing.assert_allclose(frame["y"], [-1.5, -3.0, -4.5])
 
 

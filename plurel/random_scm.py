@@ -8,8 +8,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from plurel.causal import category_order
-from plurel.population import Population, TableMetadata, table_id
+from plurel.population import Population, TableMetadata, category_order, table_id
 from plurel.prior import IntegersRange, TablePrior
 from plurel.schema import SCM
 

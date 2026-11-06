@@ -20,21 +20,6 @@ from plurel.graph import AGGREGATES, Foreign, Summary, standardize
 from plurel.links import HSBMLink, RandomLink, TreeLink
 from plurel.schema import FK, Schema
 
-
-def simulate(scm, n, *, seed=None, held=None):
-    held = {"t": held} if held else None
-    return Schema({"t": scm}).sample_with_latents({"t": n}, seed=seed, held=held)[1]["t"]
-
-
-def sample_with_latents(scm, n, *, seed=None):
-    frames, latents = Schema({"t": scm}).sample_with_latents({"t": n}, seed=seed)
-    return frames["t"], latents["t"]
-
-
-def sample(scm, n, *, seed=None):
-    return sample_with_latents(scm, n, seed=seed)[0]
-
-
 N = 300
 TABLE = np.arange(6.0).reshape(3, 2)
 NODES = {
@@ -58,31 +43,31 @@ def scm():
     return SCM(NODES, COLUMNS)
 
 
-def test_simulate_evaluates_every_node_in_topological_order(scm):
-    latents = simulate(scm, N, seed=0)
+def test_sampling_evaluates_every_node_in_topological_order(scm):
+    latents = scm.sample_with_latents(N, seed=0)[1]
     assert set(latents) == set(NODES)
     assert scm.order.index("x") < scm.order.index("xz") < scm.order.index("y")
     for name, node in NODES.items():
         assert latents[name].shape == (N, node.dim)
     np.testing.assert_allclose(latents["xz"], latents["x"] * latents["z"])
     np.testing.assert_array_equal(latents["embedding"], TABLE[latents["segment"].argmax(1)])
-    again = simulate(scm, N, seed=0)
+    again = scm.sample_with_latents(N, seed=0)[1]
     assert all(np.array_equal(latents[name], again[name]) for name in NODES)
-    assert not np.array_equal(latents["x"], simulate(scm, N, seed=1)["x"])
+    assert not np.array_equal(latents["x"], scm.sample_with_latents(N, seed=1)[1]["x"])
 
 
 def test_a_held_node_takes_its_values_and_keeps_the_other_noise(scm):
-    free = simulate(scm, N, seed=0)
-    held = simulate(scm, N, seed=0, held={"x": np.zeros((N, 1))})
+    free = scm.sample_with_latents(N, seed=0)[1]
+    held = scm.sample_with_latents(N, seed=0, held={"x": np.zeros((N, 1))})[1]
     assert not held["x"].any()
     for name in ("z", "h", "segment"):
         np.testing.assert_array_equal(held[name], free[name])
     residuals = [v["y"] - 2.0 * v["x"] + 0.5 * v["x"] * v["z"] for v in (free, held)]
     np.testing.assert_allclose(*residuals)
     with pytest.raises(ValueError, match="unknown nodes"):
-        simulate(scm, N, seed=0, held={"missing": np.zeros((N, 1))})
+        scm.sample_with_latents(N, seed=0, held={"missing": np.zeros((N, 1))})
     with pytest.raises(ValueError, match="produced"):
-        simulate(scm, N, seed=0, held={"h": np.ones((N, 2))})
+        scm.sample_with_latents(N, seed=0, held={"h": np.ones((N, 2))})
 
 
 def test_construction_rejects_unknown_parents_and_cycles():
@@ -92,30 +77,29 @@ def test_construction_rejects_unknown_parents_and_cycles():
         SCM({"a": Node((LinearEdge("b"),)), "b": Node((LinearEdge("a"),))}, {})
 
 
-def test_simulate_rejects_a_node_that_breaks_its_declared_width():
+def test_sampling_rejects_a_node_that_breaks_its_declared_width():
     scm = SCM({"h": Node(dim=3), "y": Node((LinearEdge("h"),))}, {})
     with pytest.raises(ValueError, match="declared"):
-        simulate(scm, N, seed=0)
+        scm.sample_with_latents(N, seed=0)
     overflow = SCM({"x": Node(), "y": Node((LinearEdge("x", np.inf),))}, {})
     with pytest.raises(ValueError, match="non-finite"):
-        simulate(overflow, N, seed=0)
+        overflow.sample_with_latents(N, seed=0)
 
 
 def test_sample_observes_columns_from_one_draw(scm):
-    frame, latents = sample_with_latents(scm, N, seed=0)
+    frame, latents = scm.sample_with_latents(N, seed=0)
     assert list(frame) == ["y", "xz", "x", "z"] and len(frame) == N
     np.testing.assert_array_equal(frame["x"], latents["x"].ravel())
-    assert all(np.array_equal(latents[k], v) for k, v in simulate(scm, N, seed=0).items())
     columns = {
         "amount": Column("y", marginal=Uniform(), missing=0.1),
         "segment": Column("segment", "categorical", categories=("a", "b", "c")),
         "when": Column("z", "timestamp", marginal=DEFAULT_CALENDAR),
     }
     typed = SCM(NODES, columns)
-    frame = sample(typed, N, seed=0)
+    frame = typed.sample(N, seed=0)
     assert list(frame) == list(columns) and frame["when"].dtype == "datetime64[ns]"
     assert set(frame["segment"]) == {"a", "b", "c"} and 0.05 < frame["amount"].isna().mean() < 0.15
-    mnar = sample_with_latents(SCM(NODES, {"y": Column("y", missing="hidden")}), N, seed=0)
+    mnar = SCM(NODES, {"y": Column("y", missing="hidden")}).sample_with_latents(N, seed=0)
     frame, latents = mnar
     assert frame["y"].isna().to_numpy().tolist() == (latents["hidden"][:, 1] == 1.0).tolist()
     assert latents["y"][frame["y"].isna()].mean() > latents["y"][frame["y"].notna()].mean()
@@ -139,13 +123,13 @@ def test_declared_time_order_is_enforced_on_the_observed_table():
             time_column="placed",
         )
 
-    frame = sample(table(Exponential(3600.0)), N, seed=0)
+    frame = table(Exponential(3600.0)).sample(N, seed=0)
     assert (frame["shipped"] >= frame["placed"]).all()
     assert table(Exponential(3600.0)).timestamp_nodes == {"placed", "shipped"}
     with pytest.raises(ValueError, match="precedes"):
-        sample(table(Normal(std=3600.0)), N, seed=0)
+        table(Normal(std=3600.0)).sample(N, seed=0)
     with pytest.raises(ValueError, match="precedes"):
-        sample(table(Exponential(3600.0), marginal=DEFAULT_CALENDAR), N, seed=0)
+        table(Exponential(3600.0), marginal=DEFAULT_CALENDAR).sample(N, seed=0)
     for after in ("nothing", "t"):
         with pytest.raises(ValueError, match="another timestamp"):
             SCM({"t": Node()}, {"t": Column("t", "timestamp", after=after)})
@@ -440,10 +424,8 @@ def test_edges_read_through_the_key_they_name():
     np.testing.assert_array_equal(frames["orders"]["seller_value"], value[seller])
     np.testing.assert_array_equal(frames["customers"]["bought"], np.bincount(buyer, minlength=50))
     np.testing.assert_array_equal(frames["customers"]["sold"], np.bincount(seller, minlength=50))
-    assert Schema({"t": SCM({"x": Node()}, {"x": Column("x")})}).sample({"t": 5}, seed=0)[
-        "t"
-    ].shape == (5, 1)
-    assert Schema({"t": SCM({}, {})}).sample({"t": 4}, seed=0)["t"].shape == (4, 0)
+    assert SCM({"x": Node()}, {"x": Column("x")}).sample(5, seed=0).shape == (5, 1)
+    assert SCM({}, {}).sample(4, seed=0).shape == (4, 0)
 
 
 class BadLink:
@@ -546,3 +528,41 @@ def test_crossing_terms_join_a_standardized_signal():
     frames, latents = schema.sample_with_latents({"p": 50, "c": 400}, seed=1)
     read = latents["p"]["x"][frames["c"]["p_id"].to_numpy(dtype=int)]
     assert np.allclose(latents["c"]["y"], standardize(3.0 * read))
+
+
+def test_the_short_forms_mean_the_same_tables():
+    matrix = np.array([[1.0, -1.0]])
+    short = SCM(
+        {
+            "x": Node(),
+            "y": Node(LinearEdge("x", 2.0)),
+            "k": Node(MatrixEdge("x", matrix), onehot=True, noise=Gumbel()),
+        },
+        {"x": Column(), "y": Column(marginal=Uniform()), "k": Column(categories=("a", "b"))},
+    )
+    spelled = SCM(
+        {
+            "x": Node(),
+            "y": Node((LinearEdge("x", 2.0),)),
+            "k": Node((MatrixEdge("x", matrix),), onehot=True, noise=Gumbel()),
+        },
+        {
+            "x": Column("x", "numeric"),
+            "y": Column("y", "numeric", marginal=Uniform()),
+            "k": Column("k", "categorical", categories=("a", "b")),
+        },
+    )
+    expected = Schema({"t": spelled}).sample({"t": 50}, seed=0)["t"]
+    pd.testing.assert_frame_equal(short.sample(50, seed=0), expected)
+    with pytest.raises(ValueError, match="one tuple"):
+        Node(LinearEdge("x"), LinearEdge("y"))
+    parent = SCM({"x": Node()}, {"id": Column(kind="key"), "x": Column()})
+    child = SCM({"y": Node(noise=None)}, {"y": Column()})
+    edge = LinearEdge(Foreign("k", "x"))
+    one, tupled = (
+        Schema({"p": parent, "c": child}, (FK("c", "k", "p"),), {("c", "y"): edges}).sample(
+            {"p": 5, "c": 9}, seed=0
+        )
+        for edges in (edge, (edge,))
+    )
+    pd.testing.assert_frame_equal(one["c"], tupled["c"])

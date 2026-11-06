@@ -458,7 +458,7 @@ class TablePrior:
         p = int(rng.integers(len(dims)))
         edge = self.edge(f"n{p}", dims[p], 2, True, rng)
         bias = (0.0, float(np.log(rate / (1.0 - rate))))
-        return Node((edge,), bias=bias, onehot=True, noise=Gumbel(), standardize=True)
+        return Node(edge, bias=bias, onehot=True, noise=Gumbel(), standardize=True)
 
     def series(self, rng: np.random.Generator) -> TimeSeries:
         trend = Trend(self.series_trend_alpha.draw(rng), self.series_trend_scale.draw(rng))

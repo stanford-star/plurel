@@ -246,7 +246,7 @@ class Node:
     parents they read (heteroscedastic noise); they are parents like any other.
     """
 
-    edges: tuple[Edge, ...] = ()
+    edges: Edge | tuple[Edge, ...] = ()
     op: str = "sum"
     bias: tuple[float, ...] | None = None
     onehot: bool = False
@@ -256,6 +256,10 @@ class Node:
     scale: tuple[Edge, ...] = field(default=(), kw_only=True)
 
     def __post_init__(self) -> None:
+        if isinstance(self.edges, Edge):
+            object.__setattr__(self, "edges", (self.edges,))
+        if isinstance(self.op, Edge):
+            raise ValueError("several edges go in one tuple: Node((first, second))")
         if self.op not in REDUCTIONS:
             raise ValueError(f"op must be one of {tuple(REDUCTIONS)}")
         if any(edge.dim != 1 for edge in self.scale):
