@@ -51,7 +51,10 @@ class Table:
         self.table: dict[str, Node | Column | ForeignKey | PrimaryKey] = {}
         for name, entry in table.items():
             if isinstance(entry, Declaration):
-                self.table.update(entry.entries(name, keys))
+                entries = entry.entries(name, keys)
+                if clash := (set(entries) - {name}) & set(table):
+                    raise ValueError(f"{name!r} needs the names {sorted(clash)} for itself")
+                self.table.update(entries)
             elif isinstance(entry, Node | Column | ForeignKey | PrimaryKey):
                 self.table[name] = entry
             else:
@@ -110,7 +113,11 @@ class Table:
     ) -> "Table":
         """A table of real rows, kept as they are; `foreign_keys` maps a column to the table it
         points at, and `extra` adds generated columns that may read the real ones."""
-        foreign_keys = dict(foreign_keys or {})
+        foreign_keys, extra = dict(foreign_keys or {}), dict(extra or {})
+        if primary_key in foreign_keys:
+            raise ValueError(f"{primary_key!r} cannot be both the primary and a foreign key")
+        if taken := set(extra) & set(frame):
+            raise ValueError(f"extra would replace the real columns {sorted(taken)}")
         if unknown := (({primary_key} - {None}) | set(foreign_keys)) - set(frame):
             raise ValueError(f"frame has no columns {sorted(unknown)}")
         entries: dict[str, object] = {}
@@ -121,7 +128,7 @@ class Table:
                 entries[name] = ForeignKey(foreign_keys[name], values=frame[name], fill=0.0)
             else:
                 entries[name] = Real(frame[name])
-        return cls({**entries, **(extra or {})}, time_column=time_column)
+        return cls({**entries, **extra}, time_column=time_column)
 
     def bind_local(self) -> None:
         """Line the edges up with the columns of this table they read."""
@@ -196,9 +203,13 @@ class Schema:
 
     def bound(self, table: str, edge: Edge) -> Edge:
         """A crossing edge lined up with the column it reads."""
-        if not isinstance(edge.parent, Foreign):
+        tail = edge.parent
+        if isinstance(tail, Summary) and tail.node is not None:
+            self.key(tail.table, tail.key)
+            return bind(edge, self.tables[tail.table].table.get(tail.node))
+        if not isinstance(tail, Foreign):
             return edge
-        origin = self.tables[self.key(table, edge.parent.key).parent]
+        origin = self.tables[self.key(table, tail.key).parent]
         return bind(edge, origin.table.get(edge.parent.node.removesuffix(CODE)))
 
     def key(self, table: str, column: str) -> ForeignKey:
@@ -339,7 +350,8 @@ class Schema:
                 if given is None:
                     frame[column] = pd.Series(indices, dtype="Int64").mask(indices < 0)
                 else:
-                    frame[column] = pd.Series(given.to_numpy()[indices]).mask(indices < 0)
+                    keys = given.astype("Int64") if pd.api.types.is_integer_dtype(given) else given
+                    frame[column] = keys.take(indices).reset_index(drop=True).mask(indices < 0)
             frames[table] = frame[[name for name in scm.table if name in frame]]
         return frames
 

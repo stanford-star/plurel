@@ -10,6 +10,7 @@ import pandas as pd
 from plurel.columns import Column
 from plurel.distributions import Calendar, Distribution, Normal
 from plurel.graph import (
+    TRANSFORMS,
     Edge,
     Foreign,
     Function,
@@ -26,6 +27,7 @@ Effect = float | tuple[float, Function] | Mapping[object, float]
 Causes = Mapping[str | Summary, Effect]
 
 CODE = ".code"  # a categorical column's hidden node holding its level's index
+NOISE = 0.5  # the default standard deviation of the noise on a column's causes
 
 
 def _cause(cause: str | Summary, effect: Effect, keys: Collection[str]) -> Edge:
@@ -36,6 +38,8 @@ def _cause(cause: str | Summary, effect: Effect, keys: Collection[str]) -> Edge:
         tail = Foreign(head, rest) if dot and head in keys else cause
     if not isinstance(effect, Mapping):
         weight, transform = effect if isinstance(effect, tuple) else (effect, "identity")
+        if isinstance(transform, str) and transform not in TRANSFORMS:
+            raise ValueError(f"transform must be a function or one of {tuple(TRANSFORMS)}")
         return LinearEdge(tail, float(weight), transform)
     if isinstance(tail, Summary):
         raise ValueError("a summary is a number: give it a weight, not an effect per level")
@@ -43,11 +47,16 @@ def _cause(cause: str | Summary, effect: Effect, keys: Collection[str]) -> Edge:
     return LevelEdge(code, tuple(effect.items()))
 
 
-def _node(causes: Causes, noise: float, keys: Collection[str], standardize: bool = True) -> Node:
+def _node(
+    causes: Causes, noise: float | None, keys: Collection[str], standardize: bool = True
+) -> Node:
+    if not causes:
+        if noise is not None:
+            raise ValueError("noise is relative to a column's causes, and this one has none")
+        return Node()
+    noise = NOISE if noise is None else noise
     if noise < 0.0:
         raise ValueError("noise is a standard deviation")
-    if not causes:
-        return Node()
     edges = tuple(_cause(cause, effect, keys) for cause, effect in causes.items())
     return Node(edges, noise=Normal(std=noise) if noise else None, standardize=standardize)
 
@@ -62,11 +71,12 @@ class Declaration:
 class Numeric(Declaration):
     """A number following `marginal`: the causes' weighted sum is standardized, `noise` of that
     standard deviation is added and the rows take the marginal's values in that order. Without a
-    marginal the column is the weighted sum itself plus the noise. `clip` and `round` apply last."""
+    marginal the column is that sum on the causes' unit scales plus the noise. `round` is a step
+    and, with `clip`, applies last."""
 
     marginal: Distribution | None = None
     causes: Causes = field(default_factory=dict)
-    noise: float = 0.5
+    noise: float | None = None
     missing: float = 0.0
     clip: tuple[float, float] | None = None
     round: float | None = None
@@ -86,7 +96,7 @@ class Categorical(Declaration):
 
     levels: Sequence[object] | Mapping[object, float]
     causes: Causes = field(default_factory=dict)
-    noise: float = 0.5
+    noise: float | None = None
     missing: float = 0.0
 
     def entries(self, name: str, keys: Collection[str]) -> dict[str, Node | Column]:
@@ -113,7 +123,7 @@ class Timestamp(Declaration):
     start: str | pd.Timestamp
     end: str | pd.Timestamp
     causes: Causes = field(default_factory=dict)
-    noise: float = 0.5
+    noise: float | None = None
     missing: float = 0.0
 
     def entries(self, name: str, keys: Collection[str]) -> dict[str, Node | Column]:
@@ -127,14 +137,13 @@ class Hidden(Declaration):
     """A cause no column records, on a unit scale; other columns read it by its name."""
 
     causes: Causes = field(default_factory=dict)
-    noise: float = 0.5
+    noise: float | None = None
 
     def entries(self, name: str, keys: Collection[str]) -> dict[str, Node | Column]:
         return {name: _node(self.causes, self.noise, keys)}
 
 
 def _real_column(values: pd.Series) -> Column:
-    values = pd.Series(values).reset_index(drop=True)
     if pd.api.types.is_datetime64_any_dtype(values):
         kind, categories = "timestamp", None
     elif pd.api.types.is_numeric_dtype(values) and not pd.api.types.is_bool_dtype(values):

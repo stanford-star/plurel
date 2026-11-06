@@ -91,8 +91,9 @@ A column adds up its causes' effects and puts them on a unit scale, then adds `n
 standard deviation, 0.5 by default, so a smaller `noise` follows the causes more closely. The rows
 then take the `marginal`'s values in that order, which means a column holds its marginal whatever
 its causes. A categorical column cuts the same order at its shares, so a positive weight pushes rows
-toward its later levels. A `Numeric` without a marginal is the weighted sum itself, plus the noise,
-as floats.
+toward its later levels. Causes are read on an internal unit scale, not in the units of their
+marginals, so a `Numeric` without a marginal is a score, plus the noise, as floats. The exception is
+a count below, which is exact.
 
 `round` is a step: `round=1` gives whole numbers and `round=0.01` cents. `clip=(lo, hi)` caps the
 values. `Timestamp`'s `end` is exclusive.
@@ -126,9 +127,10 @@ have no parent. With `nullable=0.02` a share of the rows point at nothing, and a
 the key takes `fill`, which such a key must then set: `ForeignKey("customers", nullable=0.02, fill=0.0)`.
 
 `Summary` reads the rows pointing back. It takes the table and its key, and counts them unless told
-to aggregate a column of theirs (`Summary("orders", "customer_id", "amount", "sum")`; also `mean`,
-`max` and `min`, which need a `fill` for rows that nothing points at). With `noise=0` and no marginal
-the count is exact, and a `Hidden` count lets rows with more reports rank higher:
+to aggregate a column of theirs on the same unit scale (`Summary("staff", "boss_id", "pay", "mean",
+fill=0.0)`; also `sum`, `max` and `min`; all but `sum` need a `fill` for rows that nothing points
+at). With `noise=0` and no marginal a count is exact, and a `Hidden` count lets rows with more
+reports rank higher:
 
 ```python
 from plurel import Hidden, Summary, TreeLink
@@ -269,7 +271,7 @@ rows = population.rows(n=1000, draw=0)
 ```
 
 Nodes can also declare hidden causes, nominal parents, interactions, non-additive mechanisms, derived
-columns and what the record rounds, caps or leaves blank; `compile_schema` returns the plain `SCM`.
+columns and what the record rounds, caps or leaves blank; `compile_schema` returns the plain `Table`.
 `realize_random(seed, columns=...)` in `plurel.random_scm` gives a table of the same shape from the
 prior, with no text.
 

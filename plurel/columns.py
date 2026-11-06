@@ -42,13 +42,16 @@ class Column:
             raise ValueError(f"unknown column kind {self.kind!r}")
         if self.kind != "numeric" and (self.clip, self.round) != (None, None):
             raise ValueError("clip and round are for numeric columns")
-        if self.clip is not None and self.clip[0] >= self.clip[1]:
+        if self.clip is not None and not self.clip[0] < self.clip[1]:
             raise ValueError("clip is a low and a higher high")
-        if self.round is not None and self.round <= 0.0:
+        if self.round is not None and not 0.0 < self.round < np.inf:
             raise ValueError("round is a positive step: 1 for whole numbers, 0.01 for cents")
         if not isinstance(self.node, Node):
             raise ValueError("a column holds its node")
+        if self.marginal is not None and not hasattr(self.marginal, "sample"):
+            raise ValueError(f"marginal must be a distribution, not {self.marginal!r}")
         if self.values is not None:
+            object.__setattr__(self, "values", self.values.reset_index(drop=True))
             return
         if not isinstance(self.missing, str) and not 0.0 <= self.missing < 1.0:
             raise ValueError("missing must be a rate in [0, 1) or the name of a two-class node")
@@ -95,8 +98,9 @@ class Column:
         if self.kind == "categorical":
             codes = pd.Categorical(self.values, list(self.categories)).codes
             return codes.astype(float)[:, None]
-        ranks = standardize(self.values.rank().to_numpy(dtype=float)[:, None])
-        return np.nan_to_num(ranks)
+        ranks = self.values.rank()
+        ranks = ranks.fillna(ranks.mean()).fillna(0.0).to_numpy(dtype=float)
+        return standardize(ranks[:, None])
 
     def observe(
         self, name: str, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
@@ -108,17 +112,20 @@ class Column:
             observed = pd.Categorical.from_codes(self.codes(latent), list(self.categories))
         else:
             flat = latent[:, 0]
-            observed = rank_map(flat, self.marginal, rng) if self.marginal else flat
-            if self.round is not None:
-                observed = np.round(observed / self.round) * self.round
-            if self.clip is not None:
-                observed = np.clip(observed, *self.clip)
+            observed = self.shaped(flat, rng)
             if self.kind == "timestamp":
                 observed = pd.to_datetime(observed, unit="s").as_unit("ns")
         series = pd.Series(observed)
         if isinstance(self.missing, str):
             return series.mask(latents[self.missing][:, 1] == 1.0)
         return series.mask(rng.random(len(series)) < self.missing) if self.missing else series
+
+    def shaped(self, latent: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+        """A flat latent as the column's values: the marginal's in its order, rounded and clipped."""
+        out = rank_map(latent, self.marginal, rng) if self.marginal else latent
+        if self.round is not None:
+            out = np.round(np.round(out / self.round) * self.round, 10)
+        return out if self.clip is None else np.clip(out, *self.clip)
 
     def codes(self, latent: np.ndarray) -> np.ndarray:
         if latent.shape[1] > 1:

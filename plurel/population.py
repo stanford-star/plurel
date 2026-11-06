@@ -9,8 +9,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from plurel.columns import rank_map
-
 ENTITY_ROWS_MAX = 256  # the most rows one entity of a grouped population holds
 ENTITY_CODES = 26 * 100_000  # an entity's id is a letter and five digits
 
@@ -126,8 +124,7 @@ class Grouping:
                 latent = latents[name][:, 0]
                 noise = self.measurement * latent.std() * noise_rng.standard_normal(n)
                 noisy = latent[entities] + noise
-                read = rank_map(noisy, column.marginal, noise_rng) if column.marginal else noisy
-                frame[name] = frame[name].where(frame[name].isna(), read)
+                frame[name] = frame[name].where(frame[name].isna(), column.shaped(noisy, noise_rng))
             else:  # the entity's value as its own draw observed it (an in-draw rank map would bias ties)
                 frame[name] = each[name].iloc[entities].set_axis(frame.index)
         codes = id_rng.choice(ENTITY_CODES, size=len(sizes), replace=False)

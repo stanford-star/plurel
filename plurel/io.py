@@ -13,17 +13,21 @@ from plurel.schema import Schema
 
 
 def positional_keys(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
-    """Given key values as the row positions a database's keys are."""
-    frames = dict(frames)
+    """Given key values as the row positions a database's keys are, within the frames as given."""
+    out = dict(frames)
     for (table, column), fk in schema.keys.items():
-        if (given := schema.parent_keys(fk)) is not None:
-            indices = pd.Index(given).get_indexer(frames[table][column])
-            positions = pd.Series(indices, dtype="Int64").mask(indices < 0)
-            frames[table] = frames[table].assign(**{column: positions})
+        if schema.parent_keys(fk) is not None:
+            keys = frames[table][column]
+            parent = frames[fk.parent][schema.tables[fk.parent].pkey_column]
+            indices = pd.Index(parent).get_indexer(keys)
+            if ((indices < 0) & keys.notna().to_numpy()).any():
+                raise ValueError(f"key {column!r} of {table!r} holds values its parent lacks")
+            positions = pd.Series(indices, index=keys.index, dtype="Int64").mask(indices < 0)
+            out[table] = out[table].assign(**{column: positions})
     for name, scm in schema.tables.items():
         if scm.pkey_column is not None and scm.columns[scm.pkey_column].values is not None:
-            frames[name] = frames[name].assign(**{scm.pkey_column: np.arange(len(frames[name]))})
-    return frames
+            out[name] = out[name].assign(**{scm.pkey_column: np.arange(len(out[name]))})
+    return out
 
 
 def order_by_time(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:

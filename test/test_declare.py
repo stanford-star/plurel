@@ -19,6 +19,7 @@ from plurel import (
     Uniform,
     create_database,
 )
+from plurel.population import Grouping
 
 
 def spearman(a, b) -> float:
@@ -101,7 +102,7 @@ def test_clip_round_and_missing_apply_to_the_column():
     [
         ({"x": Categorical("abc")}, "not one string"),
         ({"x": Numeric(causes={"y": 1.0})}, "unknown parents"),
-        ({"x": Numeric(noise=-1.0)}, "standard deviation"),
+        ({"y": Hidden(), "x": Numeric(causes={"y": 1.0}, noise=-1.0)}, "standard deviation"),
         ({"y": Hidden(), "x": Numeric(causes={"y": {"a": 1.0}})}, "categorical parent"),
         (
             {"y": Categorical(("a", "b")), "x": Numeric(causes={"y": {"z": 1.0}})},
@@ -111,6 +112,12 @@ def test_clip_round_and_missing_apply_to_the_column():
         ({"x": Numeric(causes={Summary("t", "k"): {"a": 1.0}})}, "a summary is a number"),
         ({"x": Real([1.0, 2.0]), "y": Real([1.0])}, "row count"),
         ({"x": "y"}, "a key, a column"),
+        ({"x": Numeric(noise=0.1)}, "has none"),
+        ({"y": Hidden(), "x": Numeric(causes={"y": (1.0, "nope")})}, "transform must be"),
+        ({"x": Numeric({"a": 1.0})}, "must be a distribution"),
+        ({"x": Numeric(clip=(float("nan"), 1.0))}, "clip"),
+        ({"x": Numeric(round=float("nan"))}, "round"),
+        ({"zip.code": Real([1.0, 2.0]), "zip": Real(["a", "b"])}, "for itself"),
     ],
 )
 def test_a_table_rejects_what_it_cannot_mean(table, match):
@@ -288,3 +295,93 @@ def test_positional_real_children_of_a_generated_parent():
     ).sample({"p": 5}, seed=0)
     assert frames["c"].p_id.isna().tolist() == [False, False, True, False]
     assert frames["c"].p_id.dropna().tolist() == [0, 1, 2]
+
+
+def test_one_blank_keeps_a_real_columns_signal():
+    x = np.random.default_rng(0).normal(size=2000)
+    x[0] = np.nan
+    frame = Table({"x": Real(x), "y": Numeric(causes={"x": 1.0}, noise=0.1)}).sample(seed=0)
+    assert np.isnan(frame.x[0]) and spearman(frame.x[1:], frame.y[1:]) > 0.9
+
+
+def test_large_integer_keys_survive_blanks():
+    base = 2**60
+    parents = pd.DataFrame({"id": pd.array([base + 1, base + 2, base + 3], dtype="Int64")})
+    children = pd.DataFrame({"p_id": pd.array([base + 3, None, base + 1], dtype="Int64")})
+    schema = Schema(
+        {
+            "p": Table.from_frame(parents, primary_key="id"),
+            "c": Table.from_frame(children, foreign_keys={"p_id": "p"}),
+        }
+    )
+    frames = schema.sample(seed=0)
+    assert frames["c"].p_id[0] == base + 3 and frames["c"].p_id[2] == base + 1
+    assert pd.isna(frames["c"].p_id[1])
+    keys = create_database(schema, frames).table_dict["c"].df.p_id
+    assert keys[0] == 2 and pd.isna(keys[1]) and keys[2] == 0
+
+    generated = Table({"id": PrimaryKey(), "p_id": ForeignKey("p", nullable=0.3)})
+    drawn = Schema({"p": schema.tables["p"], "c": generated}).sample({"c": 100}, seed=0)["c"]
+    assert drawn.p_id.isna().any() and drawn.p_id.dropna().isin(parents.id).all()
+
+
+def real_schema():
+    parents = pd.DataFrame({"id": ["a", "b", "c"], "x": [1.0, 2.0, 3.0]})
+    children = pd.DataFrame({"p_id": ["c", "a", "b", "a"], "y": [4.0, 1.0, 3.0, 2.0]})
+    return Schema(
+        {
+            "p": Table.from_frame(parents, primary_key="id"),
+            "c": Table.from_frame(children, foreign_keys={"p_id": "p"}),
+        }
+    )
+
+
+def test_a_database_maps_real_keys_within_the_frames_given():
+    schema = real_schema()
+    frames = schema.sample(seed=0)
+    resorted = {**frames, "c": frames["c"].sort_values("y")}
+    db = create_database(schema, resorted).table_dict
+    assert db["c"].df.p_id.tolist() == [0, 0, 1, 2] and db["c"].df.y.tolist() == [1, 2, 3, 4]
+
+    parents = {**frames, "p": frames["p"].sort_values("x", ascending=False)}
+    db = create_database(schema, parents).table_dict
+    assert db["p"].df.x.iloc[db["c"].df.p_id.astype(int)].tolist() == [3.0, 1.0, 2.0, 1.0]
+
+    dropped = {**frames, "p": frames["p"].iloc[1:]}
+    with pytest.raises(ValueError, match="values its parent lacks"):
+        create_database(schema, dropped)
+
+
+def test_from_frame_keeps_what_it_is_told_to_keep():
+    frame = pd.DataFrame({"id": [1, 2], "a": [3.0, 4.0]})
+    with pytest.raises(ValueError, match="both the primary"):
+        Table.from_frame(frame, primary_key="id", foreign_keys={"id": "p"})
+    with pytest.raises(ValueError, match="replace the real"):
+        Table.from_frame(frame, extra={"a": Numeric()})
+
+
+def test_real_levels_have_no_order_to_summarize():
+    with pytest.raises(ValueError, match="in no order"):
+        Schema(
+            {
+                "p": Table(
+                    {
+                        "id": PrimaryKey(),
+                        "x": Numeric(causes={Summary("c", "p_id", "city", "sum"): 1.0}),
+                    }
+                ),
+                "c": Table({"p_id": ForeignKey("p"), "city": Real(["a", "b"])}),
+            }
+        )
+
+
+def test_rounding_lands_on_the_step():
+    frame = Table({"x": Numeric(Uniform(0.0, 1.0), round=0.01)}).sample(500, seed=0)
+    assert (frame.x == frame.x.round(2)).all()
+
+
+def test_a_grouped_reading_keeps_clip_and_round():
+    table = Table({"a": Numeric(Uniform(18.0, 80.0), round=1.0, clip=(30.0, 60.0)), "b": Numeric()})
+    grouping = Grouping("replicates", ("a",), 5.0, 0.5, 0.2, None)
+    frame = grouping.draw(table, 300, np.random.default_rng(0))[0]
+    assert frame.a.between(30.0, 60.0).all() and (frame.a % 1 == 0).all()
