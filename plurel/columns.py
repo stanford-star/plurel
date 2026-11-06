@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 from plurel.distributions import Calendar, Distribution
-from plurel.graph import bin_levels
+from plurel.graph import Node, bin_levels
 
 Kind = Literal["numeric", "categorical", "timestamp", "key"]
 Binning = Literal["normal", "empirical"] | tuple[float, ...]
@@ -23,9 +23,8 @@ def rank_map(latent: np.ndarray, marginal: Distribution, rng: np.random.Generato
 
 @dataclass(frozen=True)
 class Column:
-    node: str | None = None
+    node: Node | None = None
     kind: Kind | None = None
-    dims: int | tuple[int, ...] | None = None
     categories: tuple[object, ...] | None = None
     probabilities: tuple[float, ...] | None = None
     binning: Binning = "normal"
@@ -41,7 +40,6 @@ class Column:
         if self.kind == "key":
             options = (
                 self.node,
-                self.dims,
                 self.categories,
                 self.probabilities,
                 self.marginal,
@@ -53,6 +51,8 @@ class Column:
             ):
                 raise ValueError("a key column has no node and no options")
             return
+        if not isinstance(self.node, Node):
+            raise ValueError("a column holds its node")
         if not isinstance(self.missing, str) and not 0.0 <= self.missing < 1.0:
             raise ValueError("missing must be a rate in [0, 1) or the name of a two-class node")
         if self.kind != "categorical":
@@ -89,16 +89,16 @@ class Column:
         return self.probabilities or (1.0 / len(self.categories),) * len(self.categories)
 
     def observe(
-        self, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
+        self, name: str, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
     ) -> pd.Series:
         if self.kind == "key":
             return pd.Series(np.arange(n))
-        latent = latents[self.node] if self.dims is None else latents[self.node][:, self.dims]
+        latent = latents[name]
         if self.kind == "categorical":
             observed = pd.Categorical.from_codes(self.codes(latent), list(self.categories))
         else:
             if latent.ndim == 2 and latent.shape[1] != 1:
-                raise ValueError(f"{self.kind} column needs one dimension of {self.node!r}")
+                raise ValueError(f"{self.kind} column {name!r} needs one dimension")
             flat = latent.reshape(len(latent))
             observed = rank_map(flat, self.marginal, rng) if self.marginal else flat
             if self.kind == "timestamp":
@@ -114,7 +114,7 @@ class Column:
     def codes(self, latent: np.ndarray) -> np.ndarray:
         if latent.ndim == 2 and latent.shape[1] > 1:
             if latent.shape[1] != len(self.categories):
-                raise ValueError(f"one-hot node {self.node!r} must have one column per category")
+                raise ValueError("a one-hot node must have one column per category")
             valid = (latent != 0).any(1) & ~np.isnan(latent).any(1)
             return np.where(valid, latent.argmax(1), -1)
         flat = latent.reshape(len(latent))

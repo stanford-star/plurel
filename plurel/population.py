@@ -113,12 +113,12 @@ class Grouping:
         held = {node: latents[node][entities] for node in self.fixed}
         frame = plan.sample_with_latents(n, seed=row_rng, held=held)[0]
         for name, column in plan.columns.items():
-            if column.node not in self.fixed:
+            if name not in self.fixed:
                 continue
             if column.kind == "numeric" and self.measurement > 0:
                 # a reading of the entity's value: noise on its latent, observed on the column's marginal as any
                 # draw is; the fixed nodes downstream read the value itself
-                latent = latents[column.node][:, 0]
+                latent = latents[name][:, 0]
                 noise = self.measurement * latent.std() * noise_rng.standard_normal(n)
                 noisy = latent[entities] + noise
                 frame[name] = rank_map(noisy, column.marginal, noise_rng) if column.marginal else noisy  # fmt: skip

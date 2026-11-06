@@ -23,9 +23,9 @@ def test_the_target_is_categorical_with_parents_and_never_blank():
     plan = population.plan
     assert plan.columns[population.target].kind == "categorical"
     assert plan.columns[population.target].missing == 0.0
-    if any(plan.nodes[c.node].edges for c in plan.columns.values() if c.kind == "categorical"):
-        assert plan.nodes[plan.columns[population.target].node].edges
-    assert all(column.node in plan.nodes for column in plan.columns.values())
+    read = {name: plan.nodes[plan.nodes[name].parents[0]] for name in plan.columns}
+    if any(read[name].edges for name, c in plan.columns.items() if c.kind == "categorical"):
+        assert read[population.target].edges
 
 
 def test_the_column_count_is_pinned_or_bounded():
@@ -37,7 +37,7 @@ def test_the_draws_are_pinned():
     """A change that moves the prior's draws must say so here."""
     assert digest(realize_random(0, columns=8).rows(200, 0)) == "edacbbc8414339fb"
     assert digest(realize_random(1, columns=(3, 24)).rows(200, 0)) == "0d7584dc77798fd7"
-    assert digest(realize_random(7, columns=12).rows(200, 0)) == "b98ca2e29ef62a8c"
+    assert digest(realize_random(7, columns=12).rows(200, 0)) == "1a567c726525f2ca"
 
 
 def test_the_prior_caps_a_concat_node_at_128_wide(monkeypatch):

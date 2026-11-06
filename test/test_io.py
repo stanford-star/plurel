@@ -27,38 +27,25 @@ ROWS = {"customers": 40, "orders": 300}
 
 
 def customers(key=True):
-    columns = {
-        "customer_id": Column(kind="key"),
-        "segment": Column("segment", "categorical", categories=("a", "b", "c")),
-        "spend": Column("spend"),
-    }
-    if not key:
-        del columns["customer_id"]
     return SCM(
         {
-            "segment": Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()),
-            "spend": Node(noise=None),
-        },
-        columns,
+            **({"customer_id": Column(kind="key")} if key else {}),
+            "segment": Column(
+                Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()), categories=("a", "b", "c")
+            ),
+            "spend": Column(Node(noise=None)),
+        }
     )
 
 
 def orders(key=True, time_column="when"):
-    columns = {
-        "order_id": Column(kind="key"),
-        "when": Column("when", "timestamp", marginal=DEFAULT_CALENDAR),
-        "amount": Column("amount"),
-        "value": Column("value"),
-    }
-    if not key:
-        del columns["order_id"]
     return SCM(
         {
-            "when": Node(),
-            "value": Node(noise=None),
-            "amount": Node((LinearEdge("when"),), noise=Normal(std=0.5)),
+            **({"order_id": Column(kind="key")} if key else {}),
+            "when": Column(Node(), "timestamp", marginal=DEFAULT_CALENDAR),
+            "amount": Column(Node((LinearEdge("when"),), noise=Normal(std=0.5))),
+            "value": Column(Node(noise=None)),
         },
-        columns,
         time_column=time_column,
     )
 
@@ -83,7 +70,7 @@ def test_tables_declare_their_keys_and_time():
     with pytest.raises(ValueError, match="timestamp"):
         orders(time_column="nothing")
     with pytest.raises(ValueError, match="one key"):
-        SCM({"x": Node()}, {"a": Column(kind="key"), "b": Column(kind="key")})
+        SCM({"x": Node(), "a": Column(kind="key"), "b": Column(kind="key")})
 
 
 def test_database_wraps_sampled_tables_with_relbench_metadata(schema):
@@ -185,44 +172,31 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
     seconds = Uniform(DEFAULT_CALENDAR.start.timestamp(), DEFAULT_CALENDAR.end.timestamp())
     customers = SCM(
         {
-            "signup": Node(noise=seconds),
-            "value": Node(),
-            "n_orders": Node(noise=None),
-        },
-        {
             "id": Column(kind="key"),
-            "signup": Column("signup", "timestamp"),
-            "value": Column("value"),
-            "n_orders": Column("n_orders"),
+            "signup": Column(Node(noise=seconds), "timestamp"),
+            "value": Column(Node()),
+            "n_orders": Column(Node(noise=None)),
         },
         time_column="signup",
     )
     orders = SCM(
         {
-            "signup": Node(noise=None),
-            "when": Node((LinearEdge("signup"),), noise=Exponential(3600.0)),
-            "value": Node(noise=None),
-            "amount": Node((LinearEdge("value"),), noise=Normal(std=0.1)),
-        },
-        {
             "id": Column(kind="key"),
-            "when": Column("when", "timestamp", missing=0.1),
-            "value": Column("value"),
-            "amount": Column("amount"),
+            "signup": Node(noise=None),
+            "when": Column(
+                Node((LinearEdge("signup"),), noise=Exponential(3600.0)), "timestamp", missing=0.1
+            ),
+            "value": Column(Node(noise=None)),
+            "amount": Column(Node((LinearEdge("value"),), noise=Normal(std=0.1))),
         },
         time_column="when",
     )
     employees = SCM(
         {
-            "joined": Node(),
-            "level": Node(),
-            "manager_level": Node(noise=None),
-        },
-        {
             "id": Column(kind="key"),
-            "joined": Column("joined", "timestamp", marginal=DEFAULT_CALENDAR),
-            "level": Column("level"),
-            "manager_level": Column("manager_level"),
+            "joined": Column(Node(), "timestamp", marginal=DEFAULT_CALENDAR),
+            "level": Column(Node()),
+            "manager_level": Column(Node(noise=None)),
         },
         time_column="joined",
     )

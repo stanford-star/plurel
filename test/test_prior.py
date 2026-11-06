@@ -16,7 +16,15 @@ from plurel.distributions import (
     TimeSeries,
     Uniform,
 )
-from plurel.graph import REDUCTIONS, Foreign, LookupEdge, NearestEdge, Summary
+from plurel.graph import (
+    REDUCTIONS,
+    Foreign,
+    LinearEdge,
+    LookupEdge,
+    MatrixEdge,
+    NearestEdge,
+    Summary,
+)
 from plurel.io import create_database
 from plurel.links import TreeLink
 from plurel.prior import (
@@ -149,8 +157,27 @@ def test_table_prior_knobs_are_respected():
             TablePrior(edge_families=Choices(families))
     single = TablePrior(node_count=IntegersRange(1, 1), column_count=IntegersRange(1, 1))
     scm = single.realize(0)
-    assert len(scm.nodes) <= 2 and not scm.nodes["n0"].parents
+    assert len(scm.hidden) <= 2 and not scm.nodes["n0"].parents
     assert scm.sample(5, seed=0).shape[0] == 5
+
+
+def test_table_prior_columns_read_the_hidden_blocks():
+    for seed in range(20):
+        scm = TablePrior().realize(seed, time=seed % 2 == 1)
+        frame, latents = scm.sample_with_latents(200, seed=seed)
+        for name, column in scm.columns.items():
+            if column.kind == "key" or name == "time":
+                continue
+            node = column.node
+            parent = latents[node.parents[0]]
+            assert node.parents[0] in scm.hidden and node.noise is None
+            assert len(node.edges) == 1 and node.dim == (
+                parent.shape[1] if isinstance(node.edges[0], LinearEdge) else 1
+            )
+            read = node.edges[0].apply(parent)
+            np.testing.assert_array_equal(latents[name], read)
+            if isinstance(node.edges[0], MatrixEdge):
+                assert any((read == parent[:, [d]]).all() for d in range(parent.shape[1]))
 
 
 def test_table_prior_caps_concat_widths():
@@ -270,7 +297,7 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
                     seen.add("gather")
                     fk = schema.keys[table, tail.key]
                     assert tail.node not in summarized(schema, fk.parent)
-                    assert name not in scm.timestamp_nodes
+                    assert name in scm.hidden
                     if isinstance(fk.link, TreeLink):
                         seen.add("self")
                         assert scm.time_column is None

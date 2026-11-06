@@ -419,9 +419,8 @@ class TablePrior:
                     missing = f"m{c}"
             columns[f"col{c}"] = self.column(i, dims[i], categorical[i], missing, rng)
         if time:
-            nodes["time"] = Node(noise=self.time_calendars.draw(rng))
-            columns["time"] = Column("time", "timestamp")
-        return SCM(nodes, columns, time_column="time" if time else None)
+            columns["time"] = Column(Node(noise=self.time_calendars.draw(rng)), "timestamp")
+        return SCM({**nodes, **columns}, time_column="time" if time else None)
 
     def node(
         self,
@@ -473,11 +472,12 @@ class TablePrior:
     def column(
         self, i: int, dim: int, categorical: bool, missing: float | str, rng: np.random.Generator
     ) -> Column:
-        node = f"n{i}"
         if categorical:
             categories = tuple(f"c{k}" for k in range(dim))
-            return Column(node, "categorical", categories=categories, missing=missing)
+            whole = Node(LinearEdge(f"n{i}", dim=dim), noise=None)
+            return Column(whole, "categorical", categories=categories, missing=missing)
         slot = int(rng.integers(dim))
+        node = Node(MatrixEdge(f"n{i}", np.eye(dim)[:, [slot]]), noise=None)
         if rng.random() < self.column_binned_share.draw(rng):
             k = self.column_bin_count.draw(rng)
             probabilities = tuple(float(p) for p in rng.dirichlet(np.ones(k)))
@@ -485,13 +485,12 @@ class TablePrior:
             return Column(
                 node,
                 "categorical",
-                dims=slot,
                 categories=categories,
                 probabilities=probabilities,
                 binning=self.column_binning.draw(rng),
                 missing=missing,
             )
-        return Column(node, dims=slot, marginal=self.column_marginals.draw(rng), missing=missing)
+        return Column(node, marginal=self.column_marginals.draw(rng), missing=missing)
 
 
 def _wire(
@@ -506,7 +505,7 @@ def _wire(
 ) -> list[str]:
     """Give the tails of `count` drawn sources to a drawn share of the readers, every node of
     the table unless given, as crossing edges built by the table's prior; returns the readers."""
-    readers = list(scm.nodes) if readers is None else readers
+    readers = list(scm.hidden) if readers is None else readers
     count = min(count, len(tails))
     if not count or not readers:
         return []
@@ -638,27 +637,28 @@ class SchemaPrior:
         for fk in fkeys:
             if fk.table in static and rng.random() < self.aggregate_share.draw(rng):
                 child, parent = tables[fk.table], tables[fk.parent]
-                tails = {n: self.summary(fk, n, node.dim, rng) for n, node in child.nodes.items()}
+                tails = {n: self.summary(fk, n, child.nodes[n].dim, rng) for n in child.hidden}
                 count = self.aggregate_count.draw(rng)
                 readers = _wire(parent, priors[fk.parent], crossings, fk.parent, tails, count, rng)
                 tainted[fk.parent] |= _downstream(parent, readers)
         for fk in fkeys:
             child, parent = tables[fk.table], tables[fk.parent]
-            plain = [n for n in parent.nodes if n not in tainted[fk.parent]]
+            plain = [n for n in parent.hidden if n not in tainted[fk.parent]]
             tails = {n: (Foreign(fk.column, n), parent.nodes[n].dim) for n in plain}
             count = self.gather_count.draw(rng)
-            readers = [n for n in child.nodes if n not in child.timestamp_nodes]
-            _wire(child, priors[fk.table], crossings, fk.table, tails, count, rng, readers)
+            _wire(
+                child, priors[fk.table], crossings, fk.table, tails, count, rng, list(child.hidden)
+            )
         for name in names:
             if name in static and rng.random() < self.self_reference_share.draw(rng):
                 link = TreeLink(self.self_reference_root_share.draw(rng))
                 fkeys.append(FK(name, "parent_id", name, link, fill=0.0))
                 scm = tables[name]
                 roots = [
-                    n for n in scm.nodes if not scm.nodes[n].parents and n not in tainted[name]
+                    n for n in scm.hidden if not scm.nodes[n].parents and n not in tainted[name]
                 ]
                 tails = {n: (Foreign("parent_id", n), scm.nodes[n].dim) for n in roots}
-                readers = [n for n in scm.nodes if scm.nodes[n].parents]
+                readers = [n for n in scm.hidden if scm.nodes[n].parents]
                 count = self.gather_count.draw(rng)
                 _wire(scm, priors[name], crossings, name, tails, count, rng, readers)
         return Schema(tables, tuple(fkeys), crossings)

@@ -220,26 +220,26 @@ def compile_schema(schema: WorldSchema, rng: np.random.Generator, *, target_nois
     # the sampled bin probabilities bound into every lookup edge: shared realized boundaries
     data_mechanisms = _bind_lookups(data_mechanisms, probabilities)
 
-    columns = {}
+    table = dict(data_mechanisms)
     for name in names:
-        node = schema.nodes[name]
+        node, mechanism = schema.nodes[name], data_mechanisms[name]
         if node.kind == "numeric":
             kind = marginals[name]
-            columns[name] = Column(name, marginal=None if kind is None else shape(kind, rng))
+            table[name] = Column(mechanism, marginal=None if kind is None else shape(kind, rng))
         elif node.class_scores:  # the mechanism emits the class
-            columns[name] = Column(
-                name, "categorical", categories=tuple(levels[name]),
+            table[name] = Column(
+                mechanism, "categorical", categories=tuple(levels[name]),
                 probabilities=tuple(probabilities[name]),
             )  # fmt: skip
         else:
-            columns[name] = Column(
-                name, "categorical", categories=tuple(levels[name]),
+            table[name] = Column(
+                mechanism, "categorical", categories=tuple(levels[name]),
                 probabilities=tuple(probabilities[name]),
                 binning="normal" if name in lookup_parents else "empirical",
             )  # fmt: skip
 
     # a node without a column (an authored hidden cause, a helper) is simulated, never observed
-    plan = SCM(data_mechanisms, columns)
+    plan = SCM(table)
     if schema.nodes[target].class_scores:
         plan = _calibrate_argmax(plan, target, probabilities[target], rng)
     return _fix_edges(plan, rng), target
@@ -305,24 +305,22 @@ def joint_leaves(schema: WorldSchema) -> list[str]:
 def _joint_part(schema: WorldSchema, plan, target: str, leaf: str, rng: np.random.Generator):
     """``(plan, column, r2)`` for the joint target's part ``leaf``, or ``None`` when it cannot be one. From one
     ``CALIBRATION_ROWS`` draw: a numeric leaf is cut into its bands at the draw's quantiles of its value, as a column
-    of the plan observing the leaf's node (after the others, so their draws are untouched); the part is kept when
+    of the plan reading the leaf's node through a node of its own; the part is kept when
     the other columns explain a :data:`JOINT_R2` share of its value (``r2``: linearly, on the latents, the target
     aside) and every joint class holds :data:`JOINT_FLOOR` of the draw."""
     frame, latents = plan.sample_with_latents(CALIBRATION_ROWS, seed=rng)
-    node = plan.columns[leaf].node
-    value = latents[node][:, 0]
+    value = latents[leaf][:, 0]
     column, named = leaf, part_levels(schema, leaf)
     if schema.nodes[leaf].kind == "numeric":
         column = f"{leaf}.band"  # a dotted name no schema column takes
         edges = tuple(float(e) for e in np.quantile(value, np.arange(1, len(named)) / len(named)))
-        band = Column(node, "categorical", categories=tuple(named), binning=edges)
-        plan = SCM(plan.nodes, {**plan.columns, column: band})
+        reading = PlanNode(LinearEdge(leaf), noise=None)
+        band = Column(reading, "categorical", categories=tuple(named), binning=edges)
+        plan = SCM({**plan.table, column: band})
         parts = np.asarray(named)[np.digitize(value, edges)]
     else:
         parts = frame[leaf].astype(str).to_numpy()
-    shown = sorted(
-        {c.node for name, c in plan.columns.items() if name not in (target, leaf, column)}
-    )
+    shown = sorted(set(plan.columns) - {target, leaf, column})
     x = np.column_stack([*(latents[n].reshape(len(value), -1) for n in shown), np.ones(len(value))])
     r2 = float(1.0 - np.var(value - x @ np.linalg.lstsq(x, value, rcond=None)[0]) / np.var(value))
     pairs = pd.Series(list(zip(frame[target].astype(str), parts, strict=True))).value_counts()
@@ -379,11 +377,10 @@ def _entity_nodes(plan, mode: str, labels: list[str], rng: np.random.Generator) 
                     held.add(parent)
                     frontier.append(parent)
     else:
-        observed = {column.node for column in plan.columns.values()}
         roots = [
             name for name, node in plan.nodes.items() if not node.parents and name != ENTITY_EFFECT
         ]
-        held = {name for name in roots if rng.random() < (ROOT_SHARE if name in observed else HIDDEN_ROOT_SHARE)}  # fmt: skip
+        held = {name for name in roots if rng.random() < (ROOT_SHARE if name in plan.columns else HIDDEN_ROOT_SHARE)}  # fmt: skip
         held = held or {roots[int(rng.integers(len(roots)))]}
     if ENTITY_EFFECT in plan.nodes:
         held.add(ENTITY_EFFECT)
@@ -400,16 +397,15 @@ def _fix_edges(plan, rng: np.random.Generator):
     ``CALIBRATION_ROWS`` draw of its latent at the column's cumulative shares. Later draws bin at
     the population's cuts, so a table's shares vary with its rows and a shift moves them; a per-draw quantile would meet the authored shares in every sample instead."""
     values = plan.sample_with_latents(CALIBRATION_ROWS, seed=rng)[1]
-    columns = {}
+    table = dict(plan.table)
     for name, column in plan.columns.items():
         if column.kind == "categorical" and column.binning == "empirical":
             cuts = np.cumsum(column.category_probabilities)[:-1]
             edges = tuple(
                 float(e) for e in np.quantile(np.asarray(values[name], dtype=float), cuts)
             )
-            column = replace(column, binning=edges)
-        columns[name] = column
-    return SCM(plan.nodes, columns)
+            table[name] = replace(column, binning=edges)
+    return SCM(table)
 
 
 def _calibrate_argmax(plan, target: str, probabilities: list[float], rng: np.random.Generator):
@@ -433,7 +429,7 @@ def _calibrate_argmax(plan, target: str, probabilities: list[float], rng: np.ran
             break
         biases += step
     calibrated = replace(node, bias=tuple(float(b - biases.mean()) for b in biases))
-    return SCM({**plan.nodes, target: calibrated}, plan.columns)
+    return SCM({**plan.table, target: replace(plan.columns[target], node=calibrated)})
 
 
 def _scaled_units(values: np.ndarray, lo: float, hi: float,
