@@ -176,12 +176,12 @@ class Schema:
             indices = links[table, tail.key]
             source = latents[fk.parent][tail.node]
             linked = indices >= 0
-            out = np.empty((n, source.shape[1]))
+            if linked.all():
+                return source.take(indices, axis=0).astype(float, copy=False)
+            if fk.fill is None:
+                raise ValueError(f"key {tail.key!r} of {table!r} has null rows; set its fill")
+            out = np.full((n, source.shape[1]), float(fk.fill))
             out[linked] = source[indices[linked]]
-            if not linked.all():
-                if fk.fill is None:
-                    raise ValueError(f"key {tail.key!r} of {table!r} has null rows; set its fill")
-                out[~linked] = fk.fill
             return out
         indices = links[tail.table, tail.key]
         linked = indices >= 0
