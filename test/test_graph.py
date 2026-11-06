@@ -3,7 +3,6 @@ import pytest
 
 from plurel.distributions import Gumbel, Mixture, Normal
 from plurel.graph import (
-    EDGES,
     REDUCTIONS,
     TRANSFORM_NAMES,
     FourierEdge,
@@ -109,8 +108,7 @@ def test_one_node_type_covers_roots_combines_and_one_hot_nodes(latents):
             bad()
 
 
-def test_every_registered_edge_declares_its_width(latents):
-    assert set(EDGE_EXAMPLES) == set(EDGES)
+def test_every_edge_declares_its_width(latents):
     for edge in EDGE_EXAMPLES.values():
         x = latents[edge.parent]
         assert edge.apply(x).shape == (N, edge.dim)
@@ -155,19 +153,6 @@ def test_interactions_are_product_nodes(latents):
     out = target.evaluate({**latents, "h": interaction}, zeros)
     np.testing.assert_allclose(out, 2.0 * latents["x"] - 0.5 * latents["x"] * latents["y"])
     assert target.parents == ("x", "h")
-
-
-def test_scale_edges_set_the_noise_spread_from_the_parents(latents):
-    node = Node((LinearEdge("x"),), noise=Normal(), scale=(LinearEdge("y", 1.0),))
-    assert node.parents == ("x", "y") and node.dim == 1
-    exogenous = node.sample_noise(N, np.random.default_rng(0))
-    value = node.evaluate(latents, exogenous)
-    spread = np.exp(np.clip(latents["y"], -3.0, 3.0))
-    np.testing.assert_allclose(value, latents["x"] + spread * exogenous)
-    wide = Node(noise=Normal(), scale=(LinearEdge("y", 5.0),)).evaluate(latents, exogenous)
-    assert np.abs(wide).max() <= np.exp(3.0) * np.abs(exogenous).max() + 1e-12
-    with pytest.raises(ValueError, match="one-dimensional"):
-        Node(scale=(MatrixEdge("h", np.ones((3, 2))),))
 
 
 def test_one_hot_node_is_a_gumbel_argmax_over_the_combined_scores(latents):

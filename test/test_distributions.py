@@ -3,7 +3,6 @@ import pandas as pd
 import pytest
 
 from plurel.distributions import (
-    DISTRIBUTIONS,
     Affine,
     AutoRegressive,
     Beta,
@@ -47,10 +46,6 @@ EXAMPLES = {
     "time_series": TimeSeries(noise=AutoRegressive(0.5, 0.1)),
     "calendar": Calendar(START, END),
 }
-
-
-def test_every_registered_distribution_has_an_example():
-    assert set(EXAMPLES) == set(DISTRIBUTIONS)
 
 
 @pytest.mark.parametrize("name", sorted(EXAMPLES))

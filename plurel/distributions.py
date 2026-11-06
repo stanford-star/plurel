@@ -326,23 +326,3 @@ class Calendar:
             kept.append(seconds[rng.uniform(0.0, top, draws) < self.weights(seconds)])
             count += len(kept[-1])
         return np.sort(np.concatenate(kept)[:n])
-
-
-DISTRIBUTIONS: dict[str, type] = {
-    "normal": Normal,
-    "uniform": Uniform,
-    "beta": Beta,
-    "lognormal": LogNormal,
-    "exponential": Exponential,
-    "pareto": Pareto,
-    "poisson": Poisson,
-    "gumbel": Gumbel,
-    "laplace": Laplace,
-    "student_t": StudentT,
-    "gamma": Gamma,
-    "negative_binomial": NegativeBinomial,
-    "affine": Affine,
-    "mixture": Mixture,
-    "time_series": TimeSeries,
-    "calendar": Calendar,
-}

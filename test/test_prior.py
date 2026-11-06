@@ -16,7 +16,7 @@ from plurel.distributions import (
     TimeSeries,
     Uniform,
 )
-from plurel.graph import EDGES, REDUCTIONS, Foreign, LookupEdge, NearestEdge, Summary
+from plurel.graph import REDUCTIONS, Foreign, LookupEdge, NearestEdge, Summary
 from plurel.io import create_database
 from plurel.links import TreeLink
 from plurel.prior import (
@@ -88,7 +88,7 @@ def test_table_prior_realizes_valid_diverse_tables():
                 assert (frame[name].dropna() == 0.0).mean() > 0.2
         if time:
             calendars.add(scm.nodes["time"].noise)
-    assert families == {EDGES[name] for name in FAMILIES} and set(FAMILIES) == set(EDGES)
+    assert len(families) == len(FAMILIES)
     assert kinds == {"key", "numeric", "categorical", "timestamp"}
     assert ops == set(REDUCTIONS)
     assert noises == {

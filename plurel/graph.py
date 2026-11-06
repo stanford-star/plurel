@@ -26,7 +26,6 @@ TRANSFORMS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
 TRANSFORM_NAMES = tuple(TRANSFORMS)
 
 COMPOUND_SPAN = 2.5  # the compounding sum is clipped here, so the product stays within decades
-LOG_SCALE_CLIP = 3.0  # a node's noise scale stays within e^3 of its std either way
 
 REDUCTIONS: dict[str, Callable[[list[np.ndarray]], np.ndarray]] = {
     "sum": lambda terms: reduce(np.add, terms),
@@ -241,9 +240,7 @@ class Node:
     the node emits the one-hot argmax of its scores; with Gumbel noise that samples the
     class from the softmax of the scores. With `standardize` the signal, the reduction plus
     any crossing terms, is standardized per dimension before noise and bias are added, so
-    the noise is relative to a unit-scale signal. With `scale` the noise draw is multiplied
-    by the exponential of the clipped sum of those edges' terms, so its spread follows the
-    parents they read (heteroscedastic noise); they are parents like any other.
+    the noise is relative to a unit-scale signal.
     """
 
     edges: Edge | tuple[Edge, ...] = ()
@@ -253,7 +250,6 @@ class Node:
     dim: int | None = None
     noise: Distribution | None = field(default_factory=Normal, kw_only=True)
     standardize: bool = field(default=False, kw_only=True)
-    scale: tuple[Edge, ...] = field(default=(), kw_only=True)
 
     def __post_init__(self) -> None:
         if isinstance(self.edges, Edge):
@@ -262,8 +258,6 @@ class Node:
             raise ValueError("several edges go in one tuple: Node((first, second))")
         if self.op not in REDUCTIONS:
             raise ValueError(f"op must be one of {tuple(REDUCTIONS)}")
-        if any(edge.dim != 1 for edge in self.scale):
-            raise ValueError("scale edges are one-dimensional")
         dims = [edge.dim for edge in self.edges]
         if dims:
             derived = sum(dims) if self.op == "concat" else max(dims)
@@ -280,7 +274,7 @@ class Node:
 
     @property
     def parents(self) -> tuple[Hashable, ...]:
-        return tuple(dict.fromkeys(edge.parent for edge in (*self.edges, *self.scale)))
+        return tuple(dict.fromkeys(edge.parent for edge in self.edges))
 
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, self.dim))
@@ -291,17 +285,14 @@ class Node:
         exogenous: np.ndarray,
         across: np.ndarray | None = None,
     ) -> np.ndarray:
-        """The value from the parents' latents, the exogenous term (scaled by the `scale` edges)
-        and, if given, the summed contributions of the crossing edges."""
+        """The value from the parents' latents, the exogenous term and, if given, the summed
+        contributions of the crossing edges."""
         terms = [edge.apply(latents[edge.parent]) for edge in self.edges]
         signal = REDUCTIONS[self.op](terms) if terms else np.zeros_like(exogenous)
         if across is not None:
             signal = signal + across
         if self.standardize:
             signal = standardize(signal)
-        if self.scale:
-            log_scale = reduce(np.add, [edge.apply(latents[edge.parent]) for edge in self.scale])
-            exogenous = exogenous * np.exp(np.clip(log_scale, -LOG_SCALE_CLIP, LOG_SCALE_CLIP))
         value = signal + exogenous
         if self.bias is not None:
             value = value + np.asarray(self.bias)
@@ -366,15 +357,3 @@ class Summary:
             raise ValueError(f"how must be one of {tuple(AGGREGATES)}")
         if self.fill is not None and (self.how in COMPLETE or not np.isfinite(self.fill)):
             raise ValueError("fill is a finite value for mean, max or min only")
-
-
-EDGES: dict[str, type] = {
-    "linear": LinearEdge,
-    "lookup": LookupEdge,
-    "matrix": MatrixEdge,
-    "nearest": NearestEdge,
-    "mlp": MLPEdge,
-    "tree": TreeEdge,
-    "fourier": FourierEdge,
-    "quadratic": QuadraticEdge,
-}
