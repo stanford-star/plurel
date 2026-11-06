@@ -271,11 +271,15 @@ class Node:
             raise ValueError("several edges go in one tuple: Node((first, second))")
         if self.op not in REDUCTIONS:
             raise ValueError(f"op must be one of {tuple(REDUCTIONS)}")
-        dims = [edge.dim for edge in self.local] or [edge.dim for edge in self.across]
+        dims = [edge.dim for edge in self.local]
         if dims:
-            derived = sum(dims) if self.op == "concat" and self.local else max(dims)
+            derived = sum(dims) if self.op == "concat" else max(dims)
+        elif self.bias:
+            derived = len(self.bias)
+        elif self.dim is None:
+            derived = max((edge.dim for edge in self.across), default=1)
         else:
-            derived = len(self.bias) if self.bias else (1 if self.dim is None else self.dim)
+            derived = self.dim
         if self.dim is None:
             object.__setattr__(self, "dim", derived)
         elif self.dim != derived:

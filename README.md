@@ -105,7 +105,8 @@ frame = events.sample(1000, seed=0)
 
 A table can hold an `FK` to another table, and any edge can read across a key: `Foreign(key, node)`
 reads the row the key points at, `Summary(table, key, node, how)` aggregates the rows pointing back.
-A `Schema` joins the tables.
+A term read across a key adds to the node's signal whatever its `op`. A `Schema` joins the tables,
+and a table with keys samples only through one.
 
 ```python
 import pandas as pd

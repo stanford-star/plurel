@@ -162,8 +162,18 @@ def test_a_table_holds_its_keys_and_the_edges_that_cross_them():
     frames = schema.sample({"customers": 20, "orders": 50}, seed=0)
     keys = frames["orders"]["customer_id"].to_numpy(dtype=int)
     np.testing.assert_allclose(frames["orders"]["amount"], 2.0 * frames["customers"]["spend"][keys])
-    with pytest.raises(ValueError, match="unknown table"):
+    with pytest.raises(ValueError, match="need the tables of a Schema"):
         orders.sample(5, seed=0)
+    with pytest.raises(ValueError, match="need the tables of a Schema"):
+        SCM({"k": FK("table"), "x": Column(Node())}).sample(5, seed=0)
+    across = LinearEdge(Foreign("customer_id", "spend"))
+    assert Node(across, dim=3, noise=None).dim == 3 and Node(across, noise=None).dim == 1
+    assert Node(across, bias=(0.0, 1.0), noise=None).dim == 2
+    wide = SCM({"customer_id": FK("customers"), "w": Node(across, dim=3, noise=None)})
+    latents = Schema({"customers": customers, "orders": wide}).sample_with_latents(
+        {"customers": 5, "orders": 5}, seed=0
+    )[1]
+    assert latents["orders"]["w"].shape == (5, 3)
 
 
 ROWS = {"customers": 300, "orders": 2000, "employees": 150}

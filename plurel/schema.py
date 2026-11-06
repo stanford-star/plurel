@@ -89,6 +89,8 @@ class SCM:
         self, n: int, *, seed: Seed = None, held: Mapping[str, np.ndarray] | None = None
     ) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
         """This table alone, through a one-table Schema; `held` nodes take the given values."""
+        if self.fkeys:
+            raise ValueError(f"keys {sorted(self.fkeys)} need the tables of a Schema")
         frames, latents = Schema({"table": self}).sample_with_latents(
             {"table": n}, seed=seed, held={"table": held} if held else None
         )
