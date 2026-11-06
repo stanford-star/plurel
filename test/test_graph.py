@@ -115,6 +115,7 @@ def test_every_edge_declares_its_width(latents):
     for edge in EDGE_EXAMPLES.values():
         x = latents[edge.parent]
         assert edge.apply(x).shape == (N, edge.dim)
+        assert edge.apply(x[:0]).shape == (0, edge.dim)
 
 
 def test_every_reduction_reduces_the_transformed_parents(latents):

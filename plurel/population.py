@@ -126,7 +126,8 @@ class Grouping:
                 latent = latents[name][:, 0]
                 noise = self.measurement * latent.std() * noise_rng.standard_normal(n)
                 noisy = latent[entities] + noise
-                frame[name] = rank_map(noisy, column.marginal, noise_rng) if column.marginal else noisy  # fmt: skip
+                read = rank_map(noisy, column.marginal, noise_rng) if column.marginal else noisy
+                frame[name] = frame[name].where(frame[name].isna(), read)
             else:  # the entity's value as its own draw observed it (an in-draw rank map would bias ties)
                 frame[name] = each[name].iloc[entities].set_axis(frame.index)
         codes = id_rng.choice(ENTITY_CODES, size=len(sizes), replace=False)

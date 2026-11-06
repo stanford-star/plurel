@@ -14,11 +14,8 @@ DEFAULT_CALENDAR = Calendar(pd.Timestamp("1990-01-01"), pd.Timestamp("2025-01-01
 
 
 def rank_map(latent: np.ndarray, marginal: Distribution, rng: np.random.Generator) -> np.ndarray:
-    known = ~np.isnan(latent)
-    reference = np.sort(marginal.sample(int(known.sum()), rng))
-    out = np.full(len(latent), np.nan)
-    out[known] = reference[np.searchsorted(np.sort(latent[known]), latent[known])]
-    return out
+    reference = np.sort(marginal.sample(len(latent), rng)).astype(float)
+    return reference[np.searchsorted(np.sort(latent), latent)]
 
 
 @dataclass(frozen=True)
@@ -60,6 +57,8 @@ class Column:
                 raise ValueError(
                     "categories, probabilities and binning are for categorical columns"
                 )
+            if self.node.dim != 1:
+                raise ValueError(f"a {self.kind} column needs a one-dimensional node")
             return
         if self.marginal is not None:
             raise ValueError("categorical columns have no marginal")
@@ -69,6 +68,8 @@ class Column:
             or len(self.categories) < 2
         ):
             raise ValueError("categorical columns need at least two distinct categories")
+        if self.node.dim not in (1, len(self.categories)):
+            raise ValueError("a categorical column needs one dimension or one per category")
         probabilities = self.category_probabilities
         if len(probabilities) != len(self.categories):
             raise ValueError("one probability per category")
@@ -97,34 +98,24 @@ class Column:
         if self.kind == "categorical":
             observed = pd.Categorical.from_codes(self.codes(latent), list(self.categories))
         else:
-            if latent.ndim == 2 and latent.shape[1] != 1:
-                raise ValueError(f"{self.kind} column {name!r} needs one dimension")
-            flat = latent.reshape(len(latent))
+            flat = latent[:, 0]
             observed = rank_map(flat, self.marginal, rng) if self.marginal else flat
             if self.kind == "timestamp":
                 observed = pd.to_datetime(observed, unit="s").as_unit("ns")
         series = pd.Series(observed)
         if isinstance(self.missing, str):
-            indicator = latents[self.missing]
-            if indicator.shape[1] != 2:
-                raise ValueError(f"missingness node {self.missing!r} must have two classes")
-            return series.mask(indicator[:, 1] == 1.0)
+            return series.mask(latents[self.missing][:, 1] == 1.0)
         return series.mask(rng.random(len(series)) < self.missing) if self.missing else series
 
     def codes(self, latent: np.ndarray) -> np.ndarray:
-        if latent.ndim == 2 and latent.shape[1] > 1:
-            if latent.shape[1] != len(self.categories):
-                raise ValueError("a one-hot node must have one column per category")
-            valid = (latent != 0).any(1) & ~np.isnan(latent).any(1)
-            return np.where(valid, latent.argmax(1), -1)
-        flat = latent.reshape(len(latent))
+        if latent.shape[1] > 1:
+            return np.where((latent != 0).any(1), latent.argmax(1), -1)
+        flat = latent[:, 0]
         if not len(flat):
             return np.empty(0, dtype=int)
         if isinstance(self.binning, tuple):
-            codes = np.digitize(flat, self.binning)
-        elif self.binning == "empirical":
+            return np.digitize(flat, self.binning)
+        if self.binning == "empirical":
             cuts = np.cumsum(self.category_probabilities)[:-1]
-            codes = np.digitize(flat, np.nanquantile(flat, cuts))
-        else:
-            codes = bin_levels(flat, self.category_probabilities)
-        return np.where(np.isnan(flat), -1, codes)
+            return np.digitize(flat, np.quantile(flat, cuts))
+        return bin_levels(flat, self.category_probabilities)
