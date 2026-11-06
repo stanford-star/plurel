@@ -21,21 +21,18 @@ from plurel.links import HSBMLink, RandomLink, TreeLink
 from plurel.schema import FK, Schema
 
 
-def simulate(scm, n, *, seed=None, interventions=None):
-    forced = {"t": interventions} if interventions else None
-    return Schema({"t": scm}).sample_with_latents({"t": n}, seed=seed, interventions=forced)[1]["t"]
+def simulate(scm, n, *, seed=None, held=None):
+    held = {"t": held} if held else None
+    return Schema({"t": scm}).sample_with_latents({"t": n}, seed=seed, held=held)[1]["t"]
 
 
-def sample_with_latents(scm, n, *, seed=None, interventions=None):
-    forced = {"t": interventions} if interventions else None
-    frames, latents = Schema({"t": scm}).sample_with_latents(
-        {"t": n}, seed=seed, interventions=forced
-    )
+def sample_with_latents(scm, n, *, seed=None):
+    frames, latents = Schema({"t": scm}).sample_with_latents({"t": n}, seed=seed)
     return frames["t"], latents["t"]
 
 
-def sample(scm, n, *, seed=None, interventions=None):
-    return sample_with_latents(scm, n, seed=seed, interventions=interventions)[0]
+def sample(scm, n, *, seed=None):
+    return sample_with_latents(scm, n, seed=seed)[0]
 
 
 N = 300
@@ -74,22 +71,18 @@ def test_simulate_evaluates_every_node_in_topological_order(scm):
     assert not np.array_equal(latents["x"], simulate(scm, N, seed=1)["x"])
 
 
-def test_interventions_replace_a_node_and_keep_common_random_numbers(scm):
-    factual = simulate(scm, N, seed=0)
-    counterfactual = simulate(scm, N, seed=0, interventions={"x": 0.0})
-    assert not counterfactual["x"].any()
+def test_a_held_node_takes_its_values_and_keeps_the_other_noise(scm):
+    free = simulate(scm, N, seed=0)
+    held = simulate(scm, N, seed=0, held={"x": np.zeros((N, 1))})
+    assert not held["x"].any()
     for name in ("z", "h", "segment"):
-        np.testing.assert_array_equal(counterfactual[name], factual[name])
-    residuals = [v["y"] - 2.0 * v["x"] + 0.5 * v["x"] * v["z"] for v in (factual, counterfactual)]
+        np.testing.assert_array_equal(held[name], free[name])
+    residuals = [v["y"] - 2.0 * v["x"] + 0.5 * v["x"] * v["z"] for v in (free, held)]
     np.testing.assert_allclose(*residuals)
-    forced = simulate(scm, N, seed=0, interventions={"segment": np.eye(3)[1]})
-    np.testing.assert_array_equal(forced["embedding"], np.tile(TABLE[1], (N, 1)))
-    per_row = simulate(scm, N, seed=0, interventions={"x": np.arange(N)})
-    np.testing.assert_array_equal(per_row["x"], np.arange(N)[:, None])
-    with pytest.raises(ValueError):
-        simulate(scm, N, seed=0, interventions={"missing": 1.0})
-    with pytest.raises(ValueError):
-        simulate(scm, N, seed=0, interventions={"h": np.ones((N, 2))})
+    with pytest.raises(ValueError, match="unknown nodes"):
+        simulate(scm, N, seed=0, held={"missing": np.zeros((N, 1))})
+    with pytest.raises(ValueError, match="produced"):
+        simulate(scm, N, seed=0, held={"h": np.ones((N, 2))})
 
 
 def test_construction_rejects_unknown_parents_and_cycles():
@@ -122,8 +115,6 @@ def test_sample_observes_columns_from_one_draw(scm):
     frame = sample(typed, N, seed=0)
     assert list(frame) == list(columns) and frame["when"].dtype == "datetime64[ns]"
     assert set(frame["segment"]) == {"a", "b", "c"} and 0.05 < frame["amount"].isna().mean() < 0.15
-    same = sample(typed, N, seed=0, interventions={"x": 0.0})
-    pd.testing.assert_series_equal(same["when"], frame["when"])
     mnar = sample_with_latents(SCM(NODES, {"y": Column("y", missing="hidden")}), N, seed=0)
     frame, latents = mnar
     assert frame["y"].isna().to_numpy().tolist() == (latents["hidden"][:, 1] == 1.0).tolist()
@@ -270,26 +261,11 @@ def test_sample_propagates_latents_in_both_directions(schema):
     assert not latents["employees"]["manager_level"][roots].any()
 
 
-def test_sampling_is_deterministic_and_interventions_keep_common_random_numbers(schema):
-    frames, latents = schema.sample_with_latents(ROWS, seed=0)
+def test_sampling_is_deterministic(schema):
+    frames, _ = schema.sample_with_latents(ROWS, seed=0)
     again, _ = schema.sample_with_latents(ROWS, seed=0)
     for table in ROWS:
         pd.testing.assert_frame_equal(frames[table], again[table])
-    forced, latents_forced = schema.sample_with_latents(
-        ROWS, seed=0, interventions={"customers": {"value": 0.0}}
-    )
-    pd.testing.assert_series_equal(forced["orders"]["customer_id"], frames["orders"]["customer_id"])
-    pd.testing.assert_frame_equal(forced["employees"], frames["employees"])
-    assert not latents_forced["orders"]["value"].any()
-    residual = latents["orders"]["amount"] - 2.0 * latents["orders"]["value"]
-    residual_forced = latents_forced["orders"]["amount"] - 2.0 * latents_forced["orders"]["value"]
-    np.testing.assert_allclose(residual, residual_forced)
-    ported = {"orders": {"value": 1.0}, "customers": {"segment": np.eye(3)[2]}}
-    _, latents_ported = schema.sample_with_latents(ROWS, seed=0, interventions=ported)
-    assert (latents_ported["orders"]["value"] == 1.0).all()
-    linked = frames["orders"]["customer_id"].notna().to_numpy()
-    expected = np.tile(EMBEDDING[2], (linked.sum(), 1))
-    np.testing.assert_array_equal(latents_ported["orders"]["embedding"][linked], expected)
     with pytest.raises(ValueError, match="belong to the Schema"):
         SCM({"x": Node((LinearEdge(Foreign("k", "y")),))}, {})
 
@@ -379,12 +355,6 @@ def test_schema_validation():
     schema = Schema(tables(), FKEYS, CROSSINGS)
     with pytest.raises(ValueError):
         schema.sample({"customers": 10, "orders": 10})
-    with pytest.raises(ValueError):
-        schema.sample(ROWS, interventions={"shops": {"x": 1.0}})
-    with pytest.raises(ValueError):
-        schema.sample(ROWS, interventions={"customers": {"nothing": 1.0}})
-    with pytest.raises(ValueError, match="does not fit"):
-        schema.sample(ROWS, interventions={"customers": {"segment": np.ones(2)}})
     empty = schema.sample({"customers": 5, "orders": 0, "employees": 0}, seed=0)
     assert len(empty["orders"]) == 0 and list(empty["orders"]) == ["amount", "value", "customer_id"]
     assert not empty["customers"]["n_orders"].any()

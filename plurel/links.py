@@ -110,9 +110,12 @@ class HSBMLink:
             for parent, child in zip(self.parent_clusters, self.child_clusters)
         ]
         log_weight = self.log_weights(n_parent, rng)
-        groups, membership = np.unique(child_labels, axis=0, return_inverse=True)
-        order = np.argsort(membership.reshape(-1), kind="stable")
-        bounds = np.searchsorted(membership.reshape(-1)[order], np.arange(len(groups) + 1))
+        codes, membership = np.unique(
+            np.ravel_multi_index(child_labels.T, self.child_clusters), return_inverse=True
+        )
+        groups = np.stack(np.unravel_index(codes, self.child_clusters), axis=1)
+        order = np.argsort(membership, kind="stable")
+        bounds = np.searchsorted(membership[order], np.arange(len(groups) + 1))
         draws = rng.uniform(0.0, 1.0, n_child)
         parents = np.empty(n_child, dtype=np.int64)
         for group, label in enumerate(groups):

@@ -72,6 +72,9 @@ def test_the_draws_are_pinned():
     frame = realize_world(CASE, 3, target_noise=0.25, share_concentration=100.0).rows(200, 0)
     digest = hashlib.sha256(frame.round(4).to_csv(index=False).encode()).hexdigest()[:16]
     assert digest == "2f0bc4a45d21a359"
+    grouped = realize_world(GROUPED, 3, grouping=REPLICATES).rows(64, 0)
+    digest = hashlib.sha256(grouped.round(4).to_csv(index=False).encode()).hexdigest()[:16]
+    assert digest == "632e62d918043948"
 
 
 def test_the_card_carries_the_authored_text():
@@ -245,7 +248,6 @@ def test_a_grouped_draw_holds_the_rows_asked_for_under_unique_ids():
     unnamed = realize_world(GROUPED, 0, grouping=dict(REPLICATES, column=None))
     assert "subject_id" not in unnamed.features
     assert list(unnamed.rows(20, 0).columns) == [*unnamed.features, "outcome"]
-    assert population.rows(50, 0, interventions={"cause": 2.0})["cause"].nunique() == 1
 
 
 def test_a_grouped_tables_description_says_how_its_rows_share_units():

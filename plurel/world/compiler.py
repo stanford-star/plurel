@@ -397,8 +397,7 @@ CALIBRATION_TOLERANCE = 0.01  # largest bias step, in noise units, at which the 
 def _fix_edges(plan, rng: np.random.Generator):
     """The plan with every empirically binned column cut at fixed edges: the quantiles of one
     ``CALIBRATION_ROWS`` draw of its latent at the column's cumulative shares. Later draws bin at
-    the population's cuts, so a table's shares vary with its rows and an intervention or a shift
-    moves them; a per-draw quantile would meet the authored shares in every sample instead."""
+    the population's cuts, so a table's shares vary with its rows and a shift moves them; a per-draw quantile would meet the authored shares in every sample instead."""
     values = sample(plan, CALIBRATION_ROWS, seed=rng)[1]
     columns = {}
     for name, column in plan.columns.items():

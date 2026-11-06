@@ -41,7 +41,7 @@ def test_a_hidden_product_node_multiplies_its_parents_and_stays_hidden():
     }
     scm = SCM(nodes, {name: Column(name) for name in ("a", "b", "y")})
     a, b = np.array([1.0, -1.0, 0.5]), np.array([0.0, 2.0, -5.0])
-    frame, latents = sample(scm, 3, interventions={"a": a, "b": b})
+    frame, latents = sample(scm, 3, held={"a": a[:, None], "b": b[:, None]})
     np.testing.assert_allclose(latents["y"][:, 0], a + 2.0 * a * b)
     assert list(frame) == ["a", "b", "y"] and "a_b" in latents
 
@@ -63,7 +63,7 @@ def test_a_lookup_times_a_parent_is_a_per_level_slope():
         "y": Column("y"),
     }
     segment, x = np.array([-2.0, -2.0, 2.0, 2.0]), np.array([1.0, 3.0, 1.0, 3.0])
-    latents = sample(SCM(nodes, columns), 4, interventions={"segment": segment, "x": x})[1]
+    latents = sample(SCM(nodes, columns), 4, held={"segment": segment[:, None], "x": x[:, None]})[1]
     np.testing.assert_allclose(latents["y"][:, 0], [-1.0, -3.0, 2.0, 6.0])
 
 
@@ -78,7 +78,7 @@ def test_a_nominal_target_is_a_one_hot_node_over_matrix_edge_scores():
         {"x": Node(), "y": target},
         {"x": Column("x"), "y": Column("y", "categorical", categories=("a", "b", "c"))},
     )
-    latents = sample(scm, 3, interventions={"x": np.array([-3.0, 0.0, 3.0])})[1]
+    latents = sample(scm, 3, held={"x": np.array([[-3.0], [0.0], [3.0]])})[1]
     assert latents["y"].argmax(1).tolist() == [0, 1, 2]
     frame, latents = sample(scm, 400, seed=0)
     assert set(frame["y"]) == {"a", "b", "c"}
@@ -98,15 +98,8 @@ def test_two_columns_may_observe_one_node():
     nodes = {"u": Node(), "y": Node((LinearEdge("u", -1.5),), noise=None)}
     scm = SCM(nodes, {"first_u": Column("u"), "second_u": Column("u"), "y": Column("y")})
     assert node_of(scm, "first_u") == node_of(scm, "second_u") == "u"
-    frame = sample(scm, 3, interventions={"u": np.array([1.0, 2.0, 3.0])})[0]
+    frame = sample(scm, 3, held={"u": np.array([[1.0], [2.0], [3.0]])})[0]
     np.testing.assert_allclose(frame["y"], [-1.5, -3.0, -4.5])
-
-
-def test_a_one_hot_node_is_set_by_a_class_indicator():
-    nodes = {"kind": Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel(), dim=3), "x": Node()}
-    columns = {"kind": Column("kind", "categorical", categories=("a", "b", "c")), "x": Column("x")}
-    latents = sample(SCM(nodes, columns), 4, interventions={"kind": np.eye(3)[1]})[1]
-    assert latents["kind"].argmax(1).tolist() == [1, 1, 1, 1]
 
 
 def test_table_metadata_checks_its_feature_types():
@@ -122,14 +115,6 @@ def test_a_draw_is_a_pure_function_of_the_lanes_and_its_index():
     assert first.equals(population().rows(200, 0))
     assert not first.equals(population().rows(200, 1))
     assert population().id == "case--s3" and population().features == ["cause", "effect"]
-
-
-def test_an_intervention_takes_a_column_or_a_hidden_node():
-    plain = population().rows(2000, 0)
-    forced = population().rows(2000, 0, interventions={"cause": 3.0})
-    assert forced["effect"].mean() > plain["effect"].mean() + 1.0
-    hidden = population().rows(2000, 0, interventions={"hidden": 3.0})
-    assert (hidden["label"] == "yes").mean() > (plain["label"] == "yes").mean()
 
 
 def test_ungrouped_rows_are_their_own_entities():
@@ -152,13 +137,6 @@ def test_a_grouped_draw_holds_the_fixed_nodes_per_entity():
     assert frame.groupby(entities)["effect"].nunique().max() > 1  # the row's
     assert frame.groupby(entities)["id"].nunique().max() == 1
     assert frame.groupby("id").ngroups == entities[-1] + 1
-
-
-def test_a_grouped_draw_is_intervened_on_one_value_per_node():
-    grouping = Grouping(mode="shared_causes", fixed=("cause",), rows=4.0, spread=0.0, measurement=0.0, column=None)  # fmt: skip
-    with pytest.raises(ValueError, match="one value per node"):
-        population(grouping).rows(10, 0, interventions={"effect": np.zeros(10)})
-    assert len(population(grouping).rows(10, 0, interventions={"effect": 1.0})) == 10
 
 
 def test_entity_sizes_sum_to_the_rows_asked_for():

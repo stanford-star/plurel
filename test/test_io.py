@@ -171,6 +171,16 @@ def test_write_and_read_round_trip(schema, tmp_path):
         )
 
 
+def test_a_home_path_is_expanded(schema, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    db = create_database(schema, schema.sample(ROWS, seed=0))
+    split = db.max_timestamp
+    write_database(db, "~/made/here", name="x", val_timestamp=split, test_timestamp=split)
+    assert (tmp_path / "made" / "here" / "manifest.yaml").exists() and not (tmp_path / "~").exists()
+    assert set(read_database("~/made/here").table_dict) == set(db.table_dict)
+
+
 def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
     seconds = Uniform(DEFAULT_CALENDAR.start.timestamp(), DEFAULT_CALENDAR.end.timestamp())
     customers = SCM(

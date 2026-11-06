@@ -83,7 +83,7 @@ def write_database(
                     f"categorical column {column!r} of {table_name!r} needs string categories to"
                     " survive parquet"
                 )
-    path = Path(path)
+    path = Path(path).expanduser()
     if (path / "manifest.yaml").exists():
         if not overwrite:
             raise FileExistsError(f"{path} already holds a dataset; pass overwrite=True")
@@ -110,7 +110,7 @@ def write_database(
 
 
 def read_database(path: str | Path) -> Database:
-    return load_dataset(Path(path)).get_db(upto_test_timestamp=False)
+    return load_dataset(Path(path).expanduser()).get_db(upto_test_timestamp=False)
 
 
 def split_timestamps(
