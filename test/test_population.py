@@ -1,12 +1,14 @@
 import numpy as np
 import pytest
 
-from plurel import SCM, Column, Gumbel, LinearEdge, LookupEdge, MatrixEdge, Node, ReadEdge, Uniform
+from plurel import Gumbel, Table, Uniform
+from plurel.columns import Column
+from plurel.graph import LinearEdge, LookupEdge, MatrixEdge, Node, ReadEdge
 from plurel.population import Grouping, Population, TableMetadata, entity_cut, table_id
 
 
-def plan() -> SCM:
-    return SCM(
+def plan() -> Table:
+    return Table(
         {
             "cause": Column(Node()),
             "effect": Column(Node((LinearEdge("cause", 1.0),))),
@@ -31,7 +33,7 @@ def population(grouping: Grouping | None = None) -> Population:
 
 
 def test_a_hidden_product_node_multiplies_its_parents_and_stays_hidden():
-    scm = SCM(
+    scm = Table(
         {
             "a": Column(Node()),
             "b": Column(Node()),
@@ -57,7 +59,7 @@ def test_a_lookup_times_a_parent_is_a_per_level_slope():
         "y": Column(Node((LinearEdge("slope"),), noise=None)),
     }
     segment, x = np.array([-2.0, -2.0, 2.0, 2.0]), np.array([1.0, 3.0, 1.0, 3.0])
-    latents = SCM(table).sample_with_latents(
+    latents = Table(table).sample_with_latents(
         4, held={"segment": segment[:, None], "x": x[:, None]}
     )[1]
     np.testing.assert_allclose(latents["y"][:, 0], [-1.0, -3.0, 2.0, 6.0])
@@ -70,7 +72,7 @@ def test_a_nominal_target_is_a_one_hot_node_over_matrix_edge_scores():
         onehot=True,
         noise=None,
     )
-    scm = SCM({"x": Column(Node()), "y": Column(target, categories=("a", "b", "c"))})
+    scm = Table({"x": Column(Node()), "y": Column(target, categories=("a", "b", "c"))})
     latents = scm.sample_with_latents(3, held={"x": np.array([[-3.0], [0.0], [3.0]])})[1]
     assert latents["y"].argmax(1).tolist() == [0, 1, 2]
     frame, latents = scm.sample_with_latents(400, seed=0)
@@ -78,12 +80,12 @@ def test_a_nominal_target_is_a_one_hot_node_over_matrix_edge_scores():
     scores = latents["x"] @ np.array([[-2.0, 0.0, 2.0]]) + np.array(target.bias)
     assert np.array_equal(latents["y"].argmax(1), scores.argmax(1))
     scored = Node(target.edges, bias=target.bias, onehot=True, noise=Gumbel())
-    soft = SCM({"x": Node(), "y": Column(scored, categories=("a", "b", "c"))})
+    soft = Table({"x": Node(), "y": Column(scored, categories=("a", "b", "c"))})
     assert 0.0 < (soft.sample_with_latents(4000)[1]["y"].argmax(1) == 1).mean() < 1.0
 
 
 def test_a_second_reading_of_a_node_is_a_node_of_its_own():
-    scm = SCM(
+    scm = Table(
         {
             "u": Column(Node()),
             "again": Column(Node(ReadEdge("u"), noise=None)),
@@ -96,7 +98,7 @@ def test_a_second_reading_of_a_node_is_a_node_of_its_own():
 
 
 def test_a_column_reading_a_held_node_records_its_entitys_value():
-    plan = SCM(
+    plan = Table(
         {
             "u": Node(),
             "x": Column(Node(ReadEdge("u"), noise=None), marginal=Uniform(0.0, 1.0)),
@@ -115,7 +117,7 @@ def test_a_column_reading_a_held_node_records_its_entitys_value():
 
 
 def test_a_noiseless_column_of_held_nodes_records_its_entitys_value():
-    plan = SCM(
+    plan = Table(
         {
             "h": Node(),
             "x": Column(Node(LinearEdge("h"), noise=None), marginal=Uniform()),
@@ -130,7 +132,7 @@ def test_a_noiseless_column_of_held_nodes_records_its_entitys_value():
 
 
 def test_a_noisy_reading_keeps_the_columns_blanks():
-    plan = SCM(
+    plan = Table(
         {"u": Column(Node(), marginal=Uniform(0.0, 1.0), missing=0.3), "raw": Column(Node())}
     )
     grouping = Grouping("shared_causes", ("u",), rows=5.0, spread=0.2, measurement=0.3, column=None)

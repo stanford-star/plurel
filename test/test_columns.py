@@ -2,10 +2,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from plurel import PrimaryKey
 from plurel.columns import DEFAULT_CALENDAR, Column, rank_map
 from plurel.distributions import Calendar, Poisson, Uniform
 from plurel.graph import Node
-from plurel.schema import SCM
+from plurel.schema import Table
 
 N = 2000
 CATEGORIES = ("low", "mid", "high")
@@ -121,11 +122,8 @@ def test_missingness_is_a_rate_or_an_indicator_node(latent):
 
 
 def test_key_columns_are_row_identities():
-    key = Column(kind="key")
+    key = PrimaryKey()
     np.testing.assert_array_equal(key.observe("id", {}, np.random.default_rng(0), 5), np.arange(5))
-    for kwargs in ({"node": NODE}, {"missing": 0.1}, {"marginal": Uniform()}):
-        with pytest.raises(ValueError):
-            Column(kind="key", **kwargs)
     assert (
         Column(NODE).kind == "numeric" and Column(NODE, categories=CATEGORIES).kind == "categorical"
     )
@@ -134,7 +132,7 @@ def test_key_columns_are_row_identities():
             Column(*bad)
     for table in ({}, {"three": Node(dim=3)}):
         with pytest.raises(ValueError, match="two-class"):
-            SCM({**table, "x": Column(NODE, missing="three")})
+            Table({**table, "x": Column(NODE, missing="three")})
 
 
 def test_empty_one_hot_rows_observe_as_missing():

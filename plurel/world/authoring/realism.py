@@ -48,7 +48,7 @@ PHENOMENA = (
     "hidden_cause",
     "non_additive_mechanism",
     "interaction",
-)  # structural, read off the SCM
+)  # structural, read off the Table
 ROWS = 512  # rows of a realization a class must reach
 MIN_CLASS_SHARE = 0.002  # rarer than 1 in 500 cannot be realized in a pool of ROWS rows
 MIN_CLASSES = 2
@@ -72,7 +72,7 @@ def features(schema: WorldSchema) -> dict[str, Node]:
 
 
 def phenomena(schema: WorldSchema) -> set[str]:
-    """The record phenomena the schema carries, by name (see PHENOMENA): each is a mechanism of the SCM."""
+    """The record phenomena the schema carries, by name (see PHENOMENA): each is a mechanism of the Table."""
     feats = features(schema)
     carried = {
         "mar_or_mnar": any(n.missing_by is not None for n in feats.values()),

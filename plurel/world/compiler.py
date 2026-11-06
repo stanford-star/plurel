@@ -14,22 +14,18 @@ from functools import partial
 import numpy as np
 import pandas as pd
 
-from plurel import (
-    SCM,
-    Affine,
-    Column,
-    Gamma,
-    Gumbel,
-    Laplace,
+from plurel import Affine, Gamma, Gumbel, Laplace, Normal, StudentT, Table
+from plurel.columns import Column
+from plurel.graph import (
+    REDUCTIONS,
     LinearEdge,
     LookupEdge,
     MatrixEdge,
-    Normal,
     ReadEdge,
-    StudentT,
+    bin_levels,
+    level_edges,
 )
-from plurel import Node as PlanNode
-from plurel.graph import REDUCTIONS, bin_levels, level_edges
+from plurel.graph import Node as PlanNode
 from plurel.population import Grouping, Population, TableMetadata, category_order, levels, table_id
 from plurel.world.distributions import shape
 from plurel.world.schema import (
@@ -118,7 +114,7 @@ def vary_shares(authored: dict[str, list[float]], rng: np.random.Generator, *, c
 
 def compile_schema(schema: WorldSchema, rng: np.random.Generator, *, target_noise: float = 1.0,
                    share_concentration: float | None = None, entity_effect: np.random.Generator | None = None):  # fmt: skip
-    """``(plan, target)``: the schema realized as a PluRel SCM, every magnitude drawn from ``rng``
+    """``(plan, target)``: the schema realized as a plurel Table, every magnitude drawn from ``rng``
     inside the authored sign and strength class. ``target_noise`` scales the target's own noise
     (its latent's std, or an argmax target's score noise) after the draw: below 1 the target is
     closer to a function of its parents, above 1 further from one; the features are untouched.
@@ -130,7 +126,7 @@ def compile_schema(schema: WorldSchema, rng: np.random.Generator, *, target_nois
     schema.validate()
 
     order = schema.topo_order()
-    # formula columns are computed on rendered values in _render, not as SCM nodes
+    # formula columns are computed on rendered values in _render, not as Table nodes
     names = [n for n in order if n != schema.target and schema.nodes[n].formula is None
              and not schema.nodes[n].hidden] + [schema.target]  # fmt: skip
     target = schema.target
@@ -231,7 +227,7 @@ def compile_schema(schema: WorldSchema, rng: np.random.Generator, *, target_nois
             )
 
     # a node without a column (an authored hidden cause, a helper) is simulated, never observed
-    plan = SCM(table)
+    plan = Table(table)
     if schema.nodes[target].class_scores:
         plan = _calibrate_argmax(plan, target, probabilities[target], rng)
     return _fix_edges(plan, rng), target
@@ -310,7 +306,7 @@ def _joint_part(schema: WorldSchema, plan, target: str, leaf: str, rng: np.rando
         edges = tuple(float(e) for e in np.quantile(value, np.arange(1, len(named)) / len(named)))
         reading = PlanNode(ReadEdge(leaf), noise=None)
         band = Column(reading, "categorical", categories=tuple(named), binning=edges)
-        plan = SCM({**plan.table, column: band})
+        plan = Table({**plan.table, column: band})
         parts = np.asarray(named)[bin_levels(value, edges)]
     else:
         parts = frame[leaf].astype(str).to_numpy()
@@ -405,7 +401,7 @@ def _fix_edges(plan, rng: np.random.Generator):
         ]  # fmt: skip
         return replace(node, edges=tuple(reads))
 
-    return SCM({
+    return Table({
         name: replace(entry, node=fixed(entry.node), binning=edges.get(name))
         if isinstance(entry, Column) else fixed(entry)
         for name, entry in plan.table.items()
@@ -433,7 +429,7 @@ def _calibrate_argmax(plan, target: str, probabilities: list[float], rng: np.ran
             break
         biases += step
     calibrated = replace(node, bias=tuple(float(b - biases.mean()) for b in biases))
-    return SCM({**plan.table, target: replace(plan.columns[target], node=calibrated)})
+    return Table({**plan.table, target: replace(plan.columns[target], node=calibrated)})
 
 
 def _scaled_units(values: np.ndarray, lo: float, hi: float,
@@ -454,7 +450,7 @@ def _scaled_units(values: np.ndarray, lo: float, hi: float,
 
 
 # Every realization coin comes from a lane of [WORLD_DOMAIN, crc32(schema_id), seed, lane, ...], so
-# the same (schema, seed) gives the same SCM and the same row draws on any machine.
+# the same (schema, seed) gives the same Table and the same row draws on any machine.
 WORLD_DOMAIN = 0x57524C44
 _LANE_WORLD = 1
 # a grouped or joint table's choices, apart so an untransformed table draws as before

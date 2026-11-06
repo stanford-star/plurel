@@ -64,7 +64,7 @@ def realism_rules(workspace: Workspace) -> str:
     return f"{REALISM_RULES}\n{workspace.extra_rules}" if workspace.extra_rules else REALISM_RULES
 
 
-PROMPT = """You author {per_file} new world-SCM schemas for a catalog, sector `{sector}` ({sector_title}), in the worktree `{worktree}` (branch `{branch}`). You are `{agent}`. Your file, which you create: `{path}`. Its module docstring opens "{group_title}: {batch_title}." and lists the records the file holds.
+PROMPT = """You author {per_file} new world schemas for a catalog, sector `{sector}` ({sector_title}), in the worktree `{worktree}` (branch `{branch}`). You are `{agent}`. Your file, which you create: `{path}`. Its module docstring opens "{group_title}: {batch_title}." and lists the records the file holds.
 
 The sector's scope, which every schema stays inside: {scope}
 

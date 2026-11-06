@@ -6,7 +6,7 @@ import pytest
 
 from plurel.columns import Column
 from plurel.population import entity_cut, table_id
-from plurel.schema import SCM
+from plurel.schema import Table
 from plurel.world import Edge, Node, WorldSchema, compile_schema, joint_leaves, realize_world
 from plurel.world.compiler import ENTITY_EFFECT, sample_bin_probs, vary_shares
 
@@ -50,7 +50,7 @@ def with_nodes(schema=CASE, schema_id=None, **nodes):
 
 def test_a_schema_compiles_to_a_plain_plan():
     plan, target = compile_schema(CASE, np.random.default_rng(0))
-    assert isinstance(plan, SCM) and target == "outcome"
+    assert isinstance(plan, Table) and target == "outcome"
     assert all(isinstance(column, Column) for column in plan.columns.values())
     assert set(plan.columns) == set(CASE.feature_names()) | {"outcome"}
     assert "outcome.mediator_cause" in plan.nodes and "outcome.mediator_cause" not in plan.columns

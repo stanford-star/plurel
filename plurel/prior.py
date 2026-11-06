@@ -4,6 +4,7 @@ from dataclasses import dataclass, fields, replace
 import numpy as np
 
 from plurel.columns import DEFAULT_CALENDAR, Column
+from plurel.declare import ForeignKey, PrimaryKey
 from plurel.distributions import (
     Affine,
     AutoRegressive,
@@ -52,7 +53,7 @@ from plurel.layouts import (
 )
 from plurel.links import HSBMLink, Link, RandomLink, TreeLink
 from plurel.random import Seed, generator
-from plurel.schema import FK, SCM, Schema
+from plurel.schema import Schema, Table
 
 ACTIVATIONS = tuple(name for name in TRANSFORM_NAMES if name != "identity")
 WORKWEEK = (1.0,) * 5 + (0.3, 0.3)
@@ -230,7 +231,7 @@ def _warped[P](prior: P, rng: np.random.Generator) -> P:
 
 @dataclass(frozen=True)
 class TablePrior:
-    """Random single-table SCM prior.
+    """Random single-table prior.
 
     Ranges and choices are warped once per table, then drawn per use. A calendar time column
     is added only on request; a schema prior decides it by table role. Nodes standardize their
@@ -379,11 +380,11 @@ class TablePrior:
     def warp(self, rng: np.random.Generator) -> "TablePrior":
         return _warped(self, rng)
 
-    def realize(self, seed: Seed = None, *, time: bool = False) -> SCM:
+    def realize(self, seed: Seed = None, *, time: bool = False) -> Table:
         rng = generator(seed)
         return self.warp(rng).build(rng, time=time)
 
-    def build(self, rng: np.random.Generator, time: bool) -> SCM:
+    def build(self, rng: np.random.Generator, time: bool) -> Table:
         n = self.node_count.draw(rng)
         parents = self.node_layouts.draw(rng).sample(n, rng)
         categorical = rng.random(n) < self.node_categorical_share.draw(rng)
@@ -406,7 +407,7 @@ class TablePrior:
             f"n{i}": self.node(parents[i], ops[i], dims, i, categorical, rng, time)
             for i in range(n)
         }
-        columns = {"id": Column(kind="key")}
+        columns = {"id": PrimaryKey()}
         order = rng.permutation(n)
         observed = rng.integers(1, n + 1)
         slots = self.slots(order[:observed], dims, categorical, rng)
@@ -422,7 +423,7 @@ class TablePrior:
             columns[f"col{c}"] = self.column(i, slot, dims[i], categorical[i], missing, rng)
         if time:
             columns["time"] = Column(Node(noise=self.time_calendars.draw(rng)), "timestamp")
-        return SCM({**nodes, **columns}, time_column="time" if time else None)
+        return Table({**nodes, **columns}, time_column="time" if time else None)
 
     def node(
         self,
@@ -512,7 +513,7 @@ class TablePrior:
 
 
 def _wire(
-    scm: SCM,
+    scm: Table,
     prior: TablePrior,
     crossings: dict[str, tuple[Edge, ...]],
     tails: Mapping[str, tuple[Hashable, int]],
@@ -538,7 +539,7 @@ def _wire(
     return chosen
 
 
-def _downstream(scm: SCM, readers: list[str]) -> set[str]:
+def _downstream(scm: Table, readers: list[str]) -> set[str]:
     """The readers and every node below them in the table's DAG."""
     below = set(readers)
     for node in scm.order:
@@ -569,7 +570,7 @@ class SchemaPrior:
     Attributes:
         table_count: Tables in the database.
         table_layouts: DAG generator for the table graph.
-        table_prior: Prior of every table's SCM.
+        table_prior: Prior of every table.
         entity_row_count: Rows of a table that other tables reference.
         activity_row_count: Rows of a table nothing references.
         link_level_count: Cluster levels of an HSBM link.
@@ -643,7 +644,7 @@ class SchemaPrior:
         static = {parent for parents in references.values() for parent in parents}
         priors = {name: self.table_prior.warp(rng) for name in names}
         tables = {name: priors[name].build(rng, time=name not in static) for name in names}
-        keys: dict[str, dict[str, FK]] = {name: {} for name in names}
+        keys: dict[str, dict[str, ForeignKey]] = {name: {} for name in names}
         for name in names:
             for parent in references[name]:
                 keys[name][f"{parent}_id"] = self.fkey(parent, rng)
@@ -670,7 +671,7 @@ class SchemaPrior:
         for name in names:
             if name in static and rng.random() < self.self_reference_share.draw(rng):
                 link = TreeLink(self.self_reference_root_share.draw(rng))
-                keys[name]["parent_id"] = FK(name, link, fill=0.0)
+                keys[name]["parent_id"] = ForeignKey(name, link, fill=0.0)
                 scm = tables[name]
                 roots = [
                     n for n in scm.hidden if not scm.nodes[n].parents and n not in tainted[name]
@@ -681,7 +682,7 @@ class SchemaPrior:
                 _wire(scm, priors[name], crossings[name], tails, count, rng, readers)
         return Schema(
             {
-                name: SCM(
+                name: Table(
                     {
                         **scm.table,
                         **{
@@ -729,10 +730,10 @@ class SchemaPrior:
             inactive=self.link_inactive_share.draw(rng),
         )
 
-    def fkey(self, parent: str, rng: np.random.Generator) -> FK:
+    def fkey(self, parent: str, rng: np.random.Generator) -> ForeignKey:
         nullable = (
             self.fk_nullable_rate.draw(rng)
             if rng.random() < self.fk_nullable_share.draw(rng)
             else 0.0
         )
-        return FK(parent, self.link(rng), nullable=nullable, fill=0.0)
+        return ForeignKey(parent, self.link(rng), nullable=nullable, fill=0.0)

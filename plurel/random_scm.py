@@ -10,9 +10,9 @@ import numpy as np
 
 from plurel.population import Population, TableMetadata, category_order, table_id
 from plurel.prior import IntegersRange, TablePrior
-from plurel.schema import SCM
+from plurel.schema import Table
 
-# Every coin comes from a lane of [RANDOM_DOMAIN, seed, lane, ...], so a seed gives the same SCM and
+# Every coin comes from a lane of [RANDOM_DOMAIN, seed, lane, ...], so a seed gives the same Table and
 # the same row draws anywhere.
 RANDOM_DOMAIN = 0x524E444D
 _LANE_WORLD = 1
@@ -43,7 +43,7 @@ def realize_random(seed: int, *, columns: int | tuple[int, int] | None = None) -
         target = str(rng.choice(candidates))
         # a label is never blank: the target keeps every row the prior would have hidden
         observed[target] = replace(observed[target], missing=0.0)
-        plan = SCM(
+        plan = Table(
             {**{n: e for n, e in drawn.table.items() if n != "id"}, target: observed[target]}
         )
         features = [name for name in observed if name != target]

@@ -19,7 +19,7 @@ ENTITY_CODES = 26 * 100_000  # an entity's id is a letter and five digits
 class TableMetadata:
     """The schema and semantics of a table. ``feature_names``/``feature_types`` are in feature order
     (types are ``"numeric"``/``"categorical"``); ``target`` is ``None`` until a label column is
-    chosen; ``plan`` is a synthetic table's plurel SCM (``None`` on real ones)."""
+    chosen; ``plan`` is a synthetic table's plurel Table (``None`` on real ones)."""
 
     feature_names: list[str]
     feature_types: list[str]
@@ -168,7 +168,7 @@ class Population:
 
     @property
     def plan(self):
-        """The plurel SCM the table is realized from."""
+        """The plurel Table the table is realized from."""
         return self.metadata.plan
 
     @property

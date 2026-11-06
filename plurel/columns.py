@@ -1,13 +1,13 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
 import pandas as pd
 
 from plurel.distributions import Calendar, Distribution
-from plurel.graph import Node, bin_levels, level_edges
+from plurel.graph import Node, bin_levels, level_edges, standardize
 
-Kind = Literal["numeric", "categorical", "timestamp", "key"]
+Kind = Literal["numeric", "categorical", "timestamp"]
 
 DEFAULT_CALENDAR = Calendar(pd.Timestamp("1990-01-01"), pd.Timestamp("2025-01-01"))
 
@@ -30,26 +30,26 @@ class Column:
     binning: tuple[float, ...] | None = None
     marginal: Distribution | None = None
     missing: float | str = 0.0
+    clip: tuple[float, float] | None = None
+    round: float | None = None
+    values: pd.Series | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if self.kind is None:
             kind = "categorical" if self.categories is not None else "numeric"
             object.__setattr__(self, "kind", kind)
-        if self.kind not in ("numeric", "categorical", "timestamp", "key"):
+        if self.kind not in ("numeric", "categorical", "timestamp"):
             raise ValueError(f"unknown column kind {self.kind!r}")
-        if self.kind == "key":
-            options = (
-                self.node,
-                self.categories,
-                self.probabilities,
-                self.binning,
-                self.marginal,
-            )
-            if any(option is not None for option in options) or self.missing:
-                raise ValueError("a key column has no node and no options")
-            return
+        if self.kind != "numeric" and (self.clip, self.round) != (None, None):
+            raise ValueError("clip and round are for numeric columns")
+        if self.clip is not None and self.clip[0] >= self.clip[1]:
+            raise ValueError("clip is a low and a higher high")
+        if self.round is not None and self.round <= 0.0:
+            raise ValueError("round is a positive quantum")
         if not isinstance(self.node, Node):
             raise ValueError("a column holds its node")
+        if self.values is not None:
+            return
         if not isinstance(self.missing, str) and not 0.0 <= self.missing < 1.0:
             raise ValueError("missing must be a rate in [0, 1) or the name of a two-class node")
         if self.kind != "categorical":
@@ -89,17 +89,30 @@ class Column:
             return ()
         return self.probabilities or (1.0 / len(self.categories),) * len(self.categories)
 
+    @property
+    def real_latent(self) -> np.ndarray:
+        """Given values as a latent: a level's index, or a standardized rank with a blank at zero."""
+        if self.kind == "categorical":
+            codes = pd.Categorical(self.values, list(self.categories)).codes
+            return codes.astype(float)[:, None]
+        ranks = standardize(self.values.rank().to_numpy(dtype=float)[:, None])
+        return np.nan_to_num(ranks)
+
     def observe(
         self, name: str, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
     ) -> pd.Series:
-        if self.kind == "key":
-            return pd.Series(np.arange(n))
+        if self.values is not None:
+            return self.values
         latent = latents[name]
         if self.kind == "categorical":
             observed = pd.Categorical.from_codes(self.codes(latent), list(self.categories))
         else:
             flat = latent[:, 0]
             observed = rank_map(flat, self.marginal, rng) if self.marginal else flat
+            if self.round is not None:
+                observed = np.round(observed / self.round) * self.round
+            if self.clip is not None:
+                observed = np.clip(observed, *self.clip)
             if self.kind == "timestamp":
                 observed = pd.to_datetime(observed, unit="s").as_unit("ns")
         series = pd.Series(observed)
