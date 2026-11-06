@@ -45,7 +45,7 @@ class Column:
         if self.clip is not None and self.clip[0] >= self.clip[1]:
             raise ValueError("clip is a low and a higher high")
         if self.round is not None and self.round <= 0.0:
-            raise ValueError("round is a positive quantum")
+            raise ValueError("round is a positive step: 1 for whole numbers, 0.01 for cents")
         if not isinstance(self.node, Node):
             raise ValueError("a column holds its node")
         if self.values is not None:

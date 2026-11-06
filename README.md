@@ -66,7 +66,8 @@ customers = Table({
     "segment": Categorical({"bronze": 0.6, "silver": 0.3, "gold": 0.1}, causes={"age": 1.0}),
     "spend": Numeric(LogNormal(3, 0.5), causes={"age": 0.8, "segment": {"gold": 1.5}}, missing=0.05),
 })
-frame = customers.sample(500, seed=0)
+frame = customers.sample(500, seed=0)  # a DataFrame; hidden causes are not in it
+frame.to_csv("customers.csv", index=False)
 ```
 
 | Column | Holds |
@@ -90,7 +91,11 @@ A column adds up its causes' effects and puts them on a unit scale, then adds `n
 standard deviation, 0.5 by default, so a smaller `noise` follows the causes more closely. The rows
 then take the `marginal`'s values in that order, which means a column holds its marginal whatever
 its causes. A categorical column cuts the same order at its shares, so a positive weight pushes rows
-toward its later levels. A `Numeric` without a marginal is the weighted sum itself, plus the noise.
+toward its later levels. A `Numeric` without a marginal is the weighted sum itself, plus the noise,
+as floats.
+
+`round` is a step: `round=1` gives whole numbers and `round=0.01` cents. `clip=(lo, hi)` caps the
+values. `Timestamp`'s `end` is exclusive.
 
 Sampling is deterministic in the seed.
 
@@ -112,7 +117,7 @@ orders = Table(
     time_column="time",
 )
 schema = Schema({"customers": customers, "orders": orders})
-frames = schema.sample({"customers": 500, "orders": 5000}, seed=0)
+frames = schema.sample({"customers": 500, "orders": 5000}, seed=0)  # a dict of DataFrames by table
 ```
 
 `link` says how rows pick their parent: `RandomLink()` by default, `HSBMLink(popularity=Pareto(2.5))`
@@ -193,7 +198,9 @@ write_database(
 ### Draw random tables and databases
 
 `TablePrior` and `SchemaPrior` draw whole tables and databases. Every knob is a `Range` or a
-`Choices`, and their docstrings list them all.
+`Choices`, and their docstrings list them all. By default a database has 2 to 20 tables
+(`table_count`), 500 to 1,000 rows per entity table (`entity_row_count`) and 10,000 to 30,000 per
+event table (`activity_row_count`).
 
 ```python
 from plurel import IntegersRange, LogIntegersRange, SchemaPrior, TablePrior
