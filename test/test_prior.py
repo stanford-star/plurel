@@ -23,6 +23,7 @@ from plurel.graph import (
     Foreign,
     LookupEdge,
     NearestEdge,
+    ReadEdge,
     Summary,
 )
 from plurel.io import create_database
@@ -89,7 +90,7 @@ def test_table_prior_realizes_valid_diverse_tables():
                 assert node.dim == sum(scm.nodes[p].dim for p in node.parents)
             else:
                 assert 1 <= node.dim <= 10
-            families.update(type(edge) for edge in node.edges if not node.reads)
+            families.update(type(edge) for edge in node.edges if not isinstance(edge, ReadEdge))
             ops.add(node.op)
             if not node.parents and not node.onehot and name != "time":
                 noises.add(type(node.noise))
@@ -175,7 +176,9 @@ def test_table_prior_columns_read_the_hidden_blocks():
         for name, column in scm.columns.items():
             if column.kind == "key" or name == "time":
                 continue
-            assert column.node.reads and column.node.parents[0] in scm.hidden
+            assert (
+                isinstance(column.node.edges[0], ReadEdge) and column.node.parents[0] in scm.hidden
+            )
             block, edge = latents[column.node.parents[0]], column.node.edges[0]
             read = block if edge.slot is None else block[:, [edge.slot]]
             np.testing.assert_array_equal(latents[name], read)

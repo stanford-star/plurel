@@ -126,6 +126,23 @@ def test_a_summary_never_reads_a_table_with_a_time_column():
         Schema({"p": parent, "c": child})
 
 
+def test_a_summary_never_reads_through_a_key_to_a_timed_table():
+    timed = SCM(
+        {"id": Column(kind="key"), "t": Column(Node(noise=DEFAULT_CALENDAR), "timestamp")},
+        time_column="t",
+    )
+    middle = SCM({"id": Column(kind="key"), "e": FK("timed"), "x": Node()})
+    parent = SCM(
+        {
+            "id": Column(kind="key"),
+            "n": Node(LinearEdge(Summary("c", "k", "x", "count")), noise=None),
+        }
+    )
+    child = SCM({"k": FK("p"), "m": FK("middle"), "x": Node()})
+    with pytest.raises(ValueError, match="later events"):
+        Schema({"p": parent, "c": child, "middle": middle, "timed": timed})
+
+
 def test_held_values_name_known_tables_and_nodes():
     schema = Schema({"t": SCM({"x": Node()})})
     with pytest.raises(ValueError, match="unknown table"):

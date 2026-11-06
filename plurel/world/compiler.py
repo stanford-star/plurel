@@ -285,6 +285,8 @@ def joint_leaves(schema: WorldSchema) -> list[str]:
     one never blank, as its level is the label's, while a numeric one is cut into bands of its value, which no blank
     or recording artifact reaches. Both parts are effects of the features, so the joint label is too; an isolated
     root would add a part no column predicts."""
+    if schema.nodes[schema.target].kind != "categorical":
+        return []
     children, n = schema.children(), len(schema.levels[schema.target])
     lo, hi = JOINT_CLASSES
     return [
@@ -436,12 +438,13 @@ def _calibrate_argmax(plan, target: str, probabilities: list[float], rng: np.ran
 
 def _scaled_units(values: np.ndarray, lo: float, hi: float,
                   integer_valued: bool = False) -> np.ndarray:  # fmt: skip
-    """Monotone affine of ``values`` onto the authored ``(lo, hi)``, rounded to ~1/500 of the span
-    and clipped inside the envelope. Integer-valued draws round to integers only when ``lo`` and
+    """Monotone affine of ``values`` onto the authored ``(lo, hi)``, its central 99% across the whole
+    range so that one outlier does not squeeze the rest, rounded to ~1/500 of the span and clipped
+    inside the envelope. Integer-valued draws round to integers only when ``lo`` and
     ``hi`` are both integers."""
     v = values.astype(np.float64)
-    vlo, vhi = float(np.min(v)), float(np.max(v))
-    unit = (v - vlo) / (vhi - vlo if vhi > vlo else 1.0)
+    vlo, vhi = (float(q) for q in np.quantile(v, [0.005, 0.995]))
+    unit = np.clip((v - vlo) / (vhi - vlo if vhi > vlo else 1.0), 0.0, 1.0)
     out = lo + unit * (hi - lo)
     if integer_valued and float(lo).is_integer() and float(hi).is_integer():
         return np.round(out).astype(np.float32)

@@ -82,6 +82,16 @@ def test_categorical_columns_bin_a_latent_or_read_a_one_hot_node(latent):
             Column(Node(dim=3), categories=CATEGORIES, **options)
 
 
+def test_quantile_levels_need_more_than_one_row():
+    column = Column(NODE, categories=CATEGORIES)
+    with pytest.raises(ValueError, match="at least two"):
+        observe(column, np.zeros((1, 1)))
+    assert not len(observe(column, np.zeros((0, 1))))
+    assert list(
+        observe(Column(NODE, categories=CATEGORIES, binning=(0.0, 1.0)), np.zeros((1, 1)))
+    ) == ["low"]
+
+
 def test_calendar_marginals_give_timestamps_in_latent_order(latent):
     stamps = observe(Column(NODE, "timestamp", marginal=DEFAULT_CALENDAR), latent)
     assert stamps.dtype == "datetime64[ns]"

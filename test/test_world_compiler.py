@@ -71,10 +71,10 @@ def test_the_draws_are_pinned():
     """A change that moves a realization's rows must say so here."""
     frame = realize_world(CASE, 3, target_noise=0.25, share_concentration=100.0).rows(200, 0)
     digest = hashlib.sha256(frame.round(4).to_csv(index=False).encode()).hexdigest()[:16]
-    assert digest == "ef8839298d9692f2"
+    assert digest == "0296cf6feb889282"
     grouped = realize_world(GROUPED, 3, grouping=REPLICATES).rows(64, 0)
     digest = hashlib.sha256(grouped.round(4).to_csv(index=False).encode()).hexdigest()[:16]
-    assert digest == "e5c5900cfc8baf70"
+    assert digest == "0034260576dd1a34"
 
 
 def test_the_card_carries_the_authored_text():
@@ -334,6 +334,12 @@ def test_a_joint_target_must_be_a_joint_leaf():
     for name in ("nope", "cause"):
         with pytest.raises(ValueError, match="joint leaves"):
             realize_world(CASE, 0, joint=name)
+
+
+def test_one_outlier_does_not_squeeze_a_scale():
+    spreads = [realize_world(CASE, seed).rows(3000, 0)["cause"].std() for seed in range(20)]
+    span = CASE.nodes["cause"].scale[1] - CASE.nodes["cause"].scale[0]
+    assert min(spreads) > 0.08 * span
 
 
 def test_a_joint_part_too_rare_or_given_away_stays_out():

@@ -58,6 +58,7 @@ def random_schema(rng):
             categories=("lo", "mid", "hi"),
             probabilities=(0.2, 0.3, 0.5),
         )
+    eventful = {t for t in names if "stamp" in tables[t]}
     for i, t in enumerate(names[1:], start=1):
         parent = names[int(rng.integers(0, i))]
         link = rng.choice(
@@ -82,7 +83,9 @@ def random_schema(rng):
             tables[t]["g_c0"] = gathered
             edges = (LinearEdge("g_c0", 2.0), MatrixEdge("g_seg", np.ones((width, 1))))
             tables[t]["z"] = Column(Node(edges, noise=Normal(std=0.1)))
-        if "stamp" not in tables[t]:
+        if parent in eventful:
+            eventful.add(t)
+        if t not in eventful:
             how = str(rng.choice(["count", "sum", "mean", "max"]))
             summary = Summary(t, key, "y", how, fill=None if how in COMPLETE else 0.0)
             tables[parent][f"a_{t}"] = Column(Node(LinearEdge(summary), noise=None))

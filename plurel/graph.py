@@ -55,12 +55,15 @@ def standardize(x: np.ndarray) -> np.ndarray:
 
 
 def level_edges(latent: np.ndarray, probabilities: tuple[float, ...]) -> np.ndarray:
-    """The latent's own quantiles at the cumulative shares."""
-    return np.quantile(latent, np.cumsum(probabilities)[:-1]) if latent.size else np.array([])
+    """The latent's own quantiles at the cumulative shares; a single row has none to speak of."""
+    if latent.size == 1:
+        raise ValueError("levels are quantiles of a draw's rows: draw at least two")
+    cuts = np.clip(np.cumsum(probabilities)[:-1], 0.0, 1.0)
+    return np.quantile(latent, cuts) if latent.size else np.array([])
 
 
 def bin_levels(latent: np.ndarray, edges: np.ndarray) -> np.ndarray:
-    """Each value's level; a value on an edge takes the lower one, so ties do not skip levels."""
+    """Each value's level; a value on an edge takes the lower one."""
     return np.digitize(latent, edges, right=True)
 
 
@@ -123,8 +126,12 @@ class LookupEdge(Edge):
         if len(self.values) < 2:
             raise ValueError("at least two level values")
         _check_probabilities(self.probabilities, len(self.values))
+        if self.edges is not None and len(self.edges) != len(self.values) - 1:
+            raise ValueError("edges are one fewer than the values")
 
     def apply(self, x: np.ndarray) -> np.ndarray:
+        if x.shape[1] != 1:
+            raise ValueError("a lookup reads a one-dimensional parent")
         edges = self.edges
         if edges is None:
             edges = level_edges(x, self.probabilities or _uniform(len(self.values)))
@@ -311,15 +318,6 @@ class Node:
     @property
     def parents(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(edge.parent for edge in self.local))
-
-    @property
-    def reads(self) -> bool:
-        """Whether the node only reads its parent, so its value is its parent's."""
-        return (
-            self.noise is None
-            and len(self.edges) == len(self.local) == 1
-            and isinstance(self.edges[0], ReadEdge)
-        )
 
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, self.dim))
