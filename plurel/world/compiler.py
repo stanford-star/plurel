@@ -29,7 +29,7 @@ from plurel import (
     StudentT,
 )
 from plurel import Node as PlanNode
-from plurel.graph import REDUCTIONS
+from plurel.graph import REDUCTIONS, bin_levels, level_edges
 from plurel.population import Grouping, Population, TableMetadata, category_order, levels, table_id
 from plurel.world.distributions import shape
 from plurel.world.schema import (
@@ -139,9 +139,6 @@ def compile_schema(schema: WorldSchema, rng: np.random.Generator, *, target_nois
         lo, hi = MAGNITUDES[abs(edge.effect)]
         return float(np.sign(edge.effect)) * float(rng.uniform(lo, hi))
 
-    # nominal parents get their bin probabilities bound into their lookup terms after sampling
-    lookup_parents: set[str] = set()
-
     data_mechanisms: dict = {}
     for name in order:
         node = schema.nodes[name]
@@ -177,7 +174,6 @@ def compile_schema(schema: WorldSchema, rng: np.random.Generator, *, target_nois
                     std = float(mids.std()) or 1.0
                     strength = float(rng.uniform(*MAGNITUDES[1.0]))
                     values = tuple((mids - float(mids.mean())) / std * strength)
-                lookup_parents.add(parent)
                 data_effects.append(LookupEdge(parent, values))
                 if edge.level_slopes is not None:  # the regime: this level's extra slope of scaled
                     slopes = tuple(float(v) for v in edge.level_slopes.values())
@@ -231,10 +227,8 @@ def compile_schema(schema: WorldSchema, rng: np.random.Generator, *, target_nois
             table[name] = Column(mechanism, categories=tuple(levels[name]))
         else:
             table[name] = Column(
-                mechanism, "categorical", categories=tuple(levels[name]),
-                probabilities=tuple(probabilities[name]),
-                binning="normal" if name in lookup_parents else "empirical",
-            )  # fmt: skip
+                mechanism, categories=tuple(levels[name]), probabilities=tuple(probabilities[name])
+            )
 
     # a node without a column (an authored hidden cause, a helper) is simulated, never observed
     plan = SCM(table)
@@ -315,7 +309,7 @@ def _joint_part(schema: WorldSchema, plan, target: str, leaf: str, rng: np.rando
         reading = PlanNode(ReadEdge(leaf), noise=None)
         band = Column(reading, "categorical", categories=tuple(named), binning=edges)
         plan = SCM({**plan.table, column: band})
-        parts = np.asarray(named)[np.digitize(value, edges)]
+        parts = np.asarray(named)[bin_levels(value, edges)]
     else:
         parts = frame[leaf].astype(str).to_numpy()
     shown = sorted(set(plan.columns) - {target, leaf, column})
@@ -392,19 +386,28 @@ CALIBRATION_TOLERANCE = 0.01  # largest bias step, in noise units, at which the 
 
 
 def _fix_edges(plan, rng: np.random.Generator):
-    """The plan with every empirically binned column cut at fixed edges: the quantiles of one
-    ``CALIBRATION_ROWS`` draw of its latent at the column's cumulative shares. Later draws bin at
-    the population's cuts, so a table's shares vary with its rows and a shift moves them; a per-draw quantile would meet the authored shares in every sample instead."""
+    """The plan with every binned column cut at fixed edges, the quantiles of one
+    ``CALIBRATION_ROWS`` draw of its latent at the column's shares, and the lookups reading it cut
+    at the same edges: mechanisms read the level the column shows, whatever a draw's rows."""
     values = plan.sample_with_latents(CALIBRATION_ROWS, seed=rng)[1]
-    table = dict(plan.table)
-    for name, column in plan.columns.items():
-        if column.kind == "categorical" and column.binning == "empirical":
-            cuts = np.cumsum(column.category_probabilities)[:-1]
-            edges = tuple(
-                float(e) for e in np.quantile(np.asarray(values[name], dtype=float), cuts)
-            )
-            table[name] = replace(column, binning=edges)
-    return SCM(table)
+    edges = {
+        name: tuple(float(e) for e in level_edges(values[name], column.category_probabilities))
+        for name, column in plan.columns.items()
+        if column.kind == "categorical" and column.node.dim == 1
+    }
+
+    def fixed(node):
+        reads = [
+            replace(e, edges=edges[e.parent]) if isinstance(e, LookupEdge) and e.parent in edges else e
+            for e in node.edges
+        ]  # fmt: skip
+        return replace(node, edges=tuple(reads))
+
+    return SCM({
+        name: replace(entry, node=fixed(entry.node), binning=edges.get(name))
+        if isinstance(entry, Column) else fixed(entry)
+        for name, entry in plan.table.items()
+    })  # fmt: skip
 
 
 def _calibrate_argmax(plan, target: str, probabilities: list[float], rng: np.random.Generator):
@@ -492,6 +495,8 @@ def realize_world(schema: WorldSchema, seed: int, *, target_noise: float = 1.0,
                                   entity_effect=_lane(schema, seed, _LANE_TRANSFORM, _EFFECT) if effect else None)  # fmt: skip
     part = None
     if joint is not None:
+        if joint not in joint_leaves(schema):
+            raise ValueError(f"{joint!r} is not one of the schema's joint leaves")
         part = _joint_part(
             schema, plan, target, joint, _lane(schema, seed, _LANE_TRANSFORM, _JOINT)
         )

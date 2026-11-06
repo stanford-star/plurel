@@ -47,7 +47,7 @@ def test_a_hidden_product_node_multiplies_its_parents_and_stays_hidden():
 
 def test_a_lookup_times_a_parent_is_a_per_level_slope():
     table = {
-        "segment": Column(Node(), categories=("lo", "hi"), binning="normal"),
+        "segment": Column(Node(), categories=("lo", "hi")),
         "x": Column(Node()),
         "slope": Node(
             (LookupEdge("segment", (-1.0, 2.0), (0.5, 0.5)), LinearEdge("x")),

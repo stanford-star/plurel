@@ -17,6 +17,7 @@ from plurel.graph import (
     TreeEdge,
     apply_transform,
     bin_levels,
+    level_edges,
     standardize,
 )
 
@@ -142,7 +143,7 @@ def test_block_edges_set_the_width_and_broadcast(latents):
 
 
 def test_lookup_edges_share_the_level_binning(latents):
-    levels = bin_levels(latents["s"], PROBABILITIES)
+    levels = bin_levels(latents["s"], level_edges(latents["s"], PROBABILITIES))
     lookup = LookupEdge("s", (10.0, 20.0, 30.0), PROBABILITIES).apply(latents["s"])
     np.testing.assert_array_equal(lookup, np.asarray([10.0, 20.0, 30.0])[levels])
     assert set(np.unique(levels)) == {0, 1, 2}

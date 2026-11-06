@@ -74,7 +74,7 @@ def test_the_draws_are_pinned():
     assert digest == "ef8839298d9692f2"
     grouped = realize_world(GROUPED, 3, grouping=REPLICATES).rows(64, 0)
     digest = hashlib.sha256(grouped.round(4).to_csv(index=False).encode()).hexdigest()[:16]
-    assert digest == "879c0382257cb074"
+    assert digest == "e5c5900cfc8baf70"
 
 
 def test_the_card_carries_the_authored_text():
@@ -104,7 +104,7 @@ def test_level_shares_vary_around_the_authored_value_and_bin_at_fixed_edges():
     assert yes(population.rows(200, 0)) != yes(population.rows(200, 1))
     assert population.metadata.realization["share_concentration"] is None
     categorical = [c for c in population.plan.columns.values() if c.kind == "categorical"]
-    assert categorical and all(c.binning != "empirical" for c in categorical)
+    assert categorical and all(c.binning is not None for c in categorical)
 
 
 def test_shares_are_drawn_and_floored():
@@ -315,6 +315,25 @@ def test_rounding_stays_inside_the_scale():
     rounded = replace(CASE.nodes["cause"], scale=(0.4, 10), rounding=1)
     frame = realize_world(with_nodes(CASE, cause=rounded), 0).rows(500, 0)
     assert frame["cause"].min() >= 0.4 - 1e-6
+
+
+def test_a_category_with_a_lookup_child_keeps_its_shares_and_mechanism():
+    phase = Node(kind="categorical", levels=["a", "b"], level_probs={"a": 0.1, "b": 0.9},
+                 parents={"cause": Edge(effect=+1)}, noise_scale="low", noise_dist="gaussian", desc="a phase")  # fmt: skip
+    after = Node(kind="numeric", units="score", scale=(0, 10), parents={"phase": Edge(level_effects={"a": -1.0, "b": 1.0})},
+                 noise_scale="low", noise_dist="gaussian", desc="what follows")  # fmt: skip
+    schema = with_nodes(CASE, "phased", phase=phase, after=after)
+    for seed in range(5):
+        frame = realize_world(schema, seed).rows(4000, 0)
+        assert abs((frame["phase"] == "a").mean() - 0.1) < 0.03
+        by = frame.groupby("phase", observed=True)["after"].mean()
+        assert by["a"] < by["b"]
+
+
+def test_a_joint_target_must_be_a_joint_leaf():
+    for name in ("nope", "cause"):
+        with pytest.raises(ValueError, match="joint leaves"):
+            realize_world(CASE, 0, joint=name)
 
 
 def test_a_joint_part_too_rare_or_given_away_stays_out():

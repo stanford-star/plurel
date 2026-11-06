@@ -142,6 +142,8 @@ class Schema:
         elif isinstance(tail, Summary):
             if self.key(tail.table, tail.key).parent != table:
                 raise ValueError(f"key {tail.key!r} of {tail.table!r} does not point at {table!r}")
+            if self.tables[tail.table].time_column is not None:
+                raise ValueError(f"a summary of {tail.table!r} would read its later events")
             origin, node = tail.table, tail.node
         else:
             raise ValueError(f"{tail!r} is not a Foreign or a Summary")

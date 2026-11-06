@@ -75,8 +75,8 @@ def bound(schema):
 
 def test_table_prior_realizes_valid_diverse_tables():
     prior = TablePrior()
-    families, kinds, ops, noises, binnings, missing, calendars = (set() for _ in range(7))
-    for seed in range(40):
+    families, kinds, ops, noises, missing, calendars = (set() for _ in range(6))
+    for seed in range(120):
         time = seed % 2 == 1
         scm = prior.realize(seed, time=time)
         assert prior.realize(seed, time=time).order == scm.order
@@ -96,7 +96,6 @@ def test_table_prior_realizes_valid_diverse_tables():
                 assert time or not isinstance(node.noise, TimeSeries)
         for name, column in scm.columns.items():
             kinds.add(column.kind)
-            binnings.add(column.binning)
             missing.add(type(column.missing))
             if isinstance(column.marginal, Mixture) and column.marginal.components[0] == Normal(
                 0.0, 0.0
@@ -122,7 +121,7 @@ def test_table_prior_realizes_valid_diverse_tables():
         NegativeBinomial,
         TimeSeries,
     }
-    assert binnings == {"normal", "empirical"} and missing == {float, str}
+    assert missing == {float, str}
     assert len(calendars) > 1
 
 
@@ -190,6 +189,13 @@ def test_table_prior_columns_repeat_a_slot_only_when_none_is_left():
         blocks = [scm.nodes[n] for n in scm.hidden if n.startswith("n")]
         offered = sum(1 if block.onehot else block.dim for block in blocks)
         assert len(set(read)) == min(len(read), offered)
+
+
+def test_table_prior_columns_are_never_constant():
+    for seed in range(120):
+        frame = TablePrior().realize(seed).sample(500, seed=seed)
+        for name in frame:
+            assert frame[name].nunique() > 1, (seed, name)
 
 
 def test_table_prior_caps_concat_widths():
