@@ -215,14 +215,3 @@ class Layered:
                     kept[u, rng.integers(len(targets))] = True
             edges += [(int(sources[u]), int(targets[v])) for u, v in zip(*np.nonzero(kept))]
         return _parents(n, edges)
-
-
-LAYOUTS: dict[str, type] = {
-    "erdos_renyi": ErdosRenyi,
-    "barabasi_albert": BarabasiAlbert,
-    "random_tree": RandomTree,
-    "reverse_random_tree": ReverseRandomTree,
-    "watts_strogatz": WattsStrogatz,
-    "random_cauchy": RandomCauchy,
-    "layered": Layered,
-}

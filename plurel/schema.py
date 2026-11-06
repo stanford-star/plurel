@@ -82,11 +82,6 @@ class SCM:
             if unknown := needed - set(self.nodes):
                 raise ValueError(f"column {name!r} refers to unknown nodes {sorted(unknown)}")
         kinds = {name: column.kind for name, column in self.columns.items()}
-        for name, column in self.columns.items():
-            if column.after is not None and (
-                column.after == name or kinds.get(column.after) != "timestamp"
-            ):
-                raise ValueError(f"column {name!r} must come after another timestamp column")
         keys = [name for name, kind in kinds.items() if kind == "key"]
         if len(keys) > 1:
             raise ValueError("a table has at most one key column")
@@ -262,9 +257,6 @@ class Schema:
                 for name, column in scm.columns.items()
             }
             frame = pd.DataFrame(observed, index=range(n))
-            for name, column in scm.columns.items():
-                if column.after is not None and (frame[name] < frame[column.after]).any():
-                    raise ValueError(f"column {name!r} precedes {column.after!r} on some rows")
             for fk in self.fkeys:
                 if fk.table == table:
                     indices = links[table, fk.column]

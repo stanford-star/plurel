@@ -47,7 +47,7 @@ def random_schema(rng):
             nodes[t]["stamp"] = Node(noise=DEFAULT_CALENDAR)
             nodes[t]["later"] = Node((LinearEdge("stamp"),), noise=Exponential(3600.0))
             columns[t]["stamp"] = Column("stamp", "timestamp")
-            columns[t]["later"] = Column("later", "timestamp", after="stamp")
+            columns[t]["later"] = Column("later", "timestamp")
         terms = tuple(
             LinearEdge(root, float(rng.normal()), str(rng.choice(["identity", "tanh", "square"])))
             for root in roots

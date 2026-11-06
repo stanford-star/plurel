@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from plurel.distributions import Pareto, Uniform
-from plurel.links import LINKS, HSBMLink, Link, RandomLink, TreeLink, clusters
+from plurel.links import HSBMLink, Link, RandomLink, TreeLink, clusters
 
 EXAMPLES = {
     "random": RandomLink(),
@@ -19,8 +19,7 @@ class Weights:
         return np.resize(np.asarray(self.values, dtype=float), n)
 
 
-def test_every_registered_link_meets_the_contract():
-    assert set(EXAMPLES) == set(LINKS)
+def test_every_link_meets_the_contract():
     for name, link in EXAMPLES.items():
         assert isinstance(link, Link)
         n_parent = 1000 if name == "tree" else 400

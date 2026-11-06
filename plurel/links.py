@@ -144,10 +144,3 @@ class TreeLink:
         roots = rng.random(n_child) < self.roots
         roots[:1] = True
         return np.where(roots, -1, parents)
-
-
-LINKS: dict[str, type] = {
-    "random": RandomLink,
-    "hsbm": HSBMLink,
-    "tree": TreeLink,
-}

@@ -31,7 +31,6 @@ class Column:
     binning: Binning = "normal"
     marginal: Distribution | None = None
     missing: float | str = 0.0
-    after: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind is None:
@@ -46,7 +45,6 @@ class Column:
                 self.categories,
                 self.probabilities,
                 self.marginal,
-                self.after,
             )
             if (
                 any(option is not None for option in options)
@@ -57,8 +55,6 @@ class Column:
             return
         if not isinstance(self.missing, str) and not 0.0 <= self.missing < 1.0:
             raise ValueError("missing must be a rate in [0, 1) or the name of a two-class node")
-        if self.after is not None and self.kind != "timestamp":
-            raise ValueError("only a timestamp column comes after another")
         if self.kind != "categorical":
             if (self.categories, self.probabilities, self.binning) != (None, None, "normal"):
                 raise ValueError(

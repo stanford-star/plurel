@@ -109,32 +109,6 @@ def test_sample_observes_columns_from_one_draw(scm):
         SCM(NODES, {"c": Column("y", missing="nobody")})
 
 
-def test_declared_time_order_is_enforced_on_the_observed_table():
-    def table(delay, marginal=None):
-        return SCM(
-            {
-                "placed": Node(noise=DEFAULT_CALENDAR),
-                "shipped": Node((LinearEdge("placed"),), noise=delay),
-            },
-            {
-                "placed": Column("placed", "timestamp", marginal=marginal),
-                "shipped": Column("shipped", "timestamp", marginal=marginal, after="placed"),
-            },
-            time_column="placed",
-        )
-
-    frame = table(Exponential(3600.0)).sample(N, seed=0)
-    assert (frame["shipped"] >= frame["placed"]).all()
-    assert table(Exponential(3600.0)).timestamp_nodes == {"placed", "shipped"}
-    with pytest.raises(ValueError, match="precedes"):
-        table(Normal(std=3600.0)).sample(N, seed=0)
-    with pytest.raises(ValueError, match="precedes"):
-        table(Exponential(3600.0), marginal=DEFAULT_CALENDAR).sample(N, seed=0)
-    for after in ("nothing", "t"):
-        with pytest.raises(ValueError, match="another timestamp"):
-            SCM({"t": Node()}, {"t": Column("t", "timestamp", after=after)})
-
-
 ROWS = {"customers": 300, "orders": 2000, "employees": 150}
 EMBEDDING = np.arange(9.0).reshape(3, 3)
 

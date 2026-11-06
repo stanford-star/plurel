@@ -2,7 +2,6 @@ import numpy as np
 import pytest
 
 from plurel.layouts import (
-    LAYOUTS,
     BarabasiAlbert,
     ErdosRenyi,
     Layered,
@@ -38,8 +37,7 @@ def edges(parents):
     return sum(len(own) for own in parents)
 
 
-def test_every_registered_layout_meets_the_contract():
-    assert set(EXAMPLES) == set(LAYOUTS)
+def test_every_layout_meets_the_contract():
     for layout in EXAMPLES.values():
         assert isinstance(layout, Layout)
         for n in (0, 1, 2, 3, 12, 40):
