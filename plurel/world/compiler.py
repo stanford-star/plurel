@@ -228,10 +228,7 @@ def compile_schema(schema: WorldSchema, rng: np.random.Generator, *, target_nois
             kind = marginals[name]
             table[name] = Column(mechanism, marginal=None if kind is None else shape(kind, rng))
         elif node.class_scores:  # the mechanism emits the class
-            table[name] = Column(
-                mechanism, "categorical", categories=tuple(levels[name]),
-                probabilities=tuple(probabilities[name]),
-            )  # fmt: skip
+            table[name] = Column(mechanism, categories=tuple(levels[name]))
         else:
             table[name] = Column(
                 mechanism, "categorical", categories=tuple(levels[name]),
@@ -382,7 +379,8 @@ def _entity_nodes(plan, mode: str, labels: list[str], rng: np.random.Generator) 
             name for name, node in plan.nodes.items() if not node.parents and name != ENTITY_EFFECT
         ]
         held = {name for name in roots if rng.random() < (ROOT_SHARE if name in plan.columns else HIDDEN_ROOT_SHARE)}  # fmt: skip
-        held = held or {roots[int(rng.integers(len(roots)))]}
+        if roots and not held:
+            held = {roots[int(rng.integers(len(roots)))]}
     if ENTITY_EFFECT in plan.nodes:
         held.add(ENTITY_EFFECT)
     return tuple(name for name in plan.nodes if name in held)
@@ -577,7 +575,7 @@ def _artifacts(node: Node, values: np.ndarray, rng: np.random.Generator) -> np.n
         lo, hi = node.censor
         out = np.clip(out, -np.inf if lo is None else lo, np.inf if hi is None else hi)
     if node.rounding is not None:
-        out = np.round(out / node.rounding) * node.rounding
+        out = np.clip(np.round(out / node.rounding) * node.rounding, *node.scale)
     return out.astype(np.float32)
 
 

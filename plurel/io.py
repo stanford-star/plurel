@@ -29,7 +29,8 @@ def order_by_time(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> dict[st
             known = keys.notna().to_numpy()
             moved = keys.copy()
             moved[known] = positions[fk.parent][keys[known].to_numpy(dtype=int)]
-            frames[table] = frames[table].assign(**{column: moved})
+            frames[table] = frames[table].copy(deep=False)
+            frames[table][column] = moved
     return frames
 
 

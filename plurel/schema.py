@@ -9,7 +9,7 @@ import pandas as pd
 from plurel.columns import Column
 from plurel.graph import AGGREGATES, COMPLETE, Foreign, Node, Summary
 from plurel.links import Link, RandomLink, TreeLink
-from plurel.random import Seed, generator
+from plurel.random import Seed, generator, lane
 
 Links = dict[tuple[str, str], np.ndarray]
 
@@ -70,7 +70,9 @@ class SCM:
         self.order = topological({name: node.parents for name, node in self.nodes.items()})
         for name, column in self.columns.items():
             if isinstance(column.missing, str) and (
-                column.missing not in self.nodes or self.nodes[column.missing].dim != 2
+                column.missing not in self.nodes
+                or self.nodes[column.missing].dim != 2
+                or not self.nodes[column.missing].onehot
             ):
                 raise ValueError(f"column {name!r} needs a two-class node {column.missing!r}")
         kinds = {name: column.kind for name, column in self.columns.items()}
@@ -113,7 +115,7 @@ class Schema:
                 raise ValueError(f"foreign key {column!r} refers to unknown table {fk.parent!r}")
             if isinstance(fk.link, TreeLink) and table != fk.parent:
                 raise ValueError("a tree link needs a self-referential foreign key")
-        self.keys = dict(sorted(keys.items(), key=lambda item: item[0][0] == item[1].parent))
+        self.keys = keys
         self.crossings = {
             (table, name): node.across
             for table, scm in self.tables.items()
@@ -147,9 +149,10 @@ class Schema:
             raise ValueError(f"unknown node {origin}.{node}")
         return origin, node
 
-    def links(self, rows: Mapping[str, int], rng: np.random.Generator) -> Links:
+    def links(self, rows: Mapping[str, int], root: int) -> Links:
         links = {}
-        for ((table, column), fk), stream in zip(self.keys.items(), rng.spawn(len(self.keys))):
+        for (table, column), fk in self.keys.items():
+            stream = lane(root, "link", table, column)
             drawn = np.asarray(fk.link.sample(rows[table], rows[fk.parent], stream))
             if drawn.shape != (rows[table],) or not np.issubdtype(drawn.dtype, np.integer):
                 raise ValueError(f"link {column!r} must return one integer per child row")
@@ -199,21 +202,19 @@ class Schema:
         self,
         rows: Mapping[str, int],
         links: Links,
-        rng: np.random.Generator,
+        root: int,
         held: Mapping[str, Mapping[str, np.ndarray]],
     ) -> dict[str, dict[str, np.ndarray]]:
         """Evaluate every node of every table once, in topological order, each with its own
-        noise stream unless it only reads: a held node takes its values, any other its edges
+        noise stream: a held node takes its values, any other its edges
         plus noise."""
         latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
-        drawn = [key for key in self.order if not self.tables[key[0]].nodes[key[1]].reads]
-        streams = dict(zip(drawn, rng.spawn(len(drawn))))
         for table, name in self.order:
             node, n = self.tables[table].nodes[name], rows[table]
             if name in held.get(table, {}):
                 latents[table][name] = checked(name, node, held[table][name], n)
                 continue
-            exogenous, across = node.sample_noise(n, streams.get((table, name))), None
+            exogenous, across = node.sample_noise(n, lane(root, "noise", table, name)), None
             for edge in self.crossings.get((table, name), ()):
                 term = edge.apply(self.resolve(table, edge.parent, rows, latents, links))
                 across = term if across is None else across + term
@@ -227,14 +228,14 @@ class Schema:
         rows: Mapping[str, int],
         latents: dict[str, dict[str, np.ndarray]],
         links: Links,
-        rng: np.random.Generator,
+        root: int,
     ) -> dict[str, pd.DataFrame]:
         """Turn latents into one frame per table: its columns, then its key columns."""
         frames = {}
-        for (table, scm), stream in zip(self.tables.items(), rng.spawn(len(self.tables))):
+        for table, scm in self.tables.items():
             n = rows[table]
             observed = {
-                name: column.observe(name, latents[table], stream, n)
+                name: column.observe(name, latents[table], lane(root, "column", table, name), n)
                 for name, column in scm.columns.items()
             }
             frame = pd.DataFrame(observed, index=range(n))
@@ -268,9 +269,11 @@ class Schema:
             raise ValueError("rows must give a non-negative count for every table")
         held = dict(held or {})
         for table, nodes in held.items():
+            if table not in self.tables:
+                raise ValueError(f"held values for unknown table {table!r}")
             if unknown := set(nodes) - set(self.tables[table].nodes):
                 raise ValueError(f"held values for unknown nodes {sorted(unknown)} of {table!r}")
-        linking, noise, observation = generator(seed).spawn(3)
-        links = self.links(rows, linking)
-        latents = self.propagate(rows, links, noise, held)
-        return self.observe(rows, latents, links, observation), latents
+        root = int(generator(seed).integers(2**63))
+        links = self.links(rows, root)
+        latents = self.propagate(rows, links, root, held)
+        return self.observe(rows, latents, links, root), latents

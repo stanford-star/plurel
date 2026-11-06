@@ -71,10 +71,10 @@ def test_the_draws_are_pinned():
     """A change that moves a realization's rows must say so here."""
     frame = realize_world(CASE, 3, target_noise=0.25, share_concentration=100.0).rows(200, 0)
     digest = hashlib.sha256(frame.round(4).to_csv(index=False).encode()).hexdigest()[:16]
-    assert digest == "2f0bc4a45d21a359"
+    assert digest == "ef8839298d9692f2"
     grouped = realize_world(GROUPED, 3, grouping=REPLICATES).rows(64, 0)
     digest = hashlib.sha256(grouped.round(4).to_csv(index=False).encode()).hexdigest()[:16]
-    assert digest == "632e62d918043948"
+    assert digest == "879c0382257cb074"
 
 
 def test_the_card_carries_the_authored_text():
@@ -309,6 +309,12 @@ def test_a_single_row_has_no_scale_to_render_on():
     with pytest.raises(ValueError, match="at least two"):
         population.rows(1, 0)
     assert len(population.rows(2, 0)) == 2
+
+
+def test_rounding_stays_inside_the_scale():
+    rounded = replace(CASE.nodes["cause"], scale=(0.4, 10), rounding=1)
+    frame = realize_world(with_nodes(CASE, cause=rounded), 0).rows(500, 0)
+    assert frame["cause"].min() >= 0.4 - 1e-6
 
 
 def test_a_joint_part_too_rare_or_given_away_stays_out():
