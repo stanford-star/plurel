@@ -1,7 +1,6 @@
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
 from functools import reduce
-from statistics import NormalDist
 
 import numpy as np
 
@@ -55,13 +54,17 @@ def standardize(x: np.ndarray) -> np.ndarray:
     return centered / np.where(deviation > 0.0, deviation, 1.0)
 
 
-def _normal_edges(probabilities: tuple[float, ...]) -> np.ndarray:
-    cuts = np.cumsum(probabilities)[:-1]
-    return np.asarray([NormalDist().inv_cdf(float(np.clip(c, 1e-6, 1 - 1e-6))) for c in cuts])
+def level_edges(latent: np.ndarray, probabilities: tuple[float, ...]) -> np.ndarray:
+    """The latent's own quantiles at the cumulative shares; a single row has none to speak of."""
+    if latent.size == 1:
+        raise ValueError("levels are quantiles of a draw's rows: draw at least two")
+    cuts = np.clip(np.cumsum(probabilities)[:-1], 0.0, 1.0)
+    return np.quantile(latent, cuts) if latent.size else np.array([])
 
 
-def bin_levels(latent: np.ndarray, probabilities: tuple[float, ...]) -> np.ndarray:
-    return np.digitize(latent, _normal_edges(probabilities))
+def bin_levels(latent: np.ndarray, edges: np.ndarray) -> np.ndarray:
+    """Each value's level; a value on an edge takes the lower one."""
+    return np.digitize(latent, edges, right=True)
 
 
 def _check_probabilities(probabilities: tuple[float, ...] | None, size: int) -> None:
@@ -117,15 +120,22 @@ class ReadEdge(Edge):
 class LookupEdge(Edge):
     values: tuple[float, ...]
     probabilities: tuple[float, ...] | None = None
+    edges: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
         if len(self.values) < 2:
             raise ValueError("at least two level values")
         _check_probabilities(self.probabilities, len(self.values))
+        if self.edges is not None and len(self.edges) != len(self.values) - 1:
+            raise ValueError("edges are one fewer than the values")
 
     def apply(self, x: np.ndarray) -> np.ndarray:
-        probabilities = self.probabilities or _uniform(len(self.values))
-        return np.asarray(self.values)[bin_levels(x, probabilities)]
+        if x.shape[1] != 1:
+            raise ValueError("a lookup reads a one-dimensional parent")
+        edges = self.edges
+        if edges is None:
+            edges = level_edges(x, self.probabilities or _uniform(len(self.values)))
+        return np.asarray(self.values)[bin_levels(x, edges)]
 
 
 @dataclass(frozen=True)
@@ -308,15 +318,6 @@ class Node:
     @property
     def parents(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(edge.parent for edge in self.local))
-
-    @property
-    def reads(self) -> bool:
-        """Whether the node only reads its parent, so its value is its parent's."""
-        return (
-            self.noise is None
-            and len(self.edges) == len(self.local) == 1
-            and isinstance(self.edges[0], ReadEdge)
-        )
 
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, self.dim))

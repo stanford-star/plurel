@@ -49,10 +49,9 @@ def test_numeric_columns_pass_through_or_rank_map_onto_the_marginal(latent):
     reference = np.sort(Uniform(-1.0, 1.0).sample(N, np.random.default_rng(1)))
     np.testing.assert_array_equal(np.sort(uniform.to_numpy()), reference)
     assert rank_map(np.arange(4.0), Poisson(3.0), np.random.default_rng(0)).dtype == float
-    discrete = rank_map(np.repeat([0.0, 0.0, 0.0, 1.0], 500), Uniform(), np.random.default_rng(0))
-    assert 0.3 < discrete[0] < 0.45
-    tied = rank_map(np.array([2.0, 0.0, 2.0, 1.0]), Uniform(), np.random.default_rng(0))
-    assert tied[0] == tied[2] and tied[1] < tied[3] < tied[0]
+    discrete = rank_map(np.repeat([0.0, 1.0], [900, 100]), Uniform(), np.random.default_rng(0))
+    assert np.unique(discrete).size == 1000 and abs(discrete[:900].mean() - 0.45) < 0.05
+    assert discrete[900:].min() > discrete[:900].max()
     for kind in ("numeric", "timestamp"):
         with pytest.raises(ValueError, match="one-dimensional"):
             Column(Node(dim=3), kind)
@@ -64,11 +63,13 @@ def test_categorical_columns_bin_a_latent_or_read_a_one_hot_node(latent):
     assert observed.dtype == "category" and list(observed.cat.categories) == list(CATEGORIES)
     shares = observed.value_counts(normalize=True)
     assert all(abs(shares[c] - p) < 0.04 for c, p in zip(CATEGORIES, PROBABILITIES))
-    empirical = Column(
-        NODE, "categorical", categories=(0, 1, 2), probabilities=PROBABILITIES, binning="empirical"
-    )
-    counts = observe(empirical, latent).value_counts()
+    coded = Column(NODE, "categorical", categories=(0, 1, 2), probabilities=PROBABILITIES)
+    counts = observe(coded, latent).value_counts()
     assert counts.index.categories.dtype == np.int64 and abs(counts[0] - 0.2 * N) <= 1
+    far = observe(normal, 100.0 + 50.0 * latent).value_counts(normalize=True)
+    assert all(abs(far[c] - p) < 0.01 for c, p in zip(CATEGORIES, PROBABILITIES))
+    ties = observe(coded, np.repeat([0.0, 1.0], [int(0.9 * N), N - int(0.9 * N)])[:, None])
+    assert ties.nunique() > 1
     fixed = Column(NODE, "categorical", categories=CATEGORIES, binning=(-10.0, 10.0))
     assert set(observe(fixed, latent)) == {"mid"}
     one_hot = np.eye(3)[np.arange(N) % 3]
@@ -79,6 +80,16 @@ def test_categorical_columns_bin_a_latent_or_read_a_one_hot_node(latent):
     for options in ({"probabilities": PROBABILITIES}, {"binning": "empirical"}):
         with pytest.raises(ValueError, match="sets its own shares"):
             Column(Node(dim=3), categories=CATEGORIES, **options)
+
+
+def test_quantile_levels_need_more_than_one_row():
+    column = Column(NODE, categories=CATEGORIES)
+    with pytest.raises(ValueError, match="at least two"):
+        observe(column, np.zeros((1, 1)))
+    assert not len(observe(column, np.zeros((0, 1))))
+    assert list(
+        observe(Column(NODE, categories=CATEGORIES, binning=(0.0, 1.0)), np.zeros((1, 1)))
+    ) == ["low"]
 
 
 def test_calendar_marginals_give_timestamps_in_latent_order(latent):

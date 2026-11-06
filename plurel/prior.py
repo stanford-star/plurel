@@ -277,7 +277,6 @@ class TablePrior:
             gives outliers.
         column_binned_share: Share of the numeric columns that are binned into categories instead.
         column_bin_count: Categories of a binned column.
-        column_binning: Bin edges of a binned column: normal quantiles or the latent's own.
         column_missing_rate: Missing rate of a column that has missingness.
         column_missing_share: Share of the columns that have missingness.
         column_missing_structured_share: Share of those columns that are missing where an
@@ -368,7 +367,6 @@ class TablePrior:
     )
     column_binned_share: Range = Range(0.0, 0.4)
     column_bin_count: Range = IntegersRange(2, 10)
-    column_binning: Choices = Choices(("normal", "empirical"))
     column_missing_rate: Range = Range(0.01, 0.1)
     column_missing_share: Range = Range(0.0, 0.6)
     column_missing_structured_share: Range = Range(0.0, 1.0)
@@ -508,7 +506,6 @@ class TablePrior:
                 "categorical",
                 categories=categories,
                 probabilities=probabilities,
-                binning=self.column_binning.draw(rng),
                 missing=missing,
             )
         return Column(node, marginal=self.column_marginals.draw(rng), missing=missing)

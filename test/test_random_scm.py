@@ -35,15 +35,15 @@ def test_the_column_count_is_pinned_or_bounded():
 
 def test_the_draws_are_pinned():
     """A change that moves the prior's draws must say so here."""
-    assert digest(realize_random(0, columns=8).rows(200, 0)) == "9755e31bd52c5672"
-    assert digest(realize_random(1, columns=(3, 24)).rows(200, 0)) == "1ee699a7e2618526"
-    assert digest(realize_random(7, columns=12).rows(200, 0)) == "b5b2d910497c541f"
+    assert digest(realize_random(0, columns=8).rows(200, 0)) == "1476fea3cf607144"
+    assert digest(realize_random(1, columns=(3, 24)).rows(200, 0)) == "ff15a7f8f150fb8f"
+    assert digest(realize_random(7, columns=12).rows(200, 0)) == "ae2954cd4fea5875"
 
 
 def test_the_prior_caps_a_concat_node_at_128_wide(monkeypatch):
-    """Concat widths compound through the DAG: this seed is 226 wide without the cap, and keeps its
+    """Concat widths compound through the DAG: this seed is 205 wide without the cap, and keeps its
     narrower concat nodes with it."""
-    seed = 2991418007096968182
+    seed = 37
     capped = realize_random(seed, columns=(4, 24)).plan.nodes.values()
     assert max(node.dim for node in capped if not node.onehot) <= 128
     assert max(node.dim for node in capped if node.op == "concat") > 64

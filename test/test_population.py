@@ -47,7 +47,7 @@ def test_a_hidden_product_node_multiplies_its_parents_and_stays_hidden():
 
 def test_a_lookup_times_a_parent_is_a_per_level_slope():
     table = {
-        "segment": Column(Node(), categories=("lo", "hi"), binning="normal"),
+        "segment": Column(Node(), categories=("lo", "hi")),
         "x": Column(Node()),
         "slope": Node(
             (LookupEdge("segment", (-1.0, 2.0), (0.5, 0.5)), LinearEdge("x")),
@@ -112,6 +112,21 @@ def test_a_column_reading_a_held_node_records_its_entitys_value():
     noisy = Grouping("shared_causes", ("u",), rows=50.0, spread=0.0, measurement=0.5, column=None)
     frame, entities, _ = noisy.draw(plan, 100, np.random.default_rng(0))
     assert frame.groupby(entities)["x"].nunique().max() > 1
+
+
+def test_a_noiseless_column_of_held_nodes_records_its_entitys_value():
+    plan = SCM(
+        {
+            "h": Node(),
+            "x": Column(Node(LinearEdge("h"), noise=None), marginal=Uniform()),
+            "raw": Column(Node()),
+        }
+    )
+    grouping = Grouping(
+        "shared_causes", ("h",), rows=30.0, spread=0.0, measurement=0.0, column=None
+    )
+    frame, entities, _ = grouping.draw(plan, 300, np.random.default_rng(0))
+    assert frame.groupby(entities)["x"].nunique().max() == 1
 
 
 def test_a_noisy_reading_keeps_the_columns_blanks():

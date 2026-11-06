@@ -5,20 +5,20 @@ import numpy as np
 import pandas as pd
 
 from plurel.distributions import Calendar, Distribution
-from plurel.graph import Node, bin_levels
+from plurel.graph import Node, bin_levels, level_edges
 
 Kind = Literal["numeric", "categorical", "timestamp", "key"]
-Binning = Literal["normal", "empirical"] | tuple[float, ...]
 
 DEFAULT_CALENDAR = Calendar(pd.Timestamp("1990-01-01"), pd.Timestamp("2025-01-01"))
 
 
 def rank_map(latent: np.ndarray, marginal: Distribution, rng: np.random.Generator) -> np.ndarray:
-    """The marginal's values in the latent's order; tied latents share their middle rank."""
-    reference = np.sort(marginal.sample(len(latent), rng)).astype(float)
-    ordered = np.sort(latent)
-    first = np.searchsorted(ordered, latent, side="left")
-    return reference[(first + np.searchsorted(ordered, latent, side="right") - 1) // 2]
+    """The marginal's values in the latent's order, ties broken at random, so a column holds
+    exactly its draw of the marginal."""
+    out = np.empty(len(latent))
+    reference = np.sort(marginal.sample(len(latent), rng))
+    out[np.lexsort((rng.random(len(latent)), latent))] = reference
+    return out
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ class Column:
     kind: Kind | None = None
     categories: tuple[object, ...] | None = None
     probabilities: tuple[float, ...] | None = None
-    binning: Binning = "normal"
+    binning: tuple[float, ...] | None = None
     marginal: Distribution | None = None
     missing: float | str = 0.0
 
@@ -42,13 +42,10 @@ class Column:
                 self.node,
                 self.categories,
                 self.probabilities,
+                self.binning,
                 self.marginal,
             )
-            if (
-                any(option is not None for option in options)
-                or self.missing
-                or self.binning != "normal"
-            ):
+            if any(option is not None for option in options) or self.missing:
                 raise ValueError("a key column has no node and no options")
             return
         if not isinstance(self.node, Node):
@@ -56,7 +53,7 @@ class Column:
         if not isinstance(self.missing, str) and not 0.0 <= self.missing < 1.0:
             raise ValueError("missing must be a rate in [0, 1) or the name of a two-class node")
         if self.kind != "categorical":
-            if (self.categories, self.probabilities, self.binning) != (None, None, "normal"):
+            if (self.categories, self.probabilities, self.binning) != (None, None, None):
                 raise ValueError(
                     "categories, probabilities and binning are for categorical columns"
                 )
@@ -73,20 +70,18 @@ class Column:
             raise ValueError("categorical columns need at least two distinct categories")
         if self.node.dim not in (1, len(self.categories)):
             raise ValueError("a categorical column needs one dimension or one per category")
-        if self.node.dim > 1 and (self.probabilities is not None or self.binning != "normal"):
+        if self.node.dim > 1 and (self.probabilities is not None or self.binning is not None):
             raise ValueError("a one-hot node sets its own shares: no probabilities or binning")
         probabilities = self.category_probabilities
         if len(probabilities) != len(self.categories):
             raise ValueError("one probability per category")
         if min(probabilities) <= 0 or not np.isclose(sum(probabilities), 1.0):
             raise ValueError("probabilities must be positive and sum to one")
-        if isinstance(self.binning, tuple):
-            if len(self.binning) != len(self.categories) - 1 or list(self.binning) != sorted(
-                self.binning
-            ):
-                raise ValueError("edges are one fewer than the categories, ascending")
-        elif self.binning not in ("normal", "empirical"):
-            raise ValueError(f"unknown binning {self.binning!r}")
+        if self.binning is not None and (
+            len(self.binning) != len(self.categories) - 1
+            or list(self.binning) != sorted(self.binning)
+        ):
+            raise ValueError("edges are one fewer than the categories, ascending")
 
     @property
     def category_probabilities(self) -> tuple[float, ...]:
@@ -116,11 +111,7 @@ class Column:
         if latent.shape[1] > 1:
             return np.where((latent != 0).any(1), latent.argmax(1), -1)
         flat = latent[:, 0]
-        if not len(flat):
-            return np.empty(0, dtype=int)
-        if isinstance(self.binning, tuple):
-            return np.digitize(flat, self.binning)
-        if self.binning == "empirical":
-            cuts = np.cumsum(self.category_probabilities)[:-1]
-            return np.digitize(flat, np.quantile(flat, cuts))
-        return bin_levels(flat, self.category_probabilities)
+        edges = self.binning
+        if edges is None:
+            edges = level_edges(flat, self.category_probabilities)
+        return bin_levels(flat, edges)

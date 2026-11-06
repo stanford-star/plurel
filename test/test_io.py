@@ -18,7 +18,7 @@ from plurel import (
     Uniform,
 )
 from plurel.distributions import Gumbel
-from plurel.graph import Foreign, Summary
+from plurel.graph import Foreign
 from plurel.io import create_database, read_database, split_timestamps, write_database
 from plurel.links import HSBMLink, TreeLink
 from plurel.schema import FK, Schema
@@ -33,9 +33,7 @@ def customers(key=True):
             "segment": Column(
                 Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()), categories=("a", "b", "c")
             ),
-            "spend": Column(
-                Node(LinearEdge(Summary("orders", "customer_id", "amount", "sum")), noise=None)
-            ),
+            "spend": Column(Node()),
         }
     )
 
@@ -179,9 +177,6 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
             "id": Column(kind="key"),
             "signup": Column(Node(noise=seconds), "timestamp"),
             "value": Column(Node()),
-            "n_orders": Column(
-                Node(LinearEdge(Summary("orders", "customer_id", "amount", "count")), noise=None)
-            ),
         },
         time_column="signup",
     )
@@ -225,7 +220,6 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
     np.testing.assert_array_equal(
         tables["orders"]["value"], tables["customers"]["value"].to_numpy()[keys]
     )
-    np.testing.assert_array_equal(tables["customers"]["n_orders"], np.bincount(keys, minlength=100))
     manager = tables["employees"]["manager_id"]
     roots = manager.isna().to_numpy()
     bosses = manager.to_numpy(dtype=float, na_value=-1).astype(int)

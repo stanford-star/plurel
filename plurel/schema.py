@@ -116,6 +116,9 @@ class Schema:
             if isinstance(fk.link, TreeLink) and table != fk.parent:
                 raise ValueError("a tree link needs a self-referential foreign key")
         self.keys = keys
+        self.eventful = {t for t, scm in self.tables.items() if scm.time_column is not None}
+        for _ in self.tables:
+            self.eventful |= {t for (t, _c), fk in keys.items() if fk.parent in self.eventful}
         self.crossings = {
             (table, name): node.across
             for table, scm in self.tables.items()
@@ -142,6 +145,8 @@ class Schema:
         elif isinstance(tail, Summary):
             if self.key(tail.table, tail.key).parent != table:
                 raise ValueError(f"key {tail.key!r} of {tail.table!r} does not point at {table!r}")
+            if tail.table in self.eventful:
+                raise ValueError(f"a summary of {tail.table!r} would read later events")
             origin, node = tail.table, tail.node
         else:
             raise ValueError(f"{tail!r} is not a Foreign or a Summary")

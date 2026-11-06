@@ -57,8 +57,8 @@ def random_schema(rng):
             Node(LinearEdge("y"), noise=None),
             categories=("lo", "mid", "hi"),
             probabilities=(0.2, 0.3, 0.5),
-            binning=str(rng.choice(["normal", "empirical"])),
         )
+    eventful = {t for t in names if "stamp" in tables[t]}
     for i, t in enumerate(names[1:], start=1):
         parent = names[int(rng.integers(0, i))]
         link = rng.choice(
@@ -83,17 +83,21 @@ def random_schema(rng):
             tables[t]["g_c0"] = gathered
             edges = (LinearEdge("g_c0", 2.0), MatrixEdge("g_seg", np.ones((width, 1))))
             tables[t]["z"] = Column(Node(edges, noise=Normal(std=0.1)))
-        how = str(rng.choice(["count", "sum", "mean", "max"]))
-        summary = Summary(t, key, "y", how, fill=None if how in COMPLETE else 0.0)
-        tables[parent][f"a_{t}"] = Column(Node(LinearEdge(summary), noise=None))
-        tables[parent][f"w_{t}"] = Column(Node((LinearEdge(f"a_{t}", 0.5),), noise=Normal()))
+        if parent in eventful:
+            eventful.add(t)
+        if t not in eventful:
+            how = str(rng.choice(["count", "sum", "mean", "max"]))
+            summary = Summary(t, key, "y", how, fill=None if how in COMPLETE else 0.0)
+            tables[parent][f"a_{t}"] = Column(Node(LinearEdge(summary), noise=None))
+            tables[parent][f"w_{t}"] = Column(Node((LinearEdge(f"a_{t}", 0.5),), noise=Normal()))
     if rng.random() < 0.4:
         t = names[0]
         tables[t]["boss"] = FK(t, TreeLink(roots=0.3), fill=0.0)
         tables[t]["boss_c0"] = Node(LinearEdge(Foreign("boss", "c0")), noise=None)
-        tables[t]["reports"] = Column(
-            Node(LinearEdge(Summary(t, "boss", "c0", "count")), noise=None)
-        )
+        if "stamp" not in tables[t]:
+            tables[t]["reports"] = Column(
+                Node(LinearEdge(Summary(t, "boss", "c0", "count")), noise=None)
+            )
     return Schema(
         {
             t: SCM(table, time_column="stamp" if "stamp" in table else None)

@@ -111,6 +111,38 @@ def test_adding_a_node_or_a_column_moves_no_other_draw():
     pd.testing.assert_frame_equal(grown[list(plain)], plain)
 
 
+def test_a_summary_never_reads_a_table_with_a_time_column():
+    parent = SCM(
+        {
+            "id": Column(kind="key"),
+            "n": Node(LinearEdge(Summary("c", "k", "x", "count")), noise=None),
+        }
+    )
+    child = SCM(
+        {"k": FK("p"), "x": Node(), "t": Column(Node(noise=DEFAULT_CALENDAR), "timestamp")},
+        time_column="t",
+    )
+    with pytest.raises(ValueError, match="later events"):
+        Schema({"p": parent, "c": child})
+
+
+def test_a_summary_never_reads_through_a_key_to_a_timed_table():
+    timed = SCM(
+        {"id": Column(kind="key"), "t": Column(Node(noise=DEFAULT_CALENDAR), "timestamp")},
+        time_column="t",
+    )
+    middle = SCM({"id": Column(kind="key"), "e": FK("timed"), "x": Node()})
+    parent = SCM(
+        {
+            "id": Column(kind="key"),
+            "n": Node(LinearEdge(Summary("c", "k", "x", "count")), noise=None),
+        }
+    )
+    child = SCM({"k": FK("p"), "m": FK("middle"), "x": Node()})
+    with pytest.raises(ValueError, match="later events"):
+        Schema({"p": parent, "c": child, "middle": middle, "timed": timed})
+
+
 def test_held_values_name_known_tables_and_nodes():
     schema = Schema({"t": SCM({"x": Node()})})
     with pytest.raises(ValueError, match="unknown table"):
