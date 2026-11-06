@@ -130,12 +130,10 @@ frames = schema.sample({"customers": 500, "orders": 5000}, seed=0)
 ```
 
 An order's amount follows the spend of its customer; an order without one reads `fill`. The
-same schema samples under interventions and returns its latents:
+same schema also returns its latents:
 
 ```python
-frames, latents = schema.sample_with_latents(
-    {"customers": 500, "orders": 5000}, seed=0, interventions={"customers": {"age": 1.0}}
-)
+frames, latents = schema.sample_with_latents({"customers": 500, "orders": 5000}, seed=0)
 ```
 
 ### Draw a database from the prior

@@ -20,11 +20,7 @@ _LANE_WORLD = 1
 _LANE_SAMPLE = 2
 _TARGET_TRIES = 20
 
-# A concat node stacks its parents' widths, and through a DAG with several paths they compound into the thousands
-# (about 5 draws in 100,000 pass 1,024). A quadratic edge on such a node holds width^3 numbers, and drawing its rows
-# takes tens to hundreds of GB. The prior caps a concat node at 128 wide (a wider one sums its parents instead), which
-# changes about 0.16% of draws.
-PRIOR = TablePrior(node_max_width=128)
+PRIOR = TablePrior()
 
 
 def realize_random(seed: int, *, columns: int | tuple[int, int] | None = None) -> Population:

@@ -1,7 +1,6 @@
-"""Reads of a plurel :class:`SCM` of one table: its draws (with interventions), the node a column
-observes, the categorical levels and their order, and a one-hot target's class scores. A column
-observes a node, several columns may observe one, and a node without a column is hidden; queries
-take column names, interventions are on nodes."""
+"""Reads of a plurel :class:`SCM` of one table: its draws, the node a column observes, the
+categorical levels and their order, and a one-hot target's class scores. A column observes a node,
+several columns may observe one, and a node without a column is hidden; queries take column names."""
 
 from __future__ import annotations
 
@@ -14,11 +13,10 @@ from plurel.schema import SCM, Schema
 TABLE = "table"
 
 
-def sample(plan: SCM, n: int, *, seed: Seed = None, interventions: dict | None = None):
-    """``(frame, latents)`` of ``n`` rows of the one-table schema, ``interventions`` on nodes."""
-    forced = {TABLE: interventions} if interventions else None
+def sample(plan: SCM, n: int, *, seed: Seed = None, held: dict | None = None):
+    """``(frame, latents)`` of ``n`` rows of the one-table schema, ``held`` nodes at their values."""
     frames, latents = Schema({TABLE: plan}).sample_with_latents(
-        {TABLE: n}, seed=seed, interventions=forced
+        {TABLE: n}, seed=seed, held={TABLE: held} if held else None
     )
     return frames[TABLE], latents[TABLE]
 

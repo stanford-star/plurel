@@ -28,11 +28,6 @@ def main() -> None:
     print(rows.head().to_string())
     print(rows["outcome"].value_counts(normalize=True).round(2).to_string())
 
-    # an intervention sets a column's latent value before the draw
-    older = population.rows(n=2000, draw=0, interventions={"item_age_years": 2.0})
-    print(f"repair_failed {(rows['outcome'] == 'repair_failed').mean():.2f} as drawn, "
-          f"{(older['outcome'] == 'repair_failed').mean():.2f} with every item old")  # fmt: skip
-
     print(roles(schema))
     written = load_knowledge(HERE / "world_knowledge")[schema.schema_id]
     print(f"world knowledge lint: {lint(written, schema, brief(schema)) or 'OK'}")

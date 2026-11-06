@@ -155,5 +155,3 @@ def test_random_schemas_sample_wrap_and_round_trip(seed, tmp_path):
         back = read_database(path)
         for t, table in db.table_dict.items():
             pd.testing.assert_frame_equal(back.table_dict[t].df, table.df, check_categorical=False)
-    first = next(iter(schema.tables))
-    assert set(schema.sample(rows, seed=seed, interventions={first: {"r0": 0.0}})) == set(rows)

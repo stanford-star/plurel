@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from plurel.causal import node_of, sample
+from plurel.causal import sample
 from plurel.columns import rank_map
 
 ENTITY_ROWS_MAX = 256  # the most rows one entity of a grouped population holds
@@ -20,8 +20,7 @@ ENTITY_CODES = 26 * 100_000  # an entity's id is a letter and five digits
 class TableMetadata:
     """The schema and semantics of a table. ``feature_names``/``feature_types`` are in feature order
     (types are ``"numeric"``/``"categorical"``); ``target`` is ``None`` until a label column is
-    chosen; ``plan`` is a synthetic table's plurel SCM, the ground truth its causal queries read
-    (``None`` on real ones)."""
+    chosen; ``plan`` is a synthetic table's plurel SCM (``None`` on real ones)."""
 
     feature_names: list[str]
     feature_types: list[str]
@@ -84,21 +83,15 @@ class Grouping:
         sizes[-1] -= ends[last] - n
         return sizes
 
-    def draw(self, plan, n: int, rng: np.random.Generator, forced: dict) -> tuple:
-        """``(frame, entities, names)``: ``n`` rows of ``plan`` with ``forced`` nodes set (one value per node), each
-        row's entity (contiguous, from 0) and each entity's id."""
-        if any(
-            np.shape(value) not in ((), (plan.nodes[node].dim,)) for node, value in forced.items()
-        ):
-            raise ValueError(
-                "a grouped population is intervened on one value per node, not one per row"
-            )
+    def draw(self, plan, n: int, rng: np.random.Generator) -> tuple:
+        """``(frame, entities, names)``: ``n`` rows of ``plan``, each row's entity (contiguous, from 0) and each
+        entity's id."""
         sizes_rng, entity_rng, row_rng, noise_rng, id_rng = rng.spawn(5)
         sizes = self.sizes(n, sizes_rng)
         entities = np.repeat(np.arange(len(sizes)), sizes)
-        each, latents = sample(plan, len(sizes), seed=entity_rng, interventions=forced or None)
+        each, latents = sample(plan, len(sizes), seed=entity_rng)
         held = {node: latents[node][entities] for node in self.fixed}
-        frame = sample(plan, n, seed=row_rng, interventions={**held, **forced})[0]
+        frame = sample(plan, n, seed=row_rng, held=held)[0]
         for name, column in plan.columns.items():
             if column.node not in self.fixed:
                 continue
@@ -156,26 +149,20 @@ class Population:
     def features(self) -> list[str]:
         return self.metadata.feature_names
 
-    def rows(self, n: int, draw: int, *, interventions: dict[str, float | np.ndarray] | None = None):  # fmt: skip
+    def rows(self, n: int, draw: int):
         """Draw ``draw`` of the rows, ``n`` of them, the features then the target; every draw is
-        its own sample. ``interventions`` sets nodes to latent values (do()), one per node or one
-        per row (one per node on a grouped population), before the draw; a column's name stands for
-        the node it observes, a hidden node goes by its own."""
-        return self.entity_rows(n, draw, interventions=interventions)[0]
+        its own sample."""
+        return self.entity_rows(n, draw)[0]
 
-    def entity_rows(self, n: int, draw: int, *, interventions: dict[str, float | np.ndarray] | None = None):  # fmt: skip
+    def entity_rows(self, n: int, draw: int):
         """``(rows, entities)``: :meth:`rows` and each row's entity, its own row index unless the
         population is grouped, when an entity's rows are contiguous."""
         plan = self.plan
-        forced = {
-            node_of(plan, name) if name in plan.columns else name: value
-            for name, value in (interventions or {}).items()
-        }
         rng = np.random.default_rng([*self.lanes, draw])
         if self.grouping is None:
-            frame = sample(plan, n, seed=rng, interventions=forced)[0]
+            frame = sample(plan, n, seed=rng)[0]
             return (self.render(frame, draw) if self.render else frame[[*self.features, self.target]]), np.arange(n)  # fmt: skip
-        frame, entities, names = self.grouping.draw(plan, n, rng, forced)
+        frame, entities, names = self.grouping.draw(plan, n, rng)
         column = self.grouping.column
         drawn = [name for name in self.features if name != column]
         frame = self.render(frame, draw) if self.render else frame[[*drawn, self.target]]

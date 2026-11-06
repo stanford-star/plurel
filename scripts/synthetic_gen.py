@@ -4,6 +4,16 @@ Example:
     $ pixi run python scripts/synthetic_gen.py --seed_offset 0 --num_dbs 1000 --num_proc 16
 """
 
+import os
+
+for blas in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+):
+    os.environ.setdefault(blas, "1")
+
 import argparse
 from functools import partial
 from multiprocessing import Pool, cpu_count

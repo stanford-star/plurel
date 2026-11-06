@@ -66,7 +66,7 @@ from plurel.prior import (
     TablePrior,
 )
 from plurel.random import Seed, generator
-from plurel.schema import FK, SCM, Interventions, Schema
+from plurel.schema import FK, SCM, Schema
 
 __all__ = [
     "AGGREGATES",
@@ -101,7 +101,6 @@ __all__ = [
     "Gumbel",
     "HSBMLink",
     "IntegersRange",
-    "Interventions",
     "Layered",
     "Layout",
     "Laplace",

@@ -301,7 +301,7 @@ class TablePrior:
         )
     )
     node_width: Range = LogIntegersRange(1, 4)
-    node_max_width: int | None = None
+    node_max_width: int | None = 128
     node_categorical_share: Range = Range(0.0, 0.6)
     node_class_count: Range = IntegersRange(2, 10)
     node_ops: Choices = Choices(

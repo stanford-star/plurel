@@ -12,17 +12,6 @@ from plurel.links import Link, RandomLink, TreeLink
 from plurel.random import Seed, generator
 
 Links = dict[tuple[str, str], np.ndarray]
-Interventions = Mapping[str, float | np.ndarray]
-
-
-def intervention(value: float | np.ndarray, n: int, dim: int) -> np.ndarray:
-    value = np.asarray(value, dtype=float)
-    if value.shape == (n,):
-        value = value[:, None]
-    try:
-        return np.array(np.broadcast_to(value, (n, dim)))
-    except ValueError as error:
-        raise ValueError(f"intervention of shape {value.shape} does not fit {(n, dim)}") from error
 
 
 def checked(name: str, node: Node, latent: np.ndarray, n: int) -> np.ndarray:
@@ -217,17 +206,16 @@ class Schema:
         rows: Mapping[str, int],
         links: Links,
         rng: np.random.Generator,
-        interventions: Mapping[str, Interventions],
+        held: Mapping[str, Mapping[str, np.ndarray]],
     ) -> dict[str, dict[str, np.ndarray]]:
         """Evaluate every node of every table once, in topological order, each with its own
-        noise stream: an intervened node takes its value, any other its local edges plus its
-        crossing edges plus noise."""
+        noise stream: a held node takes its values, any other its local edges plus its crossing
+        edges plus noise."""
         latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
         for (table, name), stream in zip(self.order, rng.spawn(len(self.order))):
             node, n = self.tables[table].nodes[name], rows[table]
-            forced = interventions.get(table, {})
-            if name in forced:
-                latents[table][name] = intervention(forced[name], n, node.dim)
+            if name in held.get(table, {}):
+                latents[table][name] = checked(name, node, held[table][name], n)
                 continue
             exogenous, across = node.sample_noise(n, stream), None
             for edge in self.crossings.get((table, name), ()):
@@ -269,30 +257,28 @@ class Schema:
         rows: Mapping[str, int],
         *,
         seed: Seed = None,
-        interventions: Mapping[str, Interventions] | None = None,
     ) -> dict[str, pd.DataFrame]:
-        return self.sample_with_latents(rows, seed=seed, interventions=interventions)[0]
+        return self.sample_with_latents(rows, seed=seed)[0]
 
     def sample_with_latents(
         self,
         rows: Mapping[str, int],
         *,
         seed: Seed = None,
-        interventions: Mapping[str, Interventions] | None = None,
+        held: Mapping[str, Mapping[str, np.ndarray]] | None = None,
     ) -> tuple[dict[str, pd.DataFrame], dict[str, dict[str, np.ndarray]]]:
+        """One frame and the latents per table; `held` nodes take the given `(n, dim)` values."""
         try:
             rows = {table: as_int(n) for table, n in rows.items()}
         except TypeError as error:
             raise ValueError("row counts must be integers") from error
         if set(rows) != set(self.tables) or min(rows.values(), default=0) < 0:
             raise ValueError("rows must give a non-negative count for every table")
-        interventions = dict(interventions or {})
-        if unknown := set(interventions) - set(self.tables):
-            raise ValueError(f"interventions on unknown tables {sorted(unknown)}")
-        for table, nodes in interventions.items():
+        held = dict(held or {})
+        for table, nodes in held.items():
             if unknown := set(nodes) - set(self.tables[table].nodes):
-                raise ValueError(f"interventions on unknown nodes {sorted(unknown)} of {table!r}")
+                raise ValueError(f"held values for unknown nodes {sorted(unknown)} of {table!r}")
         linking, noise, observation = generator(seed).spawn(3)
         links = self.links(rows, linking)
-        latents = self.propagate(rows, links, noise, interventions)
+        latents = self.propagate(rows, links, noise, held)
         return self.observe(rows, latents, links, observation), latents

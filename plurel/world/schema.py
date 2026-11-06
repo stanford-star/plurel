@@ -12,7 +12,7 @@ import numpy as np
 
 # The plurel transform a LinearEdge applies for each authored edge shape: an authored "linear"
 # edge is the identity transform, its weight alone. Every shape but ``u`` is monotone, so an
-# authored sign is the realized do-direction; a ``u`` edge bends back (both extremes push the same
+# authored sign is the realized direction; a ``u`` edge bends back (both extremes push the same
 # way) and has none.
 TRANSFORM_OF_SHAPE: dict[str, str] = {
     "linear": "identity",
