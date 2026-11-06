@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from plurel.columns import Column
-from plurel.graph import AGGREGATES, COMPLETE, Edge, Foreign, Node, Summary
+from plurel.graph import AGGREGATES, COMPLETE, Foreign, Node, Summary
 from plurel.links import Link, RandomLink, TreeLink
 from plurel.random import Seed, generator
 
@@ -24,11 +24,9 @@ def checked(name: str, node: Node, latent: np.ndarray, n: int) -> np.ndarray:
 
 @dataclass(frozen=True)
 class FK:
-    """A key column of `table` pointing at rows of `parent`; `fill` is what edges crossing it
-    read on rows whose key is null."""
+    """A foreign key column pointing at rows of `parent`; `fill` is what edges crossing it read
+    on rows whose key is null."""
 
-    table: str
-    column: str
     parent: str
     link: Link = RandomLink()
     nullable: float = 0.0
@@ -37,8 +35,6 @@ class FK:
     def __post_init__(self) -> None:
         if not 0.0 <= self.nullable < 1.0:
             raise ValueError("nullable must be in [0, 1)")
-        if isinstance(self.link, TreeLink) and self.table != self.parent:
-            raise ValueError("a tree link needs a self-referential foreign key")
         if self.fill is not None and not np.isfinite(self.fill):
             raise ValueError("fill must be finite")
 
@@ -51,26 +47,24 @@ def topological[T: Hashable](parents: Mapping[T, tuple[T, ...]]) -> tuple[T, ...
 
 
 class SCM:
-    """A table: each name holds a hidden Node or an observed Column with its Node. Edges that
-    cross keys belong to the Schema."""
+    """A table: each name holds a hidden Node, an observed Column with its Node, or an FK."""
 
     def __init__(
-        self, table: Mapping[str, Node | Column], *, time_column: str | None = None
+        self, table: Mapping[str, Node | Column | FK], *, time_column: str | None = None
     ) -> None:
         self.table = dict(table)
         for name, entry in self.table.items():
-            if not isinstance(entry, Node | Column):
-                raise ValueError(f"{name!r} must be a Node or a Column")
+            if not isinstance(entry, Node | Column | FK):
+                raise ValueError(f"{name!r} must be a Node, a Column or an FK")
+        self.fkeys = {name: e for name, e in self.table.items() if isinstance(e, FK)}
         self.columns = {name: e for name, e in self.table.items() if isinstance(e, Column)}
         self.nodes = {
             name: entry.node if isinstance(entry, Column) else entry
             for name, entry in self.table.items()
-            if isinstance(entry, Node) or entry.kind != "key"
+            if isinstance(entry, Node) or name in self.columns and entry.kind != "key"
         }
         self.hidden = tuple(name for name in self.nodes if name not in self.columns)
         for child, node in self.nodes.items():
-            if not all(isinstance(parent, str) for parent in node.parents):
-                raise ValueError(f"{child!r} reads across a key; such edges belong to the Schema")
             if unknown := set(node.parents) - set(self.nodes):
                 raise ValueError(f"{child!r} refers to unknown parents {sorted(unknown)}")
         self.order = topological({name: node.parents for name, node in self.nodes.items()})
@@ -101,46 +95,34 @@ class SCM:
         return frames["table"], latents["table"]
 
 
-Crossings = Mapping[tuple[str, str], Edge | tuple[Edge, ...]]
-
-
 class Schema:
-    """The plan of a database: its tables, the keys between them, and the edges that cross
-    keys, `crossings`, mapping a (table, node) to edges whose tails are `Foreign` or `Summary`;
-    their contributions join the node's signal. The Schema realizes every node in one
-    topological order across tables."""
+    """The plan of a database: its tables, joined by the foreign keys they hold and the edges
+    that read across them. It realizes every node in one topological order across tables."""
 
-    def __init__(
-        self,
-        tables: Mapping[str, SCM],
-        fkeys: tuple[FK, ...] = (),
-        crossings: Crossings | None = None,
-    ) -> None:
+    def __init__(self, tables: Mapping[str, SCM]) -> None:
         self.tables = dict(tables)
-        self.fkeys = tuple(fkeys)
-        for fk in self.fkeys:
-            if fk.table not in self.tables or fk.parent not in self.tables:
-                raise ValueError(f"foreign key {fk.column!r} refers to unknown tables")
-            if fk.column in self.tables[fk.table].columns:
-                raise ValueError(
-                    f"foreign key {fk.column!r} collides with a column of {fk.table!r}"
-                )
-        self.keys = {(fk.table, fk.column): fk for fk in self.fkeys}
-        if len(self.keys) != len(self.fkeys):
-            raise ValueError("foreign key columns must be unique per table")
+        keys = {
+            (table, column): fk
+            for table, scm in self.tables.items()
+            for column, fk in scm.fkeys.items()
+        }
+        for (table, column), fk in keys.items():
+            if fk.parent not in self.tables:
+                raise ValueError(f"foreign key {column!r} refers to unknown table {fk.parent!r}")
+            if isinstance(fk.link, TreeLink) and table != fk.parent:
+                raise ValueError("a tree link needs a self-referential foreign key")
+        self.keys = dict(sorted(keys.items(), key=lambda item: item[0][0] == item[1].parent))
         self.crossings = {
-            node: (edges,) if isinstance(edges, Edge) else tuple(edges)
-            for node, edges in (crossings or {}).items()
+            (table, name): node.across
+            for table, scm in self.tables.items()
+            for name, node in scm.nodes.items()
+            if node.across
         }
         parents: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {}
         for table, scm in self.tables.items():
             for name, node in scm.nodes.items():
                 parents[table, name] = tuple((table, parent) for parent in node.parents)
         for (table, name), edges in self.crossings.items():
-            if table not in self.tables or name not in self.tables[table].nodes:
-                raise ValueError(f"crossing edges refer to unknown node {table}.{name}")
-            if any(isinstance(edge.parent, str) for edge in edges):
-                raise ValueError(f"crossing edges into {table}.{name} must read across a key")
             parents[table, name] += tuple(self.source(table, edge.parent) for edge in edges)
         self.order = topological(parents)
 
@@ -165,16 +147,16 @@ class Schema:
 
     def links(self, rows: Mapping[str, int], rng: np.random.Generator) -> Links:
         links = {}
-        for fk, stream in zip(self.fkeys, rng.spawn(len(self.fkeys))):
-            drawn = np.asarray(fk.link.sample(rows[fk.table], rows[fk.parent], stream))
-            if drawn.shape != (rows[fk.table],) or not np.issubdtype(drawn.dtype, np.integer):
-                raise ValueError(f"link {fk.column!r} must return one integer per child row")
+        for ((table, column), fk), stream in zip(self.keys.items(), rng.spawn(len(self.keys))):
+            drawn = np.asarray(fk.link.sample(rows[table], rows[fk.parent], stream))
+            if drawn.shape != (rows[table],) or not np.issubdtype(drawn.dtype, np.integer):
+                raise ValueError(f"link {column!r} must return one integer per child row")
             if len(drawn) and (drawn.min() < -1 or drawn.max() >= rows[fk.parent]):
-                raise ValueError(f"link {fk.column!r} points outside the parent table")
+                raise ValueError(f"link {column!r} points outside the parent table")
             indices = drawn.astype(np.int64)
             if fk.nullable:
                 indices[stream.random(len(indices)) < fk.nullable] = -1
-            links[fk.table, fk.column] = indices
+            links[table, column] = indices
         return links
 
     def resolve(
@@ -219,8 +201,8 @@ class Schema:
         held: Mapping[str, Mapping[str, np.ndarray]],
     ) -> dict[str, dict[str, np.ndarray]]:
         """Evaluate every node of every table once, in topological order, each with its own
-        noise stream unless it only reads: a held node takes its values, any other its local
-        edges plus its crossing edges plus noise."""
+        noise stream unless it only reads: a held node takes its values, any other its edges
+        plus noise."""
         latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
         drawn = [key for key in self.order if not self.tables[key[0]].nodes[key[1]].reads]
         streams = dict(zip(drawn, rng.spawn(len(drawn))))
@@ -254,10 +236,9 @@ class Schema:
                 for name, column in scm.columns.items()
             }
             frame = pd.DataFrame(observed, index=range(n))
-            for fk in self.fkeys:
-                if fk.table == table:
-                    indices = links[table, fk.column]
-                    frame[fk.column] = pd.Series(indices, dtype="Int64").mask(indices < 0)
+            for column in scm.fkeys:
+                indices = links[table, column]
+                frame[column] = pd.Series(indices, dtype="Int64").mask(indices < 0)
             frames[table] = frame
         return frames
 

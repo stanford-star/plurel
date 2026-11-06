@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -61,6 +63,14 @@ def test_choices_and_ranges_draw_within_their_declarations():
     ):
         with pytest.raises(ValueError):
             bad()
+
+
+def bound(schema):
+    """Each key of the schema with the table and column holding it."""
+    return [
+        SimpleNamespace(table=table, column=column, parent=fk.parent, nullable=fk.nullable)
+        for (table, column), fk in schema.keys.items()
+    ]
 
 
 def test_table_prior_realizes_valid_diverse_tables():
@@ -256,14 +266,14 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
         schema = prior.realize(seed)
         assert prior.realize(seed).order == schema.order
         rows = prior.rows(schema, seed)
-        referenced = {fk.parent for fk in schema.fkeys if fk.parent != fk.table}
+        referenced = {fk.parent for fk in bound(schema) if fk.parent != fk.table}
         for table, count in rows.items():
             low, high = (60, 120) if table in referenced else (300, 600)
             assert low <= count <= high
             assert (table in referenced) == (schema.tables[table].time_column is None)
         frames, latents = schema.sample_with_latents(rows, seed=seed)
         assert all(len(frames[t]) == n for t, n in rows.items())
-        pairs = [(fk.table, fk.parent) for fk in schema.fkeys]
+        pairs = [(fk.table, fk.parent) for fk in bound(schema)]
         if len(pairs) > len(set(pairs)):
             seen.add("duplicate")
         summarized_keys = {
@@ -272,7 +282,7 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
             for e in edges
             if isinstance(e.parent, Summary)
         }
-        for fk in schema.fkeys:
+        for fk in bound(schema):
             if fk.table != fk.parent and schema.tables[fk.table].time_column is None:
                 seen.add("aggregate" if (fk.table, fk.column) in summarized_keys else "silent key")
         for (table, name), edges in schema.crossings.items():
@@ -313,11 +323,11 @@ def test_schema_prior_knobs_switch_cross_table_structure_off():
     for seed in range(8):
         schema = quiet.realize(seed)
         assert not schema.crossings
-        assert len({(fk.table, fk.parent) for fk in schema.fkeys}) == len(schema.fkeys)
-        assert all(fk.nullable == 0.0 for fk in schema.fkeys)
-        assert all(fk.table != fk.parent for fk in schema.fkeys)
+        assert len({(fk.table, fk.parent) for fk in bound(schema)}) == len(bound(schema))
+        assert all(fk.nullable == 0.0 for fk in bound(schema))
+        assert all(fk.table != fk.parent for fk in bound(schema))
         frames = schema.sample(quiet.rows(schema, seed), seed=seed)
-        assert all(frames[fk.table][fk.column].notna().all() for fk in schema.fkeys)
+        assert all(frames[fk.table][fk.column].notna().all() for fk in bound(schema))
 
 
 def test_schema_prior_edge_cases():
@@ -326,7 +336,7 @@ def test_schema_prior_edge_cases():
     )
     for seed in range(6):
         schema = single.realize(seed)
-        assert len(schema.tables) == 1 and not schema.fkeys
+        assert len(schema.tables) == 1 and not bound(schema)
         assert schema.tables["t0"].time_column is not None
         schema.sample(single.rows(schema, seed), seed=seed)
     tiny = SchemaPrior(
@@ -338,7 +348,7 @@ def test_schema_prior_edge_cases():
     )
     for seed in range(12):
         schema = tiny.realize(seed)
-        assert sum(fk.table == fk.parent for fk in schema.fkeys) == 1
+        assert sum(fk.table == fk.parent for fk in bound(schema)) == 1
         for (table, name), edges in schema.crossings.items():
             scm = schema.tables[table]
             for tail in (edge.parent for edge in edges):

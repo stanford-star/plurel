@@ -497,15 +497,14 @@ class TablePrior:
 def _wire(
     scm: SCM,
     prior: TablePrior,
-    crossings: dict[tuple[str, str], tuple[Edge, ...]],
-    table: str,
+    crossings: dict[str, tuple[Edge, ...]],
     tails: Mapping[str, tuple[Hashable, int]],
     count: int,
     rng: np.random.Generator,
     readers: list[str] | None = None,
 ) -> list[str]:
-    """Give the tails of `count` drawn sources to a drawn share of the readers, every node of
-    the table unless given, as crossing edges built by the table's prior; returns the readers."""
+    """Give the tails of `count` drawn sources to a drawn share of the readers, every hidden node
+    of the table unless given, as crossing edges built by the table's prior; returns the readers."""
     readers = list(scm.hidden) if readers is None else readers
     count = min(count, len(tails))
     if not count or not readers:
@@ -518,7 +517,7 @@ def _wire(
         edges = tuple(
             prior.edge(tail, d_in, target.dim, target.onehot, rng) for tail, d_in in drawn
         )
-        crossings[table, node] = crossings.get((table, node), ()) + edges
+        crossings[node] = crossings.get(node, ()) + edges
     return chosen
 
 
@@ -627,33 +626,34 @@ class SchemaPrior:
         static = {parent for parents in references.values() for parent in parents}
         priors = {name: self.table_prior.warp(rng) for name in names}
         tables = {name: priors[name].build(rng, time=name not in static) for name in names}
-        fkeys = []
+        keys: dict[str, dict[str, FK]] = {name: {} for name in names}
         for name in names:
             for parent in references[name]:
-                fkeys.append(self.fkey(name, f"{parent}_id", parent, rng))
+                keys[name][f"{parent}_id"] = self.fkey(parent, rng)
                 if rng.random() < self.fk_duplicate_share.draw(rng):
-                    fkeys.append(self.fkey(name, f"{parent}_id2", parent, rng))
-        crossings: dict[tuple[str, str], tuple[Edge, ...]] = {}
+                    keys[name][f"{parent}_id2"] = self.fkey(parent, rng)
+        joined = [(name, column, fk) for name in names for column, fk in keys[name].items()]
+        crossings: dict[str, dict[str, tuple[Edge, ...]]] = {name: {} for name in names}
         tainted: dict[str, set[str]] = {name: set() for name in names}
-        for fk in fkeys:
-            if fk.table in static and rng.random() < self.aggregate_share.draw(rng):
-                child, parent = tables[fk.table], tables[fk.parent]
-                tails = {n: self.summary(fk, n, child.nodes[n].dim, rng) for n in child.hidden}
+        for name, column, fk in joined:
+            if name in static and rng.random() < self.aggregate_share.draw(rng):
+                child, parent = tables[name], tables[fk.parent]
+                tails = {
+                    n: self.summary(name, column, n, child.nodes[n].dim, rng) for n in child.hidden
+                }
                 count = self.aggregate_count.draw(rng)
-                readers = _wire(parent, priors[fk.parent], crossings, fk.parent, tails, count, rng)
+                readers = _wire(parent, priors[fk.parent], crossings[fk.parent], tails, count, rng)
                 tainted[fk.parent] |= _downstream(parent, readers)
-        for fk in fkeys:
-            child, parent = tables[fk.table], tables[fk.parent]
+        for name, column, fk in joined:
+            child, parent = tables[name], tables[fk.parent]
             plain = [n for n in parent.hidden if n not in tainted[fk.parent]]
-            tails = {n: (Foreign(fk.column, n), parent.nodes[n].dim) for n in plain}
+            tails = {n: (Foreign(column, n), parent.nodes[n].dim) for n in plain}
             count = self.gather_count.draw(rng)
-            _wire(
-                child, priors[fk.table], crossings, fk.table, tails, count, rng, list(child.hidden)
-            )
+            _wire(child, priors[name], crossings[name], tails, count, rng, list(child.hidden))
         for name in names:
             if name in static and rng.random() < self.self_reference_share.draw(rng):
                 link = TreeLink(self.self_reference_root_share.draw(rng))
-                fkeys.append(FK(name, "parent_id", name, link, fill=0.0))
+                keys[name]["parent_id"] = FK(name, link, fill=0.0)
                 scm = tables[name]
                 roots = [
                     n for n in scm.hidden if not scm.nodes[n].parents and n not in tainted[name]
@@ -661,20 +661,36 @@ class SchemaPrior:
                 tails = {n: (Foreign("parent_id", n), scm.nodes[n].dim) for n in roots}
                 readers = [n for n in scm.hidden if scm.nodes[n].parents]
                 count = self.gather_count.draw(rng)
-                _wire(scm, priors[name], crossings, name, tails, count, rng, readers)
-        return Schema(tables, tuple(fkeys), crossings)
+                _wire(scm, priors[name], crossings[name], tails, count, rng, readers)
+        return Schema(
+            {
+                name: SCM(
+                    {
+                        **scm.table,
+                        **{
+                            node: replace(scm.nodes[node], edges=scm.nodes[node].edges + edges)
+                            for node, edges in crossings[name].items()
+                        },
+                        **keys[name],
+                    },
+                    time_column=scm.time_column,
+                )
+                for name, scm in tables.items()
+            }
+        )
 
     def summary(
-        self, fk: FK, source: str, dim: int, rng: np.random.Generator
+        self, table: str, column: str, source: str, dim: int, rng: np.random.Generator
     ) -> tuple[Summary, int]:
-        """A drawn summary of `source` across `fk`, with the width it contributes."""
+        """A drawn summary of `source` across the key `column` of `table`, with the width it
+        contributes."""
         how = self.aggregates.draw(rng)
-        tail = Summary(fk.table, fk.column, source, how, fill=None if how in COMPLETE else 0.0)
+        tail = Summary(table, column, source, how, fill=None if how in COMPLETE else 0.0)
         return tail, 1 if how == "count" else dim
 
     def rows(self, schema: Schema, seed: Seed = None) -> dict[str, int]:
         _, rng = generator(seed).spawn(2)
-        referenced = {fk.parent for fk in schema.fkeys if fk.parent != fk.table}
+        referenced = {fk.parent for (table, _), fk in schema.keys.items() if fk.parent != table}
         return {
             table: (self.entity_row_count if table in referenced else self.activity_row_count).draw(
                 rng
@@ -696,10 +712,10 @@ class SchemaPrior:
             inactive=self.link_inactive_share.draw(rng),
         )
 
-    def fkey(self, child: str, column: str, parent: str, rng: np.random.Generator) -> FK:
+    def fkey(self, parent: str, rng: np.random.Generator) -> FK:
         nullable = (
             self.fk_nullable_rate.draw(rng)
             if rng.random() < self.fk_nullable_share.draw(rng)
             else 0.0
         )
-        return FK(child, column, parent, self.link(rng), nullable=nullable, fill=0.0)
+        return FK(parent, self.link(rng), nullable=nullable, fill=0.0)
