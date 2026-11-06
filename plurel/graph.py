@@ -311,7 +311,7 @@ class Node:
 
     @property
     def reads(self) -> bool:
-        """Whether the node only reads its parent: it draws nothing and moves no other draw."""
+        """Whether the node only reads its parent, so its value is its parent's."""
         return (
             self.noise is None
             and len(self.edges) == len(self.local) == 1

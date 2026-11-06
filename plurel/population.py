@@ -29,12 +29,8 @@ class TableMetadata:
     # optional human-written schema text; column_descriptions is keyed by column name
     description: str | None = None
     column_descriptions: dict[str, str] | None = None
-    # {rendered target value -> name} for a label column of bare codes; None when values are names
-    target_value_names: dict[str, str] | None = None
     # {column -> values, low to high}: the generator's latent order
     category_order: dict[str, list[str]] | None = None
-    # {"segment": codes} per row of a mixture table; must hold for the frame as shipped
-    row_latents: dict[str, np.ndarray] | None = None
     # producer-owned flags of how a synthetic table was realized; tolerate None and missing keys
     realization: dict | None = None
 
