@@ -56,31 +56,35 @@ pip install git+https://github.com/stanford-star/plurel.git
 ### Build a table
 
 A table is a causal graph. A `Node` holds a block of latent values; its value is a reduction
-over the `Edge`s from its parents, plus bias and noise. A `Column` observes a node as a numeric,
-categorical, timestamp or key column. Together they form the table's `SCM`.
+over the `Edge`s from its parents, plus bias and noise. A `Column` holds a node and observes it as a
+numeric, categorical, timestamp or key column; a bare `Node` stays hidden. A dict of them is the
+table's `SCM`.
 
 ```python
 import numpy as np
 from plurel import SCM, Column, Gumbel, LinearEdge, LogNormal, MatrixEdge, Node, Normal, Uniform
 
-customers = SCM(
-    nodes={
-        "age": Node(noise=Uniform(-1.7, 1.7)),
-        "segment": Node(
+customers = SCM({
+    "id": Column(kind="key"),
+    "age": Column(Node(noise=Uniform(-1.7, 1.7)), marginal=Uniform(18.0, 80.0)),
+    "segment": Column(
+        Node(
             MatrixEdge("age", np.array([[1.0, -1.0, 0.3]])),
             bias=(0.0, 0.0, -0.5), onehot=True, noise=Gumbel(), standardize=True,
         ),
-        "spend": Node(LinearEdge("age", 0.8, "tanh"), noise=Normal(std=0.3), standardize=True),
-    },
-    columns={
-        "id": Column(kind="key"),
-        "age": Column(marginal=Uniform(18.0, 80.0)),
-        "segment": Column(categories=("bronze", "silver", "gold")),
-        "spend": Column(marginal=LogNormal(3.0, 0.5), missing=0.05),
-    },
-)
+        categories=("bronze", "silver", "gold"),
+    ),
+    "spend": Column(
+        Node(LinearEdge("age", 0.8, "tanh"), noise=Normal(std=0.3), standardize=True),
+        marginal=LogNormal(3.0, 0.5), missing=0.05,
+    ),
+})
 frame = customers.sample(500, seed=0)
 ```
+
+Each node has at most one column. To observe a node again, or one slot of a wide node, give the
+column a node of its own that reads it: `Column(Node(ReadEdge("age"), noise=None))`. A node that
+only reads moves no other draw.
 
 Sampling is deterministic in the seed.
 
@@ -108,14 +112,13 @@ import pandas as pd
 from plurel import FK, Calendar, Foreign, HSBMLink, Pareto, Schema
 
 orders = SCM(
-    nodes={
-        "time": Node(noise=Calendar(pd.Timestamp("2020-01-01"), pd.Timestamp("2024-01-01"))),
-        "amount": Node(noise=Normal(std=0.5), standardize=True),
-    },
-    columns={
+    {
         "id": Column(kind="key"),
-        "amount": Column(marginal=LogNormal()),
-        "time": Column(kind="timestamp"),
+        "time": Column(
+            Node(noise=Calendar(pd.Timestamp("2020-01-01"), pd.Timestamp("2024-01-01"))),
+            kind="timestamp",
+        ),
+        "amount": Column(Node(noise=Normal(std=0.5), standardize=True), marginal=LogNormal()),
     },
     time_column="time",
 )

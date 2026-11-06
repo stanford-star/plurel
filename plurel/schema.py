@@ -1,5 +1,5 @@
 from collections.abc import Hashable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from graphlib import CycleError, TopologicalSorter
 from operator import index as as_int
 
@@ -51,36 +51,32 @@ def topological[T: Hashable](parents: Mapping[T, tuple[T, ...]]) -> tuple[T, ...
 
 
 class SCM:
-    """A table's local DAG and the columns that observe it: the plan of one table. Edges that
+    """A table: each name holds a hidden Node or an observed Column with its Node. Edges that
     cross keys belong to the Schema."""
 
     def __init__(
-        self,
-        nodes: Mapping[str, Node],
-        columns: Mapping[str, Column],
-        time_column: str | None = None,
+        self, table: Mapping[str, Node | Column], *, time_column: str | None = None
     ) -> None:
-        self.nodes = dict(nodes)
+        self.table = dict(table)
+        for name, entry in self.table.items():
+            if not isinstance(entry, Node | Column):
+                raise ValueError(f"{name!r} must be a Node or a Column")
+        self.columns = {name: e for name, e in self.table.items() if isinstance(e, Column)}
+        self.nodes = {
+            name: entry.node if isinstance(entry, Column) else entry
+            for name, entry in self.table.items()
+            if isinstance(entry, Node) or entry.kind != "key"
+        }
+        self.hidden = tuple(name for name in self.nodes if name not in self.columns)
         for child, node in self.nodes.items():
             if not all(isinstance(parent, str) for parent in node.parents):
                 raise ValueError(f"{child!r} reads across a key; such edges belong to the Schema")
             if unknown := set(node.parents) - set(self.nodes):
                 raise ValueError(f"{child!r} refers to unknown parents {sorted(unknown)}")
         self.order = topological({name: node.parents for name, node in self.nodes.items()})
-        self.columns = {
-            name: replace(column, node=name)
-            if column.node is None and column.kind != "key"
-            else column
-            for name, column in columns.items()
-        }
         for name, column in self.columns.items():
-            if column.kind == "key":
-                continue
-            needed = {column.node}
-            if isinstance(column.missing, str):
-                needed.add(column.missing)
-            if unknown := needed - set(self.nodes):
-                raise ValueError(f"column {name!r} refers to unknown nodes {sorted(unknown)}")
+            if isinstance(column.missing, str) and column.missing not in self.nodes:
+                raise ValueError(f"column {name!r} refers to unknown node {column.missing!r}")
         kinds = {name: column.kind for name, column in self.columns.items()}
         keys = [name for name, kind in kinds.items() if kind == "key"]
         if len(keys) > 1:
@@ -89,9 +85,6 @@ class SCM:
             raise ValueError(f"time column {time_column!r} must be a timestamp column")
         self.pkey_column = keys[0] if keys else None
         self.time_column = time_column
-        self.timestamp_nodes = frozenset(
-            column.node for column in self.columns.values() if column.kind == "timestamp"
-        )
 
     def sample(self, n: int, *, seed: Seed = None) -> pd.DataFrame:
         return self.sample_with_latents(n, seed=seed)[0]
@@ -224,15 +217,17 @@ class Schema:
         held: Mapping[str, Mapping[str, np.ndarray]],
     ) -> dict[str, dict[str, np.ndarray]]:
         """Evaluate every node of every table once, in topological order, each with its own
-        noise stream: a held node takes its values, any other its local edges plus its crossing
-        edges plus noise."""
+        noise stream unless it only reads: a held node takes its values, any other its local
+        edges plus its crossing edges plus noise."""
         latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
-        for (table, name), stream in zip(self.order, rng.spawn(len(self.order))):
+        drawn = [key for key in self.order if not self.tables[key[0]].nodes[key[1]].reads]
+        streams = dict(zip(drawn, rng.spawn(len(drawn))))
+        for table, name in self.order:
             node, n = self.tables[table].nodes[name], rows[table]
             if name in held.get(table, {}):
                 latents[table][name] = checked(name, node, held[table][name], n)
                 continue
-            exogenous, across = node.sample_noise(n, stream), None
+            exogenous, across = node.sample_noise(n, streams.get((table, name))), None
             for edge in self.crossings.get((table, name), ()):
                 term = edge.apply(self.resolve(table, edge.parent, rows, latents, links))
                 across = term if across is None else across + term
@@ -253,7 +248,7 @@ class Schema:
         for (table, scm), stream in zip(self.tables.items(), rng.spawn(len(self.tables))):
             n = rows[table]
             observed = {
-                name: column.observe(latents[table], stream, n)
+                name: column.observe(name, latents[table], stream, n)
                 for name, column in scm.columns.items()
             }
             frame = pd.DataFrame(observed, index=range(n))

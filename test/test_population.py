@@ -1,23 +1,22 @@
 import numpy as np
 import pytest
 
-from plurel import SCM, Column, Gumbel, LinearEdge, LookupEdge, MatrixEdge, Node
+from plurel import SCM, Column, Gumbel, LinearEdge, LookupEdge, MatrixEdge, Node, ReadEdge, Uniform
 from plurel.population import Grouping, Population, TableMetadata, entity_cut, table_id
 
 
 def plan() -> SCM:
-    nodes = {
-        "cause": Node(),
-        "effect": Node((LinearEdge("cause", 1.0),)),
-        "hidden": Node(),
-        "label": Node((LinearEdge("effect", 1.0), LinearEdge("hidden", 1.0))),
-    }
-    columns = {
-        "cause": Column("cause"),
-        "effect": Column("effect"),
-        "label": Column("label", "categorical", categories=("no", "yes")),
-    }
-    return SCM(nodes, columns)
+    return SCM(
+        {
+            "cause": Column(Node()),
+            "effect": Column(Node((LinearEdge("cause", 1.0),))),
+            "hidden": Node(),
+            "label": Column(
+                Node((LinearEdge("effect", 1.0), LinearEdge("hidden", 1.0))),
+                categories=("no", "yes"),
+            ),
+        }
+    )
 
 
 def population(grouping: Grouping | None = None) -> Population:
@@ -32,13 +31,14 @@ def population(grouping: Grouping | None = None) -> Population:
 
 
 def test_a_hidden_product_node_multiplies_its_parents_and_stays_hidden():
-    nodes = {
-        "a": Node(),
-        "b": Node(),
-        "a_b": Node((LinearEdge("a"), LinearEdge("b")), op="product", noise=None),
-        "y": Node((LinearEdge("a"), LinearEdge("a_b", 2.0)), noise=None),
-    }
-    scm = SCM(nodes, {name: Column(name) for name in ("a", "b", "y")})
+    scm = SCM(
+        {
+            "a": Column(Node()),
+            "b": Column(Node()),
+            "a_b": Node((LinearEdge("a"), LinearEdge("b")), op="product", noise=None),
+            "y": Column(Node((LinearEdge("a"), LinearEdge("a_b", 2.0)), noise=None)),
+        }
+    )
     a, b = np.array([1.0, -1.0, 0.5]), np.array([0.0, 2.0, -5.0])
     frame, latents = scm.sample_with_latents(3, held={"a": a[:, None], "b": b[:, None]})
     np.testing.assert_allclose(latents["y"][:, 0], a + 2.0 * a * b)
@@ -46,23 +46,18 @@ def test_a_hidden_product_node_multiplies_its_parents_and_stays_hidden():
 
 
 def test_a_lookup_times_a_parent_is_a_per_level_slope():
-    nodes = {
-        "segment": Node(),
-        "x": Node(),
+    table = {
+        "segment": Column(Node(), categories=("lo", "hi"), binning="normal"),
+        "x": Column(Node()),
         "slope": Node(
             (LookupEdge("segment", (-1.0, 2.0), (0.5, 0.5)), LinearEdge("x")),
             op="product",
             noise=None,
         ),
-        "y": Node((LinearEdge("slope"),), noise=None),
-    }
-    columns = {
-        "segment": Column("segment", "categorical", categories=("lo", "hi"), binning="normal"),
-        "x": Column("x"),
-        "y": Column("y"),
+        "y": Column(Node((LinearEdge("slope"),), noise=None)),
     }
     segment, x = np.array([-2.0, -2.0, 2.0, 2.0]), np.array([1.0, 3.0, 1.0, 3.0])
-    latents = SCM(nodes, columns).sample_with_latents(
+    latents = SCM(table).sample_with_latents(
         4, held={"segment": segment[:, None], "x": x[:, None]}
     )[1]
     np.testing.assert_allclose(latents["y"][:, 0], [-1.0, -3.0, 2.0, 6.0])
@@ -75,29 +70,48 @@ def test_a_nominal_target_is_a_one_hot_node_over_matrix_edge_scores():
         onehot=True,
         noise=None,
     )
-    scm = SCM(
-        {"x": Node(), "y": target},
-        {"x": Column("x"), "y": Column("y", "categorical", categories=("a", "b", "c"))},
-    )
+    scm = SCM({"x": Column(Node()), "y": Column(target, categories=("a", "b", "c"))})
     latents = scm.sample_with_latents(3, held={"x": np.array([[-3.0], [0.0], [3.0]])})[1]
     assert latents["y"].argmax(1).tolist() == [0, 1, 2]
     frame, latents = scm.sample_with_latents(400, seed=0)
     assert set(frame["y"]) == {"a", "b", "c"}
     scores = latents["x"] @ np.array([[-2.0, 0.0, 2.0]]) + np.array(target.bias)
     assert np.array_equal(latents["y"].argmax(1), scores.argmax(1))
-    soft = SCM(
-        {"x": Node(), "y": Node(target.edges, bias=target.bias, onehot=True, noise=Gumbel())},
-        {"y": Column("y", "categorical", categories=("a", "b", "c"))},
-    )
+    scored = Node(target.edges, bias=target.bias, onehot=True, noise=Gumbel())
+    soft = SCM({"x": Node(), "y": Column(scored, categories=("a", "b", "c"))})
     assert 0.0 < (soft.sample_with_latents(4000)[1]["y"].argmax(1) == 1).mean() < 1.0
 
 
-def test_two_columns_may_observe_one_node():
-    nodes = {"u": Node(), "y": Node((LinearEdge("u", -1.5),), noise=None)}
-    scm = SCM(nodes, {"first_u": Column("u"), "second_u": Column("u"), "y": Column("y")})
-    assert scm.columns["first_u"].node == scm.columns["second_u"].node == "u"
+def test_a_second_reading_of_a_node_is_a_node_of_its_own():
+    scm = SCM(
+        {
+            "u": Column(Node()),
+            "again": Column(Node(ReadEdge("u"), noise=None)),
+            "y": Column(Node(LinearEdge("u", -1.5), noise=None)),
+        }
+    )
     frame = scm.sample_with_latents(3, held={"u": np.array([[1.0], [2.0], [3.0]])})[0]
+    np.testing.assert_allclose(frame["again"], frame["u"])
     np.testing.assert_allclose(frame["y"], [-1.5, -3.0, -4.5])
+
+
+def test_a_column_reading_a_held_node_records_its_entitys_value():
+    plan = SCM(
+        {
+            "u": Node(),
+            "x": Column(Node(ReadEdge("u"), noise=None), marginal=Uniform(0.0, 1.0)),
+            "raw": Column(Node()),
+        }
+    )
+    grouping = Grouping(
+        "shared_causes", ("u",), rows=50.0, spread=0.0, measurement=0.0, column=None
+    )
+    frame, entities, _ = grouping.draw(plan, 100, np.random.default_rng(0))
+    assert frame.groupby(entities)["x"].nunique().max() == 1
+    assert frame.groupby(entities)["raw"].nunique().max() > 1
+    noisy = Grouping("shared_causes", ("u",), rows=50.0, spread=0.0, measurement=0.5, column=None)
+    frame, entities, _ = noisy.draw(plan, 100, np.random.default_rng(0))
+    assert frame.groupby(entities)["x"].nunique().max() > 1
 
 
 def test_table_metadata_checks_its_feature_types():

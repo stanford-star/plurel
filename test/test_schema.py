@@ -14,6 +14,7 @@ from plurel import (
     NearestEdge,
     Node,
     Normal,
+    ReadEdge,
     Uniform,
 )
 from plurel.graph import AGGREGATES, Foreign, Summary, standardize
@@ -35,12 +36,12 @@ NODES = {
         (MatrixEdge("y", np.array([[0.0, 2.0]])),), bias=(0.0, -1.0), onehot=True, noise=Gumbel()
     ),
 }
-COLUMNS = {name: Column(name) for name in ("y", "xz", "x", "z")}
+OBSERVED = {name: Column(NODES[name]) for name in ("y", "xz", "x", "z")}
 
 
 @pytest.fixture
 def scm():
-    return SCM(NODES, COLUMNS)
+    return SCM({**NODES, **OBSERVED})
 
 
 def test_sampling_evaluates_every_node_in_topological_order(scm):
@@ -70,18 +71,29 @@ def test_a_held_node_takes_its_values_and_keeps_the_other_noise(scm):
         scm.sample_with_latents(N, seed=0, held={"h": np.ones((N, 2))})
 
 
+def test_a_reading_moves_no_other_draw():
+    table = {"a": Column(Node()), "b": Column(Node(LinearEdge("a"))), "c": Column(Node())}
+    read = Node(ReadEdge("a"), noise=None)
+    plain = SCM(table).sample(N, seed=0)
+    for name in ("first", "second"):
+        table = {name: Column(read), **table}
+    grown = SCM(table).sample(N, seed=0)
+    pd.testing.assert_frame_equal(grown[list(plain)], plain)
+    np.testing.assert_array_equal(grown["first"], plain["a"])
+
+
 def test_construction_rejects_unknown_parents_and_cycles():
     with pytest.raises(ValueError):
-        SCM({"y": Node((LinearEdge("x"),))}, {})
+        SCM({"y": Node((LinearEdge("x"),))})
     with pytest.raises(ValueError):
-        SCM({"a": Node((LinearEdge("b"),)), "b": Node((LinearEdge("a"),))}, {})
+        SCM({"a": Node((LinearEdge("b"),)), "b": Node((LinearEdge("a"),))})
 
 
 def test_sampling_rejects_a_node_that_breaks_its_declared_width():
-    scm = SCM({"h": Node(dim=3), "y": Node((LinearEdge("h"),))}, {})
+    scm = SCM({"h": Node(dim=3), "y": Node((LinearEdge("h"),))})
     with pytest.raises(ValueError, match="declared"):
         scm.sample_with_latents(N, seed=0)
-    overflow = SCM({"x": Node(), "y": Node((LinearEdge("x", np.inf),))}, {})
+    overflow = SCM({"x": Node(), "y": Node((LinearEdge("x", np.inf),))})
     with pytest.raises(ValueError, match="non-finite"):
         overflow.sample_with_latents(N, seed=0)
 
@@ -90,23 +102,30 @@ def test_sample_observes_columns_from_one_draw(scm):
     frame, latents = scm.sample_with_latents(N, seed=0)
     assert list(frame) == ["y", "xz", "x", "z"] and len(frame) == N
     np.testing.assert_array_equal(frame["x"], latents["x"].ravel())
-    columns = {
-        "amount": Column("y", marginal=Uniform(), missing=0.1),
-        "segment": Column("segment", "categorical", categories=("a", "b", "c")),
-        "when": Column("z", "timestamp", marginal=DEFAULT_CALENDAR),
-    }
-    typed = SCM(NODES, columns)
+    typed = SCM(
+        {
+            **NODES,
+            "amount": Column(Node(LinearEdge("y"), noise=None), marginal=Uniform(), missing=0.1),
+            "segment": Column(NODES["segment"], "categorical", categories=("a", "b", "c")),
+            "when": Column(
+                Node(LinearEdge("z"), noise=None), "timestamp", marginal=DEFAULT_CALENDAR
+            ),
+        }
+    )
     frame = typed.sample(N, seed=0)
-    assert list(frame) == list(columns) and frame["when"].dtype == "datetime64[ns]"
+    assert list(frame) == ["segment", "amount", "when"]
+    assert frame["when"].dtype == "datetime64[ns]" and set(typed.hidden) == set(NODES) - {"segment"}
     assert set(frame["segment"]) == {"a", "b", "c"} and 0.05 < frame["amount"].isna().mean() < 0.15
-    mnar = SCM(NODES, {"y": Column("y", missing="hidden")}).sample_with_latents(N, seed=0)
+    mnar = SCM({**NODES, "y": Column(NODES["y"], missing="hidden")}).sample_with_latents(N, seed=0)
     frame, latents = mnar
     assert frame["y"].isna().to_numpy().tolist() == (latents["hidden"][:, 1] == 1.0).tolist()
     assert latents["y"][frame["y"].isna()].mean() > latents["y"][frame["y"].notna()].mean()
-    with pytest.raises(ValueError):
-        SCM(NODES, {"c": Column("missing")})
-    with pytest.raises(ValueError):
-        SCM(NODES, {"c": Column("y", missing="nobody")})
+    with pytest.raises(ValueError, match="unknown node"):
+        SCM({**NODES, "c": Column(NODES["y"], missing="nobody")})
+    with pytest.raises(ValueError, match="a Node or a Column"):
+        SCM({"x": "y"})
+    with pytest.raises(TypeError):
+        SCM({"x": Node()}, {"x": Column(Node())})
 
 
 ROWS = {"customers": 300, "orders": 2000, "employees": 150}
@@ -121,18 +140,17 @@ def copy(dim=1):
 def customers():
     return SCM(
         {
-            "segment": Node(bias=(0.0, 0.5, -0.5), onehot=True, noise=Gumbel()),
-            "value": Node(),
-            "n_orders": copy(),
+            "segment": Column(
+                Node(bias=(0.0, 0.5, -0.5), onehot=True, noise=Gumbel()),
+                categories=("a", "b", "c"),
+            ),
+            "value": Column(Node()),
+            "n_orders": Column(copy()),
             "spend": copy(),
-            "churn": Node((LinearEdge("spend", -0.1), LinearEdge("value")), noise=Normal(std=0.1)),
-        },
-        {
-            "segment": Column("segment", "categorical", categories=("a", "b", "c")),
-            "value": Column("value"),
-            "n_orders": Column("n_orders"),
-            "churn": Column("churn"),
-        },
+            "churn": Column(
+                Node((LinearEdge("spend", -0.1), LinearEdge("value")), noise=Normal(std=0.1))
+            ),
+        }
     )
 
 
@@ -140,27 +158,27 @@ def orders():
     return SCM(
         {
             "segment": copy(3),
-            "value": copy(),
+            "value": Column(copy()),
             "embedding": Node((MatrixEdge("segment", EMBEDDING),), noise=None),
-            "amount": Node(
-                (LinearEdge("value", 2.0), MatrixEdge("embedding", np.ones((3, 1)))),
-                noise=Normal(std=0.5),
+            "amount": Column(
+                Node(
+                    (LinearEdge("value", 2.0), MatrixEdge("embedding", np.ones((3, 1)))),
+                    noise=Normal(std=0.5),
+                )
             ),
-        },
-        {"amount": Column("amount"), "value": Column("value")},
+        }
     )
 
 
 def employees():
     return SCM(
         {
-            "level": Node(),
+            "level": Column(Node()),
             "manager_level": copy(),
-            "pay": Node(
-                (LinearEdge("level"), LinearEdge("manager_level", 0.5)), noise=Normal(std=0.1)
+            "pay": Column(
+                Node((LinearEdge("level"), LinearEdge("manager_level", 0.5)), noise=Normal(std=0.1))
             ),
-        },
-        {"level": Column("level"), "pay": Column("pay")},
+        }
     )
 
 
@@ -225,7 +243,7 @@ def test_sampling_is_deterministic(schema):
     for table in ROWS:
         pd.testing.assert_frame_equal(frames[table], again[table])
     with pytest.raises(ValueError, match="belong to the Schema"):
-        SCM({"x": Node((LinearEdge(Foreign("k", "y")),))}, {})
+        SCM({"x": Node((LinearEdge(Foreign("k", "y")),))})
 
 
 def test_aggregates_handle_empty_groups():
@@ -243,7 +261,7 @@ def test_aggregates_handle_empty_groups():
     for name, aggregate in AGGREGATES.items():
         np.testing.assert_array_equal(aggregate(values, index, 3), expected[name])
     schema = Schema(
-        {"a": SCM({"x": Node()}, {}), "b": SCM({"x": Node(dim=2)}, {})},
+        {"a": SCM({"x": Node()}), "b": SCM({"x": Node(dim=2)})},
         (FK("b", "a_id", "a", nullable=0.5),),
     )
     rows, latents = {"a": 3, "b": 3}, {"a": {"x": values[:, :1]}, "b": {"x": values}}
@@ -314,7 +332,7 @@ def test_schema_validation():
     with pytest.raises(ValueError):
         schema.sample({"customers": 10, "orders": 10})
     empty = schema.sample({"customers": 5, "orders": 0, "employees": 0}, seed=0)
-    assert len(empty["orders"]) == 0 and list(empty["orders"]) == ["amount", "value", "customer_id"]
+    assert len(empty["orders"]) == 0 and list(empty["orders"]) == ["value", "amount", "customer_id"]
     assert not empty["customers"]["n_orders"].any()
 
 
@@ -332,13 +350,10 @@ def test_order_puts_every_node_after_its_parents(schema):
 
 def test_influence_flows_child_to_parent_to_other_child():
     tables = {
-        "a": SCM({"total": copy()}, {"total": Column("total")}),
-        "b": SCM({"x": Node()}, {"x": Column("x")}),
-        "c": SCM({"from_a": copy()}, {"from_a": Column("from_a")}),
-        "d": SCM(
-            {"from_b": copy(), "from_c": copy()},
-            {"from_b": Column("from_b"), "from_c": Column("from_c")},
-        ),
+        "a": SCM({"total": Column(copy())}),
+        "b": SCM({"x": Column(Node())}),
+        "c": SCM({"from_a": Column(copy())}),
+        "d": SCM({"from_b": Column(copy()), "from_c": Column(copy())}),
     }
     fkeys = (FK("b", "a_id", "a"), FK("c", "a_id", "a"), FK("d", "b_id", "b"), FK("d", "c_id", "c"))
     crossings = {
@@ -368,14 +383,8 @@ def test_influence_flows_child_to_parent_to_other_child():
 
 
 def test_edges_read_through_the_key_they_name():
-    buyer_seller = SCM(
-        {"buyer_value": copy(), "seller_value": copy()},
-        {"buyer_value": Column("buyer_value"), "seller_value": Column("seller_value")},
-    )
-    both = SCM(
-        {"value": Node(), "bought": copy(), "sold": copy()},
-        {"bought": Column("bought"), "sold": Column("sold")},
-    )
+    buyer_seller = SCM({"buyer_value": Column(copy()), "seller_value": Column(copy())})
+    both = SCM({"value": Node(), "bought": Column(copy()), "sold": Column(copy())})
     fkeys = (FK("orders", "buyer_id", "customers"), FK("orders", "seller_id", "customers"))
     crossings = {
         ("orders", "buyer_value"): (LinearEdge(Foreign("buyer_id", "value")),),
@@ -398,8 +407,8 @@ def test_edges_read_through_the_key_they_name():
     np.testing.assert_array_equal(frames["orders"]["seller_value"], value[seller])
     np.testing.assert_array_equal(frames["customers"]["bought"], np.bincount(buyer, minlength=50))
     np.testing.assert_array_equal(frames["customers"]["sold"], np.bincount(seller, minlength=50))
-    assert SCM({"x": Node()}, {"x": Column("x")}).sample(5, seed=0).shape == (5, 1)
-    assert SCM({}, {}).sample(4, seed=0).shape == (4, 0)
+    assert SCM({"x": Column(Node())}).sample(5, seed=0).shape == (5, 1)
+    assert SCM({}).sample(4, seed=0).shape == (4, 0)
 
 
 class BadLink:
@@ -412,18 +421,17 @@ class BadLink:
 
 def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
     customers = SCM(
-        {"segment": Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()), "value": Node()}, {}
+        {"segment": Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()), "value": Node()}
     )
     orders = SCM(
-        {"segment": copy(3), "value": copy()},
         {
-            "segment": Column("segment", "categorical", categories=("a", "b", "c")),
-            "amount": Column("value", marginal=LogNormal()),
-        },
+            "segment": Column(copy(3), categories=("a", "b", "c")),
+            "amount": Column(copy(), marginal=LogNormal()),
+        }
     )
     crossings = {
         ("orders", "segment"): (LinearEdge(Foreign("customer_id", "segment"), dim=3),),
-        ("orders", "value"): (LinearEdge(Foreign("customer_id", "value")),),
+        ("orders", "amount"): (LinearEdge(Foreign("customer_id", "value")),),
     }
     fkeys = (FK("orders", "customer_id", "customers", nullable=0.3, fill=0.0),)
     schema = Schema({"customers": customers, "orders": orders}, fkeys, crossings)
@@ -448,10 +456,10 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
         .all()
         .all()
     )
-    childless = SCM({**customers.nodes, "mean": copy()}, {})
+    childless = SCM({**customers.nodes, "mean": copy()})
     unfilled_summary = {
         **crossings,
-        ("customers", "mean"): (LinearEdge(Summary("orders", "customer_id", "value", "mean")),),
+        ("customers", "mean"): (LinearEdge(Summary("orders", "customer_id", "amount", "mean")),),
     }
     with pytest.raises(ValueError, match="fill"):
         Schema({"customers": childless, "orders": orders}, complete, unfilled_summary).sample(
@@ -470,16 +478,14 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
 
 
 def test_child_events_follow_their_parent_events():
-    customers = SCM(
-        {"signup": Node(noise=DEFAULT_CALENDAR)},
-        {"signup": Column("signup", "timestamp")},
-    )
+    customers = SCM({"signup": Column(Node(noise=DEFAULT_CALENDAR), "timestamp")})
     orders = SCM(
         {
             "signup": copy(),
-            "when": Node((LinearEdge("signup"),), noise=Exponential(30 * 24 * 3600.0)),
+            "when": Column(
+                Node((LinearEdge("signup"),), noise=Exponential(30 * 24 * 3600.0)), "timestamp"
+            ),
         },
-        {"when": Column("when", "timestamp")},
         time_column="when",
     )
     schema = Schema(
@@ -495,8 +501,8 @@ def test_child_events_follow_their_parent_events():
 
 
 def test_crossing_terms_join_a_standardized_signal():
-    parent = SCM({"x": Node(noise=Normal(5.0, 10.0))}, {"id": Column(kind="key")})
-    child = SCM({"y": Node(dim=1, noise=None, standardize=True)}, {"id": Column(kind="key")})
+    parent = SCM({"id": Column(kind="key"), "x": Node(noise=Normal(5.0, 10.0))})
+    child = SCM({"id": Column(kind="key"), "y": Node(dim=1, noise=None, standardize=True)})
     crossings = {("c", "y"): (LinearEdge(Foreign("p_id", "x"), 3.0),)}
     schema = Schema({"p": parent, "c": child}, (FK("c", "p_id", "p"),), crossings)
     frames, latents = schema.sample_with_latents({"p": 50, "c": 400}, seed=1)
@@ -508,30 +514,30 @@ def test_the_short_forms_mean_the_same_tables():
     matrix = np.array([[1.0, -1.0]])
     short = SCM(
         {
-            "x": Node(),
-            "y": Node(LinearEdge("x", 2.0)),
-            "k": Node(MatrixEdge("x", matrix), onehot=True, noise=Gumbel()),
-        },
-        {"x": Column(), "y": Column(marginal=Uniform()), "k": Column(categories=("a", "b"))},
+            "x": Column(Node()),
+            "y": Column(Node(LinearEdge("x", 2.0)), marginal=Uniform()),
+            "k": Column(
+                Node(MatrixEdge("x", matrix), onehot=True, noise=Gumbel()), categories=("a", "b")
+            ),
+        }
     )
     spelled = SCM(
         {
-            "x": Node(),
-            "y": Node((LinearEdge("x", 2.0),)),
-            "k": Node((MatrixEdge("x", matrix),), onehot=True, noise=Gumbel()),
-        },
-        {
-            "x": Column("x", "numeric"),
-            "y": Column("y", "numeric", marginal=Uniform()),
-            "k": Column("k", "categorical", categories=("a", "b")),
-        },
+            "x": Column(Node(), "numeric"),
+            "y": Column(Node((LinearEdge("x", 2.0),)), "numeric", marginal=Uniform()),
+            "k": Column(
+                Node((MatrixEdge("x", matrix),), onehot=True, noise=Gumbel()),
+                "categorical",
+                categories=("a", "b"),
+            ),
+        }
     )
     expected = Schema({"t": spelled}).sample({"t": 50}, seed=0)["t"]
     pd.testing.assert_frame_equal(short.sample(50, seed=0), expected)
     with pytest.raises(ValueError, match="one tuple"):
         Node(LinearEdge("x"), LinearEdge("y"))
-    parent = SCM({"x": Node()}, {"id": Column(kind="key"), "x": Column()})
-    child = SCM({"y": Node(noise=None)}, {"y": Column()})
+    parent = SCM({"id": Column(kind="key"), "x": Column(Node())})
+    child = SCM({"y": Column(Node(noise=None))})
     edge = LinearEdge(Foreign("k", "x"))
     one, tupled = (
         Schema({"p": parent, "c": child}, (FK("c", "k", "p"),), {("c", "y"): edges}).sample(

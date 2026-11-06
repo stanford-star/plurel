@@ -16,7 +16,13 @@ from plurel.distributions import (
     TimeSeries,
     Uniform,
 )
-from plurel.graph import REDUCTIONS, Foreign, LookupEdge, NearestEdge, Summary
+from plurel.graph import (
+    REDUCTIONS,
+    Foreign,
+    LookupEdge,
+    NearestEdge,
+    Summary,
+)
 from plurel.io import create_database
 from plurel.links import TreeLink
 from plurel.prior import (
@@ -73,7 +79,7 @@ def test_table_prior_realizes_valid_diverse_tables():
                 assert node.dim == sum(scm.nodes[p].dim for p in node.parents)
             else:
                 assert 1 <= node.dim <= 10
-            families.update(type(edge) for edge in node.edges)
+            families.update(type(edge) for edge in node.edges if not node.reads)
             ops.add(node.op)
             if not node.parents and not node.onehot and name != "time":
                 noises.add(type(node.noise))
@@ -149,8 +155,21 @@ def test_table_prior_knobs_are_respected():
             TablePrior(edge_families=Choices(families))
     single = TablePrior(node_count=IntegersRange(1, 1), column_count=IntegersRange(1, 1))
     scm = single.realize(0)
-    assert len(scm.nodes) <= 2 and not scm.nodes["n0"].parents
+    assert len(scm.hidden) <= 2 and not scm.nodes["n0"].parents
     assert scm.sample(5, seed=0).shape[0] == 5
+
+
+def test_table_prior_columns_read_the_hidden_blocks():
+    for seed in range(20):
+        scm = TablePrior().realize(seed, time=seed % 2 == 1)
+        latents = scm.sample_with_latents(200, seed=seed)[1]
+        for name, column in scm.columns.items():
+            if column.kind == "key" or name == "time":
+                continue
+            assert column.node.reads and column.node.parents[0] in scm.hidden
+            block, edge = latents[column.node.parents[0]], column.node.edges[0]
+            read = block if edge.slot is None else block[:, [edge.slot]]
+            np.testing.assert_array_equal(latents[name], read)
 
 
 def test_table_prior_caps_concat_widths():
@@ -270,7 +289,7 @@ def test_schema_prior_realizes_databases_that_influence_each_other_both_ways():
                     seen.add("gather")
                     fk = schema.keys[table, tail.key]
                     assert tail.node not in summarized(schema, fk.parent)
-                    assert name not in scm.timestamp_nodes
+                    assert name in scm.hidden
                     if isinstance(fk.link, TreeLink):
                         seen.add("self")
                         assert scm.time_column is None

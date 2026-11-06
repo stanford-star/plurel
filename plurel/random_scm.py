@@ -36,14 +36,16 @@ def realize_random(seed: int, *, columns: int | tuple[int, int] | None = None) -
         drawn = prior.realize(rng)
         observed = {name: c for name, c in drawn.columns.items() if c.kind != "key"}
         categorical = [name for name, c in observed.items() if c.kind == "categorical"]
-        parented = [name for name in categorical if drawn.nodes[observed[name].node].edges]
+        parented = [name for name in categorical if drawn.nodes[drawn.nodes[name].parents[0]].edges]
         candidates = parented or categorical
         if not candidates:
             continue
         target = str(rng.choice(candidates))
         # a label is never blank: the target keeps every row the prior would have hidden
         observed[target] = replace(observed[target], missing=0.0)
-        plan = SCM(drawn.nodes, observed)
+        plan = SCM(
+            {**{n: e for n, e in drawn.table.items() if n != "id"}, target: observed[target]}
+        )
         features = [name for name in observed if name != target]
         metadata = TableMetadata(
             feature_names=features,

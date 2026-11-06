@@ -289,6 +289,20 @@ def test_a_numeric_leaf_joins_the_target_by_its_median_band():
     assert a["aftermath"][band == "low"].max() < a["aftermath"][band == "high"].min()
 
 
+def test_a_numeric_band_leaves_the_features_draws_whatever_the_leafs_place():
+    early = Node(kind="numeric", units="duration", scale=(0, 60), parents={"cause": Edge(effect=+1)},
+                 noise_scale="low", noise_dist="gaussian", desc="a leaf drawn early")  # fmt: skip
+    schema = with_nodes(CASE, "early_case", early=early)
+    kept = 0
+    for seed in range(20):
+        joint = realize_world(schema, seed, joint="early")
+        if "joint" in joint.metadata.realization:
+            kept += 1
+            a, b = realize_world(schema, seed).rows(200, 0), joint.rows(200, 0)
+            assert a[joint.features].equals(b[joint.features])
+    assert kept
+
+
 def test_a_joint_part_too_rare_or_given_away_stays_out():
     rare = with_nodes(GROUPED, "rare_case", ward=replace(GROUPED.nodes["ward"], level_probs={"day": 0.99, "night": 0.01}))  # fmt: skip
     echo = Node(kind="numeric", units="percent", scale=(0, 100), noise_scale="low", noise_dist="gaussian",
