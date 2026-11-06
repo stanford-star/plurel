@@ -3,30 +3,28 @@ import pandas as pd
 import pytest
 
 from plurel import (
-    DEFAULT_CALENDAR,
-    SCM,
-    Column,
     Exponential,
-    LinearEdge,
+    ForeignKey,
     LogNormal,
-    MatrixEdge,
-    Node,
     Normal,
     Pareto,
+    PrimaryKey,
+    Schema,
+    Table,
     Uniform,
     create_database,
     read_database,
     write_database,
 )
+from plurel.columns import DEFAULT_CALENDAR, Column
 from plurel.distributions import Gumbel
-from plurel.graph import COMPLETE, Foreign, Summary
+from plurel.graph import COMPLETE, Foreign, LinearEdge, MatrixEdge, Node, Summary
 from plurel.links import HSBMLink, RandomLink, TreeLink
-from plurel.schema import FK, Schema
 
 
 def random_schema(rng):
     names = [f"t{i}" for i in range(int(rng.integers(1, 4)))]
-    tables = {t: {f"{t}_id": Column(kind="key")} for t in names}
+    tables = {t: {f"{t}_id": PrimaryKey()} for t in names}
     for t in names:
         roots = [f"c{j}" for j in range(int(rng.integers(1, 4)))]
         for root in roots:
@@ -69,7 +67,7 @@ def random_schema(rng):
             ]
         )
         key = f"{parent}_fk"
-        tables[t][key] = FK(parent, link, nullable=float(rng.choice([0.0, 0.2])), fill=0.0)
+        tables[t][key] = ForeignKey(parent, link, nullable=float(rng.choice([0.0, 0.2])), fill=0.0)
         observed = bool(rng.random() < 0.5)
         width = tables[parent]["seg"].node.dim
         gathered = Node(LinearEdge(Foreign(key, "c0")), noise=None)
@@ -92,7 +90,7 @@ def random_schema(rng):
             tables[parent][f"w_{t}"] = Column(Node((LinearEdge(f"a_{t}", 0.5),), noise=Normal()))
     if rng.random() < 0.4:
         t = names[0]
-        tables[t]["boss"] = FK(t, TreeLink(roots=0.3), fill=0.0)
+        tables[t]["boss"] = ForeignKey(t, TreeLink(roots=0.3), fill=0.0)
         tables[t]["boss_c0"] = Node(LinearEdge(Foreign("boss", "c0")), noise=None)
         if "stamp" not in tables[t]:
             tables[t]["reports"] = Column(
@@ -100,7 +98,7 @@ def random_schema(rng):
             )
     return Schema(
         {
-            t: SCM(table, time_column="stamp" if "stamp" in table else None)
+            t: Table(table, time_column="stamp" if "stamp" in table else None)
             for t, table in tables.items()
         }
     )

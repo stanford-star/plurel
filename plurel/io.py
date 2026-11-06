@@ -12,6 +12,24 @@ from relbench.manifest import DatasetManifest, TableSpec
 from plurel.schema import Schema
 
 
+def positional_keys(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """Given key values as the row positions a database's keys are, within the frames as given."""
+    out = dict(frames)
+    for (table, column), fk in schema.keys.items():
+        if schema.parent_keys(fk) is not None:
+            keys = frames[table][column]
+            parent = frames[fk.parent][schema.tables[fk.parent].pkey_column]
+            indices = pd.Index(parent).get_indexer(keys)
+            if ((indices < 0) & keys.notna().to_numpy()).any():
+                raise ValueError(f"key {column!r} of {table!r} holds values its parent lacks")
+            positions = pd.Series(indices, index=keys.index, dtype="Int64").mask(indices < 0)
+            out[table] = out[table].assign(**{column: positions})
+    for name, scm in schema.tables.items():
+        if scm.pkey_column is not None and scm.columns[scm.pkey_column].values is not None:
+            out[name] = out[name].assign(**{scm.pkey_column: np.arange(len(out[name]))})
+    return out
+
+
 def order_by_time(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
     """Put temporal tables in time order with keys as row positions, the order a time cut keeps."""
     frames, positions = dict(frames), {}
@@ -50,7 +68,7 @@ def create_database(schema: Schema, frames: Mapping[str, pd.DataFrame]) -> Datab
             raise ValueError(f"frame of {name!r} lacks its declared key or time column")
         if scm.time_column and not pd.api.types.is_datetime64_any_dtype(frame[scm.time_column]):
             raise ValueError(f"time column of {name!r} is not a datetime column")
-    frames = order_by_time(schema, frames)
+    frames = order_by_time(schema, positional_keys(schema, frames))
     tables = {
         name: Table(
             frame.reset_index(drop=True),

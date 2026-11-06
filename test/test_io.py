@@ -4,32 +4,24 @@ import sys
 import numpy as np
 import pandas as pd
 import pytest
-from relbench.base import Database, Table
+from relbench.base import Database
+from relbench.base import Table as RelbenchTable
 from relbench.base.table import is_time_sorted
 
-from plurel import (
-    DEFAULT_CALENDAR,
-    SCM,
-    Column,
-    Exponential,
-    LinearEdge,
-    Node,
-    Normal,
-    Uniform,
-)
+from plurel import Exponential, ForeignKey, Normal, PrimaryKey, Schema, Table, Uniform
+from plurel.columns import DEFAULT_CALENDAR, Column
 from plurel.distributions import Gumbel
-from plurel.graph import Foreign
+from plurel.graph import Foreign, LinearEdge, Node
 from plurel.io import create_database, read_database, split_timestamps, write_database
 from plurel.links import HSBMLink, TreeLink
-from plurel.schema import FK, Schema
 
 ROWS = {"customers": 40, "orders": 300}
 
 
 def customers(key=True):
-    return SCM(
+    return Table(
         {
-            **({"customer_id": Column(kind="key")} if key else {}),
+            **({"customer_id": PrimaryKey()} if key else {}),
             "segment": Column(
                 Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()), categories=("a", "b", "c")
             ),
@@ -39,13 +31,13 @@ def customers(key=True):
 
 
 def orders(key=True, time_column="when"):
-    return SCM(
+    return Table(
         {
-            **({"order_id": Column(kind="key")} if key else {}),
+            **({"order_id": PrimaryKey()} if key else {}),
             "when": Column(Node(), "timestamp", marginal=DEFAULT_CALENDAR),
             "amount": Column(Node((LinearEdge("when"),), noise=Normal(std=0.5))),
             "value": Column(Node(LinearEdge(Foreign("customer_id", "spend")), noise=None)),
-            "customer_id": FK("customers", HSBMLink((2,), (2,)), nullable=0.1, fill=0.0),
+            "customer_id": ForeignKey("customers", HSBMLink((2,), (2,)), nullable=0.1, fill=0.0),
         },
         time_column=time_column,
     )
@@ -57,11 +49,11 @@ def schema():
 
 
 def test_a_key_may_be_named_self_over_a_temporal_parent():
-    parent = SCM(
-        {"id": Column(kind="key"), "t": Column(Node(), "timestamp", marginal=DEFAULT_CALENDAR)},
+    parent = Table(
+        {"id": PrimaryKey(), "t": Column(Node(), "timestamp", marginal=DEFAULT_CALENDAR)},
         time_column="t",
     )
-    child = SCM({"self": FK("parent"), "x": Column(Node())})
+    child = Table({"self": ForeignKey("parent"), "x": Column(Node())})
     schema = Schema({"parent": parent, "child": child})
     frames = schema.sample({"parent": 10, "child": 40}, seed=0)
     db = create_database(schema, frames)
@@ -76,7 +68,7 @@ def test_tables_declare_their_keys_and_time():
     with pytest.raises(ValueError, match="timestamp"):
         orders(time_column="nothing")
     with pytest.raises(ValueError, match="one key"):
-        SCM({"x": Node(), "a": Column(kind="key"), "b": Column(kind="key")})
+        Table({"x": Node(), "a": PrimaryKey(), "b": PrimaryKey()})
 
 
 def test_database_wraps_sampled_tables_with_relbench_metadata(schema):
@@ -153,7 +145,7 @@ def test_write_and_read_round_trip(schema, tmp_path):
             db, tmp_path / "other", name="x", val_timestamp=db.max_timestamp, test_timestamp=split
         )
     shuffled = db.table_dict["orders"].df.sample(frac=1.0, random_state=0).reset_index(drop=True)
-    unordered = Database({"orders": Table(shuffled, {}, "order_id", "when")})
+    unordered = Database({"orders": RelbenchTable(shuffled, {}, "order_id", "when")})
     with pytest.raises(ValueError, match="time order"):
         write_database(
             unordered, tmp_path / "bad", name="x", val_timestamp=split, test_timestamp=split
@@ -172,18 +164,18 @@ def test_a_home_path_is_expanded(schema, tmp_path, monkeypatch):
 
 def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
     seconds = Uniform(DEFAULT_CALENDAR.start.timestamp(), DEFAULT_CALENDAR.end.timestamp())
-    customers = SCM(
+    customers = Table(
         {
-            "id": Column(kind="key"),
+            "id": PrimaryKey(),
             "signup": Column(Node(noise=seconds), "timestamp"),
             "value": Column(Node()),
         },
         time_column="signup",
     )
-    orders = SCM(
+    orders = Table(
         {
-            "id": Column(kind="key"),
-            "customer_id": FK("customers"),
+            "id": PrimaryKey(),
+            "customer_id": ForeignKey("customers"),
             "signup": Node(LinearEdge(Foreign("customer_id", "signup")), noise=None),
             "when": Column(
                 Node((LinearEdge("signup"),), noise=Exponential(3600.0)), "timestamp", missing=0.1
@@ -193,13 +185,13 @@ def test_database_puts_temporal_tables_in_time_order_with_keys_as_positions():
         },
         time_column="when",
     )
-    employees = SCM(
+    employees = Table(
         {
-            "id": Column(kind="key"),
+            "id": PrimaryKey(),
             "joined": Column(Node(), "timestamp", marginal=DEFAULT_CALENDAR),
             "level": Column(Node()),
             "manager_level": Column(Node(LinearEdge(Foreign("manager_id", "level")), noise=None)),
-            "manager_id": FK("employees", TreeLink(roots=0.2), fill=0.0),
+            "manager_id": ForeignKey("employees", TreeLink(roots=0.2), fill=0.0),
         },
         time_column="joined",
     )

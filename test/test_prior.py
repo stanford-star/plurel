@@ -98,8 +98,10 @@ def test_table_prior_realizes_valid_diverse_tables():
         for name, column in scm.columns.items():
             kinds.add(column.kind)
             missing.add(type(column.missing))
-            if isinstance(column.marginal, Mixture) and column.marginal.components[0] == Normal(
-                0.0, 0.0
+            if (
+                column.kind != "key"
+                and isinstance(column.marginal, Mixture)
+                and column.marginal.components[0] == Normal(0.0, 0.0)
             ):
                 assert (frame[name].dropna() == 0.0).mean() > 0.1
         if time:
