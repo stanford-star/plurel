@@ -102,6 +102,17 @@ class LinearEdge(Edge):
 
 
 @dataclass(frozen=True)
+class ReadEdge(Edge):
+    """A parent's block as it is, or one slot of it."""
+
+    dim: int = 1
+    slot: int | None = None
+
+    def apply(self, x: np.ndarray) -> np.ndarray:
+        return x if self.slot is None else x[:, [self.slot]]
+
+
+@dataclass(frozen=True)
 class LookupEdge(Edge):
     values: tuple[float, ...]
     probabilities: tuple[float, ...] | None = None
@@ -275,6 +286,11 @@ class Node:
     @property
     def parents(self) -> tuple[Hashable, ...]:
         return tuple(dict.fromkeys(edge.parent for edge in self.edges))
+
+    @property
+    def reads(self) -> bool:
+        """Whether the node only reads its parent: it draws nothing and moves no other draw."""
+        return self.noise is None and len(self.edges) == 1 and isinstance(self.edges[0], ReadEdge)
 
     def sample_noise(self, n: int, rng: np.random.Generator) -> np.ndarray:
         return _draw(self.noise, n, rng, self.dim) if self.noise else np.zeros((n, self.dim))

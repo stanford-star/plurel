@@ -26,6 +26,7 @@ from plurel import (
     LookupEdge,
     MatrixEdge,
     Normal,
+    ReadEdge,
     StudentT,
 )
 from plurel import Node as PlanNode
@@ -305,7 +306,7 @@ def joint_leaves(schema: WorldSchema) -> list[str]:
 def _joint_part(schema: WorldSchema, plan, target: str, leaf: str, rng: np.random.Generator):
     """``(plan, column, r2)`` for the joint target's part ``leaf``, or ``None`` when it cannot be one. From one
     ``CALIBRATION_ROWS`` draw: a numeric leaf is cut into its bands at the draw's quantiles of its value, as a column
-    of the plan reading the leaf's node through a node of its own; the part is kept when
+    of the plan reading the leaf's node, which moves no draw; the part is kept when
     the other columns explain a :data:`JOINT_R2` share of its value (``r2``: linearly, on the latents, the target
     aside) and every joint class holds :data:`JOINT_FLOOR` of the draw."""
     frame, latents = plan.sample_with_latents(CALIBRATION_ROWS, seed=rng)
@@ -314,7 +315,7 @@ def _joint_part(schema: WorldSchema, plan, target: str, leaf: str, rng: np.rando
     if schema.nodes[leaf].kind == "numeric":
         column = f"{leaf}.band"  # a dotted name no schema column takes
         edges = tuple(float(e) for e in np.quantile(value, np.arange(1, len(named)) / len(named)))
-        reading = PlanNode(LinearEdge(leaf), noise=None)
+        reading = PlanNode(ReadEdge(leaf), noise=None)
         band = Column(reading, "categorical", categories=tuple(named), binning=edges)
         plan = SCM({**plan.table, column: band})
         parts = np.asarray(named)[np.digitize(value, edges)]

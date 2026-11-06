@@ -14,6 +14,7 @@ from plurel import (
     NearestEdge,
     Node,
     Normal,
+    ReadEdge,
     Uniform,
 )
 from plurel.graph import AGGREGATES, Foreign, Summary, standardize
@@ -70,9 +71,9 @@ def test_a_held_node_takes_its_values_and_keeps_the_other_noise(scm):
         scm.sample_with_latents(N, seed=0, held={"h": np.ones((N, 2))})
 
 
-def test_a_noiseless_node_moves_no_other_draw():
+def test_a_reading_moves_no_other_draw():
     table = {"a": Column(Node()), "b": Column(Node(LinearEdge("a"))), "c": Column(Node())}
-    read = Node(LinearEdge("a"), noise=None)
+    read = Node(ReadEdge("a"), noise=None)
     plain = SCM(table).sample(N, seed=0)
     for name in ("first", "second"):
         table = {name: Column(read), **table}

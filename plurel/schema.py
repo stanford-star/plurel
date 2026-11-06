@@ -216,12 +216,12 @@ class Schema:
         rng: np.random.Generator,
         held: Mapping[str, Mapping[str, np.ndarray]],
     ) -> dict[str, dict[str, np.ndarray]]:
-        """Evaluate every node of every table once, in topological order, each noisy node with
-        its own stream, so a noiseless node moves no other draw: a held node takes its values,
-        any other its local edges plus its crossing edges plus noise."""
+        """Evaluate every node of every table once, in topological order, each with its own
+        noise stream unless it only reads: a held node takes its values, any other its local
+        edges plus its crossing edges plus noise."""
         latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
-        noisy = [key for key in self.order if self.tables[key[0]].nodes[key[1]].noise is not None]
-        streams = dict(zip(noisy, rng.spawn(len(noisy))))
+        drawn = [key for key in self.order if not self.tables[key[0]].nodes[key[1]].reads]
+        streams = dict(zip(drawn, rng.spawn(len(drawn))))
         for table, name in self.order:
             node, n = self.tables[table].nodes[name], rows[table]
             if name in held.get(table, {}):

@@ -13,6 +13,7 @@ from plurel.graph import (
     NearestEdge,
     Node,
     QuadraticEdge,
+    ReadEdge,
     TreeEdge,
     apply_transform,
     bin_levels,
@@ -44,6 +45,8 @@ FOURIER = FourierEdge(
 )
 QUADRATIC = QuadraticEdge("h", PARAMS.standard_normal((2, 4, 4)))
 EDGE_EXAMPLES = {
+    "read": ReadEdge("h", dim=3),
+    "slot": ReadEdge("h", slot=1),
     "linear": TERMS[0],
     "lookup": TERMS[1],
     "matrix": SCORES[0],

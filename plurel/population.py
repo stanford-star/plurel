@@ -115,7 +115,7 @@ class Grouping:
         fixed = set(self.fixed)
         for name in plan.order:
             node = plan.nodes[name]
-            if node.noise is None and node.parents and fixed.issuperset(node.parents):
+            if node.reads and node.parents[0] in fixed:
                 fixed.add(name)
         for name, column in plan.columns.items():
             if name not in fixed:

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from plurel import SCM, Column, Gumbel, LinearEdge, LookupEdge, MatrixEdge, Node, Uniform
+from plurel import SCM, Column, Gumbel, LinearEdge, LookupEdge, MatrixEdge, Node, ReadEdge, Uniform
 from plurel.population import Grouping, Population, TableMetadata, entity_cut, table_id
 
 
@@ -86,7 +86,7 @@ def test_a_second_reading_of_a_node_is_a_node_of_its_own():
     scm = SCM(
         {
             "u": Column(Node()),
-            "again": Column(Node(LinearEdge("u"), noise=None)),
+            "again": Column(Node(ReadEdge("u"), noise=None)),
             "y": Column(Node(LinearEdge("u", -1.5), noise=None)),
         }
     )
@@ -99,7 +99,7 @@ def test_a_column_reading_a_held_node_records_its_entitys_value():
     plan = SCM(
         {
             "u": Node(),
-            "x": Column(Node(LinearEdge("u"), noise=None), marginal=Uniform(0.0, 1.0)),
+            "x": Column(Node(ReadEdge("u"), noise=None), marginal=Uniform(0.0, 1.0)),
             "raw": Column(Node()),
         }
     )

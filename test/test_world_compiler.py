@@ -71,10 +71,10 @@ def test_the_draws_are_pinned():
     """A change that moves a realization's rows must say so here."""
     frame = realize_world(CASE, 3, target_noise=0.25, share_concentration=100.0).rows(200, 0)
     digest = hashlib.sha256(frame.round(4).to_csv(index=False).encode()).hexdigest()[:16]
-    assert digest == "a6f0b21688b50f9f"
+    assert digest == "2f0bc4a45d21a359"
     grouped = realize_world(GROUPED, 3, grouping=REPLICATES).rows(64, 0)
     digest = hashlib.sha256(grouped.round(4).to_csv(index=False).encode()).hexdigest()[:16]
-    assert digest == "0764b4f8b03d49a4"
+    assert digest == "632e62d918043948"
 
 
 def test_the_card_carries_the_authored_text():

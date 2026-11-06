@@ -82,6 +82,10 @@ customers = SCM({
 frame = customers.sample(500, seed=0)
 ```
 
+Each node has at most one column. To observe a node again, or one slot of a wide node, give the
+column a node of its own that reads it: `Column(Node(ReadEdge("age"), noise=None))`. A node that
+only reads moves no other draw.
+
 Sampling is deterministic in the seed.
 
 ### Draw a table from the prior

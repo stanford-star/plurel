@@ -37,6 +37,7 @@ from plurel.graph import (
     NearestEdge,
     Node,
     QuadraticEdge,
+    ReadEdge,
     Summary,
     TreeEdge,
 )
@@ -474,10 +475,10 @@ class TablePrior:
     ) -> Column:
         if categorical:
             categories = tuple(f"c{k}" for k in range(dim))
-            whole = Node(LinearEdge(f"n{i}", dim=dim), noise=None)
+            whole = Node(ReadEdge(f"n{i}", dim=dim), noise=None)
             return Column(whole, "categorical", categories=categories, missing=missing)
         slot = int(rng.integers(dim))
-        node = Node(MatrixEdge(f"n{i}", np.eye(dim)[:, [slot]]), noise=None)
+        node = Node(ReadEdge(f"n{i}", slot=slot), noise=None)
         if rng.random() < self.column_binned_share.draw(rng):
             k = self.column_bin_count.draw(rng)
             probabilities = tuple(float(p) for p in rng.dirichlet(np.ones(k)))

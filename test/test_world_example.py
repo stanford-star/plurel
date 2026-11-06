@@ -49,7 +49,7 @@ def test_the_examples_shares_and_graph(schema):
 def test_the_examples_draws_are_pinned(schema):
     frame = realize_world(schema, 0).rows(200, 0)
     digest = hashlib.sha256(frame.round(4).to_csv(index=False).encode()).hexdigest()[:16]
-    assert digest == "584f874409c8d453"
+    assert digest == "e63efe8f34fd31b4"
 
 
 def test_the_example_script_runs(capsys, schema):
