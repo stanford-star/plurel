@@ -611,6 +611,8 @@ def _render(schema: WorldSchema, plan, frame, draw: int, *, target: str, seed: i
     column order, target last. The artifacts and blanks come from lanes of the seed and draw.
     ``joint`` ``(leaf, part, name)`` joins the target and the plan column ``part`` (the leaf, or
     its band) into the label ``name``, the leaf left out."""
+    if len(frame) == 1:
+        raise ValueError("a table renders onto its scales relative to its rows: draw at least two")
     artifacts = _lane(schema, seed, _LANE_ARTIFACT, draw)
     blanks = _lane(schema, seed, _LANE_BLANK, draw)
     named = levels(plan)

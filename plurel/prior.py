@@ -409,16 +409,19 @@ class TablePrior:
             for i in range(n)
         }
         columns = {"id": Column(kind="key")}
-        feature_nodes = rng.permutation(n)[: rng.integers(1, n + 1)]
+        order = rng.permutation(n)
+        observed = rng.integers(1, n + 1)
+        slots = self.slots(order[:observed], dims, categorical, rng)
+        slots += self.slots(order[observed:], dims, categorical, rng)
         for c in range(self.column_count.draw(rng)):
-            i = int(rng.choice(feature_nodes))
+            i, slot = slots[c % len(slots)]
             missing: float | str = 0.0
             if rng.random() < self.column_missing_share.draw(rng):
                 missing = self.column_missing_rate.draw(rng)
                 if rng.random() < self.column_missing_structured_share.draw(rng):
                     nodes[f"m{c}"] = self.indicator(missing, dims, rng)
                     missing = f"m{c}"
-            columns[f"col{c}"] = self.column(i, dims[i], categorical[i], missing, rng)
+            columns[f"col{c}"] = self.column(i, slot, dims[i], categorical[i], missing, rng)
         if time:
             columns["time"] = Column(Node(noise=self.time_calendars.draw(rng)), "timestamp")
         return SCM({**nodes, **columns}, time_column="time" if time else None)
@@ -470,14 +473,31 @@ class TablePrior:
         noise = AutoRegressive(self.series_rho.draw(rng), self.series_noise_std.draw(rng))
         return TimeSeries(trend, cycle, noise)
 
+    def slots(
+        self,
+        nodes: np.ndarray,
+        dims: list[int],
+        categorical: list[bool],
+        rng: np.random.Generator,
+    ) -> list[tuple[int, int]]:
+        """What `nodes` offer to observe, shuffled: a categorical node whole, a numeric node by
+        slot. Columns take these in turn, so they repeat one only once all are taken."""
+        slots = [(int(i), s) for i in nodes for s in range(1 if categorical[i] else dims[i])]
+        return [slots[k] for k in rng.permutation(len(slots))]
+
     def column(
-        self, i: int, dim: int, categorical: bool, missing: float | str, rng: np.random.Generator
+        self,
+        i: int,
+        slot: int,
+        dim: int,
+        categorical: bool,
+        missing: float | str,
+        rng: np.random.Generator,
     ) -> Column:
         if categorical:
             categories = tuple(f"c{k}" for k in range(dim))
             whole = Node(ReadEdge(f"n{i}", dim=dim), noise=None)
             return Column(whole, "categorical", categories=categories, missing=missing)
-        slot = int(rng.integers(dim))
         node = Node(ReadEdge(f"n{i}", slot=slot), noise=None)
         if rng.random() < self.column_binned_share.draw(rng):
             k = self.column_bin_count.draw(rng)
