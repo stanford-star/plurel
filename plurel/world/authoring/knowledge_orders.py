@@ -15,9 +15,9 @@ from dataclasses import asdict, dataclass
 from functools import partial
 from pathlib import Path
 
+from plurel import Table
 from plurel.world.authoring.workspace import Workspace, written_knowledge
 from plurel.world.knowledge import brief, lint
-from plurel.world.schema import WorldSchema
 
 PROMPTS = Path(__file__).parent / "prompts"
 INDEX = "knowledge_orders.json"  # the orders of one --out directory, read by review, fix and merge
@@ -36,7 +36,7 @@ def module_ids(workspace: Workspace, relative: Path) -> list[str]:
     this reads it back)."""
     name = ".".join([workspace.catalog_module, *relative.with_suffix("").parts])
     found = vars(importlib.import_module(name)).values()
-    return sorted(v.schema_id for v in found if isinstance(v, WorldSchema))
+    return sorted(v.name for v in found if isinstance(v, Table))
 
 
 def orders(
@@ -213,7 +213,7 @@ def _sweep_one(workspace: Workspace, schema_id: str) -> tuple[str, list[str]]:
 
 def sweep(workspace: Workspace, sector: str, *, workers: int) -> tuple[bool, list[str]]:
     """Every schema of ``sector`` has world knowledge and it passes the lint; the lines to print."""
-    ids = sorted(s.schema_id for s in workspace.schemas().values() if s.taxonomy[0] == sector)
+    ids = sorted(s.name for s in workspace.schemas().values() if s.taxonomy[0] == sector)
     one = partial(_sweep_one, workspace)
     if workers:
         with ProcessPoolExecutor(max_workers=workers) as pool:

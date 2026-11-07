@@ -52,7 +52,15 @@ from plurel.layouts import (
     WattsStrogatz,
 )
 from plurel.links import HSBMLink, Link, RandomLink, TreeLink
-from plurel.random import Seed, generator
+from plurel.random import (
+    Choices,
+    IntegersRange,
+    LogIntegersRange,
+    LogRange,
+    Range,
+    Seed,
+    generator,
+)
 from plurel.schema import Schema, Table
 
 ACTIVATIONS = tuple(name for name in TRANSFORM_NAMES if name != "identity")
@@ -136,87 +144,6 @@ FITS = {
     "lookup": lambda d_in, d_out, block: d_in == d_out == 1 and not block,
     "nearest": lambda d_in, d_out, block: d_out >= 2,
 }
-
-
-@dataclass(frozen=True)
-class Choices:
-    values: tuple
-    weights: tuple[float, ...] | None = None
-
-    def __post_init__(self) -> None:
-        if not self.values:
-            raise ValueError("at least one value to choose from")
-        if self.weights is not None and (
-            len(self.weights) != len(self.values) or min(self.weights) < 0 or not sum(self.weights)
-        ):
-            raise ValueError("one non-negative weight per value, not all zero")
-
-    def draw(self, rng: np.random.Generator):
-        weights = None if self.weights is None else np.asarray(self.weights) / sum(self.weights)
-        return self.values[rng.choice(len(self.values), p=weights)]
-
-    def without(self, values: tuple) -> "Choices":
-        keep = [k for k, value in enumerate(self.values) if value not in values]
-        weights = None if self.weights is None else tuple(self.weights[k] for k in keep)
-        return Choices(tuple(self.values[k] for k in keep), weights)
-
-    def warp(self, rng: np.random.Generator) -> "Choices":
-        base = np.ones(len(self.values)) if self.weights is None else np.asarray(self.weights)
-        preference = rng.dirichlet(np.full(len(self.values), META_CONCENTRATION.draw(rng)))
-        return Choices(self.values, tuple(float(w) for w in base * preference))
-
-
-@dataclass(frozen=True)
-class Range:
-    low: float
-    high: float
-    shape: tuple[float, float] | None = None
-
-    def __post_init__(self) -> None:
-        if self.low > self.high:
-            raise ValueError("low must not exceed high")
-
-    def unit(self, rng: np.random.Generator) -> float:
-        return float(rng.random() if self.shape is None else rng.beta(*self.shape))
-
-    def draw(self, rng: np.random.Generator) -> float:
-        return self.low + (self.high - self.low) * self.unit(rng)
-
-    def warp(self, rng: np.random.Generator) -> "Range":
-        location, concentration = _open_unit(rng), META_CONCENTRATION.draw(rng)
-        shape = (location * concentration, (1.0 - location) * concentration)
-        return replace(self, shape=shape)
-
-
-@dataclass(frozen=True)
-class LogRange(Range):
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if self.low <= 0:
-            raise ValueError("a log range must be positive")
-
-    def draw(self, rng: np.random.Generator) -> float:
-        return float(np.exp(np.log(self.low) + np.log(self.high / self.low) * self.unit(rng)))
-
-
-@dataclass(frozen=True)
-class IntegersRange(Range):
-    def draw(self, rng: np.random.Generator) -> int:
-        return min(int(self.low + (self.high + 1 - self.low) * self.unit(rng)), int(self.high))
-
-
-@dataclass(frozen=True)
-class LogIntegersRange(LogRange):
-    def draw(self, rng: np.random.Generator) -> int:
-        span = np.log((self.high + 1) / self.low)
-        return min(int(np.exp(np.log(self.low) + span * self.unit(rng))), int(self.high))
-
-
-META_CONCENTRATION = LogRange(0.1, 10_000.0)
-
-
-def _open_unit(rng: np.random.Generator) -> float:
-    return float(rng.integers(1, 2**53) / 2**53)
 
 
 def _warped[P](prior: P, rng: np.random.Generator) -> P:

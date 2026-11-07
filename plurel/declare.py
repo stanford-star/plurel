@@ -1,14 +1,28 @@
 """What a table's entries say: its keys, its columns and the causes each column follows. Each
-compiles to the nodes and columns of `plurel.graph` and `plurel.columns`."""
+compiles to the nodes and columns of `plurel.graph` and `plurel.columns`. Any number or marginal
+may be a range or another drawable: one declaration is then a family of tables, and each seed of
+`Table.realize` draws one."""
 
-from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+import inspect
+from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass, field, fields, replace
 
 import numpy as np
 import pandas as pd
 
 from plurel.columns import Column
-from plurel.distributions import Calendar, Distribution, Normal
+from plurel.distributions import (
+    Affine,
+    Bounded,
+    Calendar,
+    Distribution,
+    Gamma,
+    Gumbel,
+    Laplace,
+    Normal,
+    StudentT,
+    shape,
+)
 from plurel.graph import (
     TRANSFORMS,
     Edge,
@@ -17,48 +31,214 @@ from plurel.graph import (
     LevelEdge,
     LinearEdge,
     LookupEdge,
+    MatrixEdge,
     Node,
     ReadEdge,
     Summary,
 )
 from plurel.links import Link, RandomLink
+from plurel.random import Range
 
-Effect = float | tuple[float, Function] | Mapping[object, float]
-Causes = Mapping[str | Summary, Effect]
+Effect = float | Range | tuple | Mapping[object, float]
+Causes = Mapping[str | Summary | tuple[str, str], Effect]
 
 CODE = ".code"  # a categorical column's hidden node holding its level's index
 NOISE = 0.5  # the default standard deviation of the noise on a column's causes
+BOUNDED_ROWS = 4096  # draws that place a scaled marginal on its range
+
+STRONG, WEAK = Range(1.6, 3.0), Range(0.4, 1.4)
+LOW, MEDIUM, HIGH = Range(0.25, 0.5), Range(0.5, 1.0), Range(1.0, 1.6)
+
+HOW = {"sum": "sum", "max": "max", "min": "min", "product": "compound", "rules": "sum"}
+UNITS = {
+    "count": ("counts", "zero_inflated"),
+    "amount": ("right", "zero_inflated", "symmetric", "bimodal"),
+    "duration": ("right", "symmetric", "bimodal"),
+    "ratio": ("right", "symmetric", "left"),
+    "score": ("symmetric", "left", "bimodal", "right"),
+    "percent": ("symmetric", "left", "right", "bimodal", "multimodal"),
+    "signed": ("symmetric", "bimodal", "multimodal"),
+}
 
 
-def _cause(cause: str | Summary, effect: Effect, keys: Collection[str]) -> Edge:
-    """The edge of one cause: a weight, a weight and a transform, or one effect per level."""
-    tail = cause
-    if isinstance(cause, str):
-        head, dot, rest = cause.partition(".")
-        tail = Foreign(head, rest) if dot and head in keys else cause
-    if not isinstance(effect, Mapping):
-        weight, transform = effect if isinstance(effect, tuple) else (effect, "identity")
-        if isinstance(transform, str) and transform not in TRANSFORMS:
-            raise ValueError(f"transform must be a function or one of {tuple(TRANSFORMS)}")
-        return LinearEdge(tail, float(weight), transform)
+def drawn(value: object, rng: np.random.Generator) -> object:
+    """The value with every drawable in it drawn, through mappings and tuples."""
+    if hasattr(value, "draw"):
+        return value.draw(rng)
+    if isinstance(value, Mapping):
+        return {key: drawn(item, rng) for key, item in value.items()}
+    return tuple(drawn(item, rng) for item in value) if isinstance(value, tuple) else value
+
+
+def ranged(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return any(ranged(item) for item in value.values())
+    return hasattr(value, "draw") or (isinstance(value, tuple) and any(map(ranged, value)))
+
+
+@dataclass(frozen=True)
+class Scaled:
+    """A marginal on `[low, high]` whose shape is drawn per seed from those of `units`, or is the
+    given `shape`; its central 99% spans the range and values are recorded to a fine step."""
+
+    units: str
+    low: float
+    high: float
+    shape: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.units not in UNITS:
+            raise ValueError(f"units must be one of {sorted(UNITS)}, not {self.units!r}")
+        if self.shape is not None and self.shape not in UNITS[self.units]:
+            raise ValueError(f"shape must be one of {UNITS[self.units]} for {self.units}")
+        if not (np.isfinite(self.low) and np.isfinite(self.high) and self.low < self.high):
+            raise ValueError("a scale is a finite low and a higher high")
+        if self.units == "percent" and (self.low < 0.0 or self.high > 100.0):
+            raise ValueError("a percent scale stays inside [0, 100]")
+        if self.units == "signed" and not self.low < 0.0 < self.high:
+            raise ValueError("a signed scale spans zero")
+        if self.units not in ("signed", "score") and self.low < 0.0:
+            raise ValueError(f"a {self.units} scale cannot go negative")
+
+    def draw(self, rng: np.random.Generator) -> Bounded:
+        kinds = UNITS[self.units]
+        base = shape(self.shape or kinds[int(rng.integers(len(kinds)))], rng)
+        ends = np.quantile(base.sample(BOUNDED_ROWS, rng), [0.005, 0.995])
+        scale = (self.high - self.low) / (ends[1] - ends[0] if ends[1] > ends[0] else 1.0)
+        whole = float(self.low).is_integer() and float(self.high).is_integer()
+        step = (
+            1.0
+            if whole and self.units == "count"
+            else 10.0 ** np.floor(np.log10((self.high - self.low) / 500.0))
+        )
+        return Bounded(base, self.low - scale * ends[0], scale, self.low, self.high, step)
+
+
+@dataclass(frozen=True)
+class Shares:
+    """Level shares drawn per seed: around the given shares of a mapping, or from nothing but the
+    levels of a sequence; a higher `concentration` holds them tighter, and no level vanishes."""
+
+    levels: Sequence[object] | Mapping[object, float]
+    concentration: float | Range = Range(0.2, 5.0)
+
+    def draw(self, rng: np.random.Generator) -> dict[object, float]:
+        given = isinstance(self.levels, Mapping)
+        k = len(self.levels)
+        center = np.asarray(tuple(self.levels.values())) if given else np.full(k, 1.0)
+        shares = rng.dirichlet(drawn(self.concentration, rng) * center)
+        shares = np.clip(shares, min(0.04, 0.25 / k), None)
+        return dict(zip(self.levels, (shares / shares.sum()).tolist(), strict=True))
+
+
+@dataclass(frozen=True)
+class Noise:
+    """Noise of a kind at a standard deviation (`gumbel`: at a scale), drawn per seed."""
+
+    kind: str
+    std: float | Range
+    factor: float = 1.0
+
+    def draw(self, rng: np.random.Generator) -> Distribution:
+        std = drawn(self.std, rng) * self.factor
+        if self.kind == "gaussian":
+            return Normal(std=std)
+        if self.kind == "gumbel":
+            return Gumbel(scale=std)
+        if self.kind == "laplace":
+            return Laplace(scale=std / np.sqrt(2.0))
+        if self.kind == "student_t":
+            df = float(rng.uniform(2.5, 12.0))
+            return StudentT(df, std * np.sqrt((df - 2.0) / df))
+        if self.kind == "skewed":
+            k, sign = float(rng.uniform(0.7, 6.0)), float(rng.choice([-1.0, 1.0]))
+            return Affine(
+                Gamma(k, 1.0), loc=-sign * std * np.sqrt(k), scale=sign * std / np.sqrt(k)
+            )
+        raise ValueError(f"unknown noise {self.kind!r}")
+
+
+def _tail(cause: str | Summary, keys: Collection[str]) -> str | Foreign | Summary:
+    if not isinstance(cause, str):
+        return cause
+    head, dot, rest = cause.partition(".")
+    return Foreign(head, rest) if dot and head in keys else cause
+
+
+def _levels(tail: str | Foreign | Summary, effects: Mapping[object, float]) -> Edge:
     if isinstance(tail, Summary):
         raise ValueError("a summary is a number: give it a weight, not an effect per level")
     code = replace(tail, node=tail.node + CODE) if isinstance(tail, Foreign) else tail + CODE
-    return LevelEdge(code, tuple(effect.items()))
+    return LevelEdge(code, tuple(effects.items()))
+
+
+def _checked(transform: Function) -> Function:
+    if isinstance(transform, str) and transform not in TRANSFORMS:
+        raise ValueError(f"transform must be a function or one of {tuple(TRANSFORMS)}")
+    return transform
+
+
+def _cause(cause: str | Summary, effect: Effect, keys: Collection[str]) -> Edge:
+    """The edge of one cause: a weight, a weight and a transform, one effect per level, or a weight
+    and the effects it scales."""
+    tail = _tail(cause, keys)
+    if isinstance(effect, tuple) and isinstance(effect[1], Mapping):
+        effect = {level: effect[0] * value for level, value in effect[1].items()}
+    if isinstance(effect, Mapping):
+        return _levels(tail, effect)
+    weight, transform = effect if isinstance(effect, tuple) else (effect, "identity")
+    return LinearEdge(tail, float(weight), _checked(transform))
+
+
+def _pair(
+    term: str, pair: tuple[str, str], effect: Effect, how: str, keys: Collection[str]
+) -> tuple[Node, Edge]:
+    """The hidden product of two local causes and the edge reading it: a weight, optionally with a
+    transform of both, or an effect per level of the first, which sets the slope of the second."""
+    first, second = pair
+    if any(_tail(cause, keys) != cause for cause in pair):
+        raise ValueError(f"{pair} crosses a key: a product reads this table's own columns")
+    if isinstance(effect, Mapping):
+        edges, weight = (_levels(first, effect), LinearEdge(second)), 1.0
+    else:
+        default = "step" if how == "rules" else "identity"
+        weight, transform = effect if isinstance(effect, tuple) else (effect, default)
+        edges = tuple(LinearEdge(cause, 1.0, _checked(transform)) for cause in pair)
+    return Node(edges, op="product", noise=None), LinearEdge(term, float(weight))
+
+
+def _noise(noise: float | Distribution | None) -> Distribution | None:
+    if noise is None or isinstance(noise, Distribution):
+        return noise
+    if noise < 0.0:
+        raise ValueError("noise is a standard deviation")
+    return Normal(std=noise) if noise else None
 
 
 def _node(
-    causes: Causes, noise: float | None, keys: Collection[str], standardize: bool = True
-) -> Node:
+    name: str,
+    causes: Causes,
+    noise: float | Distribution | None,
+    keys: Collection[str],
+    how: str = "sum",
+) -> tuple[Node, dict[str, Node]]:
+    """The node summing a column's causes under `how`, plus noise, and the products it reads."""
+    if how not in HOW:
+        raise ValueError(f"how must be one of {tuple(HOW)}")
     if not causes:
         if noise is not None:
             raise ValueError("noise is relative to a column's causes, and this one has none")
-        return Node()
-    noise = NOISE if noise is None else noise
-    if noise < 0.0:
-        raise ValueError("noise is a standard deviation")
-    edges = tuple(_cause(cause, effect, keys) for cause, effect in causes.items())
-    return Node(edges, noise=Normal(std=noise) if noise else None, standardize=standardize)
+        return Node(), {}
+    edges, helpers = [], {}
+    for cause, effect in causes.items():
+        if isinstance(cause, tuple):
+            term = f"{name}.{'*'.join(cause)}"
+            helpers[term], edge = _pair(term, cause, effect, how, keys)
+        else:
+            edge = _cause(cause, effect, keys)
+        edges.append(edge)
+    noise = _noise(NOISE if noise is None else noise)
+    return Node(tuple(edges), op=HOW[how], noise=noise), helpers
 
 
 class Declaration:
@@ -66,54 +246,184 @@ class Declaration:
         """The table entries this declaration compiles to; `keys` are the table's foreign keys."""
         raise NotImplementedError
 
+    @property
+    def family(self) -> bool:
+        """Whether a seed must draw this declaration before its table can be sampled."""
+        return any(ranged(getattr(self, f.name)) for f in fields(self))
+
+    def draw(self, rng: np.random.Generator) -> "Declaration":
+        return replace(self, **{f.name: drawn(getattr(self, f.name), rng) for f in fields(self)})
+
+
+@dataclass(frozen=True)
+class ByLevel:
+    """Each level of the categorical `parent` puts a column on its own `(low, high)` range. The
+    parent moves the column by `strength` at the ranges' standardized midpoints, logged when
+    positive."""
+
+    parent: str
+    ranges: Mapping[object, tuple[float, float]]
+    strength: float | Range = STRONG
+
+    @property
+    def effects(self) -> dict[object, float]:
+        mids = np.array([(low + high) / 2.0 for low, high in self.ranges.values()])
+        mids = np.log10(mids) if (mids > 0).all() else mids
+        spread = float(mids.std()) or 1.0
+        return dict(zip(self.ranges, ((mids - mids.mean()) / spread).tolist(), strict=True))
+
+    def draw(self, rng: np.random.Generator) -> "ByLevel":
+        return replace(self, strength=drawn(self.strength, rng))
+
+    def apply(
+        self, values: np.ndarray, codes: np.ndarray, levels: tuple[object, ...]
+    ) -> np.ndarray:
+        """The values cut per level onto its range, each level's central 99% spanning it."""
+        out = values.copy()
+        for code, level in enumerate(levels):
+            low, high = self.ranges[level]
+            rows = (codes == code) & np.isfinite(out)
+            if rows.any():
+                ends = np.quantile(out[rows], [0.005, 0.995])
+                unit = np.clip((out[rows] - ends[0]) / (ends[1] - ends[0] or 1.0), 0.0, 1.0)
+                step = 10.0 ** np.floor(np.log10((high - low) / 500.0))
+                out[rows] = np.clip(np.round((low + unit * (high - low)) / step) * step, low, high)
+        return out
+
 
 @dataclass(frozen=True)
 class Numeric(Declaration):
-    """A number following `marginal`: the causes' weighted sum is standardized, `noise` of that
-    standard deviation is added and the rows take the marginal's values in that order. Without a
-    marginal the column is that sum on the causes' unit scales plus the noise. `round` is a step
-    and, with `clip`, applies last."""
+    """A number following `marginal`: the causes' weighted sum plus `noise` orders the rows, and
+    they take the marginal's values in that order. Without a marginal the column is that sum. A
+    share `zeros` of the rows record the marginal's floor, or 0, and `clip` (either side may be
+    None) and `round` (a step) apply last. `how` combines the causes: their sum, largest, smallest,
+    compounding product, or `rules`, a sum whose pairs are thresholds. A pair in `causes` is the
+    product of two columns. `missing_by` puts the blanks on the `high` or `low` rows of a column."""
 
-    marginal: Distribution | None = None
+    marginal: Distribution | Scaled | ByLevel | None = None
     causes: Causes = field(default_factory=dict)
-    noise: float | None = None
+    noise: float | Range | Noise | Distribution | None = None
     missing: float = 0.0
-    clip: tuple[float, float] | None = None
+    clip: tuple[float | None, float | None] | None = None
     round: float | None = None
+    zeros: float = 0.0
+    missing_by: tuple[str, str] | None = None
+    how: str = "sum"
+    doc: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.marginal, ByLevel):
+            if self.clip is not None or self.round is not None or self.zeros:
+                raise ValueError("ByLevel renders last: no clip, round or zeros with it")
+            if self.marginal.parent in self.causes:
+                raise ValueError(f"ByLevel sets the effect of {self.marginal.parent!r} itself")
+        if isinstance(self.marginal, Scaled | Bounded):
+            low, high = self.marginal.low, self.marginal.high
+            if self.round is not None and self.round >= high - low:
+                raise ValueError(f"round {self.round} is no step inside the range ({low}, {high})")
+            if any(c is not None and not low <= c <= high for c in self.clip or ()):
+                raise ValueError(f"clip {self.clip} must lie inside the range ({low}, {high})")
 
     def entries(self, name: str, keys: Collection[str]) -> dict[str, Node | Column]:
-        node = _node(self.causes, self.noise, keys, standardize=self.marginal is not None)
-        options = {"clip": self.clip, "round": self.round}
-        return {name: Column(node, marginal=self.marginal, missing=self.missing, **options)}
+        causes, marginal = self.causes, self.marginal
+        if isinstance(marginal, ByLevel):
+            causes = {**causes, marginal.parent: (marginal.strength, marginal.effects)}
+            marginal = None
+        node, helpers = _node(name, causes, self.noise, keys, self.how)
+        bounded, clip = isinstance(marginal, Bounded), self.clip
+        if bounded:
+            limits = self.clip or (None, None)
+            clip = (
+                marginal.low if limits[0] is None else limits[0],
+                marginal.high if limits[1] is None else limits[1],
+            )
+        column = Column(
+            node,
+            marginal=marginal,
+            missing=self.missing,
+            clip=clip,
+            round=self.round,
+            zeros=(self.zeros, marginal.low if bounded else 0.0) if self.zeros else None,
+            missing_by=self.missing_by,
+        )
+        return {**helpers, name: column}
 
 
 @dataclass(frozen=True)
 class Categorical(Declaration):
-    """A level from `levels`, a sequence of equally common levels or a mapping of level to share.
-    Rows are ranked by the causes' standardized sum plus `noise` and cut at the shares, so a
-    positive weight pushes rows toward the later levels. Children read it through a weight, which
-    follows that rank, or through a mapping of level to effect."""
+    """A level from `levels`: a sequence of equally common levels, a mapping of level to share, or
+    `Shares`. Rows are ranked by the causes' sum plus `noise` and cut at the shares. Children read
+    it through a mapping of level to effect or, when `ordered`, also through a weight, which
+    follows the rank. With `scores` ({level: {column: weight}}) a row instead takes the level
+    scoring highest, under Gumbel noise; realizing fits the scores to the shares."""
 
-    levels: Sequence[object] | Mapping[object, float]
+    levels: Sequence[object] | Mapping[object, float] | Shares
     causes: Causes = field(default_factory=dict)
-    noise: float | None = None
+    noise: float | Range | Noise | Distribution | None = None
     missing: float = 0.0
+    ordered: bool = False
+    scores: Mapping[object, Mapping[str, float | Range]] | None = None
+    missing_by: tuple[str, str] | None = None
+    how: str = "sum"
+    doc: str | None = None
 
-    def entries(self, name: str, keys: Collection[str]) -> dict[str, Node | Column]:
+    def __post_init__(self) -> None:
         if isinstance(self.levels, str):
             raise ValueError("levels are a sequence or a mapping, not one string")
-        shares = isinstance(self.levels, Mapping)
-        probabilities = tuple(self.levels.values()) if shares else None
+        if self.scores is not None:
+            if self.causes or self.how != "sum" or self.ordered:
+                raise ValueError("scores take the place of causes, how and an order")
+            if not isinstance(self.levels, Mapping | Shares):
+                raise ValueError("scores need the shares they are fit to")
+            if not isinstance(self.noise, type(None) | Gumbel | Noise | float | int):
+                raise ValueError("scores take Gumbel noise")
+            if isinstance(self.noise, Noise) and self.noise.kind != "gumbel":
+                raise ValueError("scores take Gumbel noise")
+
+    @property
+    def family(self) -> bool:
+        return self.scores is not None or super().family
+
+    def entries(self, name: str, keys: Collection[str]) -> dict[str, Node | Column]:
         categories = tuple(self.levels)
-        column = Column(
-            _node(self.causes, self.noise, keys),
-            categories=categories,
-            probabilities=probabilities,
-            missing=self.missing,
-        )
         codes = tuple(float(code) for code in range(len(categories)))
-        code = Node(LookupEdge(name, codes, column.category_probabilities), noise=None)
-        return {name: column, name + CODE: code}
+        if self.scores is not None:
+            node = self.scored(categories)
+            read = MatrixEdge(name, np.asarray(codes)[:, None])
+            column = Column(
+                node,
+                categories=categories,
+                missing=self.missing,
+                missing_by=self.missing_by,
+                fit_shares=tuple(self.levels.values()),
+                ordered=False,
+            )
+            helpers = {}
+        else:
+            shares = isinstance(self.levels, Mapping)
+            node, helpers = _node(name, self.causes, self.noise, keys, self.how)
+            column = Column(
+                node,
+                categories=categories,
+                probabilities=tuple(self.levels.values()) if shares else None,
+                missing=self.missing,
+                missing_by=self.missing_by,
+                ordered=self.ordered,
+            )
+            read = LookupEdge(name, codes, column.category_probabilities)
+        return {**helpers, name: column, name + CODE: Node(read, noise=None)}
+
+    def scored(self, categories: tuple[object, ...]) -> Node:
+        if unknown := set(self.scores) - set(categories):
+            raise ValueError(f"scores name unknown levels {sorted(map(str, unknown))}")
+        weights: dict[str, np.ndarray] = {}
+        for k, level in enumerate(categories):
+            for feature, weight in self.scores.get(level, {}).items():
+                weights.setdefault(feature, np.zeros((1, len(categories))))[0, k] = weight
+        edges = tuple(MatrixEdge(feature, matrix) for feature, matrix in weights.items())
+        bias = (0.0,) * len(categories)
+        noise = self.noise if isinstance(self.noise, Gumbel) else Gumbel(scale=self.noise or 1.0)
+        return Node(edges, bias=bias, onehot=True, noise=noise)
 
 
 @dataclass(frozen=True)
@@ -123,24 +433,48 @@ class Timestamp(Declaration):
     start: str | pd.Timestamp
     end: str | pd.Timestamp
     causes: Causes = field(default_factory=dict)
-    noise: float | None = None
+    noise: float | Range | Noise | Distribution | None = None
     missing: float = 0.0
+    doc: str | None = None
 
     def entries(self, name: str, keys: Collection[str]) -> dict[str, Node | Column]:
         calendar = Calendar(pd.Timestamp(self.start), pd.Timestamp(self.end))
-        node = _node(self.causes, self.noise, keys)
-        return {name: Column(node, "timestamp", marginal=calendar, missing=self.missing)}
+        node, helpers = _node(name, self.causes, self.noise, keys)
+        return {**helpers, name: Column(node, "timestamp", marginal=calendar, missing=self.missing)}
 
 
 @dataclass(frozen=True)
 class Hidden(Declaration):
-    """A cause no column records, on a unit scale; other columns read it by its name."""
+    """A cause no column records; other columns read it by its name. A root has unit scale."""
 
     causes: Causes = field(default_factory=dict)
-    noise: float | None = None
+    noise: float | Range | Noise | Distribution | None = None
+    doc: str | None = None
 
     def entries(self, name: str, keys: Collection[str]) -> dict[str, Node | Column]:
-        return {name: _node(self.causes, self.noise, keys)}
+        node, helpers = _node(name, self.causes, self.noise, keys)
+        return {**helpers, name: node}
+
+
+@dataclass(frozen=True, eq=False)
+class Derived:
+    """A column computed from the recorded values of numeric columns of its table, named by the
+    function's parameters; a blank input leaves a blank."""
+
+    function: Callable[..., np.ndarray]
+    doc: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.inputs:
+            raise ValueError("a derived column needs at least one input")
+
+    @property
+    def inputs(self) -> tuple[str, ...]:
+        return tuple(inspect.signature(self.function).parameters)
+
+    def compute(self, frame: pd.DataFrame) -> np.ndarray:
+        args = (frame[name].to_numpy(dtype=float) for name in self.inputs)
+        return np.round(np.asarray(self.function(*args), dtype=float), 6)
 
 
 def _real_column(values: pd.Series) -> Column:
@@ -152,7 +486,7 @@ def _real_column(values: pd.Series) -> Column:
         kind, categories = "categorical", tuple(values.cat.categories)
     else:
         kind, categories = "categorical", tuple(sorted(values.dropna().unique(), key=str))
-    return Column(Node(noise=None), kind, categories=categories, values=values)
+    return Column(Node(noise=None), kind, categories=categories, values=values, ordered=False)
 
 
 @dataclass(frozen=True, eq=False)
@@ -160,6 +494,12 @@ class Real(Declaration):
     """A column of given values, kept as they are; other columns read it like any other."""
 
     values: pd.Series | np.ndarray | Sequence[object]
+    doc: str | None = None
+
+    family = False
+
+    def draw(self, rng: np.random.Generator) -> "Real":
+        return self
 
     def entries(self, name: str, keys: Collection[str]) -> dict[str, Node | Column]:
         column = _real_column(pd.Series(self.values))

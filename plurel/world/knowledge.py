@@ -17,8 +17,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from plurel.world.compiler import realize_world
-from plurel.world.schema import WorldSchema
+from plurel import Hidden, Table
+from plurel.world.realize import realize_world
+from plurel.world.record import ancestors, features, level_names, parents
 
 # realizations pooled, so the study holds for every table of the schema; realize tables under other
 # seeds and the study never sees their rows
@@ -45,24 +46,14 @@ def load_knowledge(directory: Path) -> dict[str, dict]:
     return out
 
 
-def _ancestors(schema: WorldSchema, name: str) -> set[str]:
-    seen, frontier = set(), list(schema.parent_names(name))
-    while frontier:
-        node = frontier.pop()
-        if node not in seen:
-            seen.add(node)
-            frontier.extend(schema.parent_names(node))
-    return seen
-
-
-def roles(schema: WorldSchema) -> dict[str, str]:
+def roles(schema: Table) -> dict[str, str]:
     """Each column's place in the causal graph relative to the outcome."""
-    upstream = _ancestors(schema, schema.target)
+    upstream = ancestors(schema, schema.target)
     out = {}
-    for name in schema.feature_names():
-        mine = _ancestors(schema, name)
-        if inputs := schema._formula_inputs(name):
-            out[name] = f"computed from {', '.join(inputs)}"
+    for name in features(schema):
+        mine = ancestors(schema, name)
+        if name in schema.derived:
+            out[name] = f"computed from {', '.join(parents(schema, name))}"
         elif name in upstream:
             out[name] = "a cause of the outcome"
         elif schema.target in mine:
@@ -86,7 +77,7 @@ def _information(x: np.ndarray, y: np.ndarray) -> float:
     return mutual / entropy if entropy > 0 else 0.0
 
 
-def study(schema: WorldSchema) -> dict:
+def study(schema: Table) -> dict:
     """What a large sample of the schema's population shows, pooled over ``STUDY_SEEDS``
     realizations: each outcome's share, and per column how much it alone tells about the outcome
     (``information``, 0 to 1) and where its values sit per outcome: a numeric column's median
@@ -102,13 +93,9 @@ def study(schema: WorldSchema) -> dict:
         frames.append(frame)
     rows = pd.concat(frames, ignore_index=True)
     y = rows[target].astype(str).to_numpy()
-    outcomes = [
-        v
-        for v in (schema.nodes[target].levels or schema.nodes[target].class_scores)
-        if (y == v).any()
-    ]
+    outcomes = [v for v in level_names(schema.declared[target]) if (y == v).any()]
     columns = {}
-    for name in schema.feature_names():
+    for name in features(schema):
         values = rows[name]
         if pd.api.types.is_numeric_dtype(values):
             bins = np.where(values.isna(), -1, np.minimum(values.fillna(0).to_numpy() // 10, 9))
@@ -138,45 +125,49 @@ def study(schema: WorldSchema) -> dict:
     }
 
 
-def brief(schema: WorldSchema) -> dict:
+def brief(schema: Table) -> dict:
     """What the writer reads for one schema: the schema's own words, the study, each column's role,
     whether an unrecorded cause matters, and a voice drawn from the schema id."""
     found, role = study(schema), roles(schema)
-    target = schema.nodes[schema.target]
-    rng = np.random.default_rng(zlib.crc32(schema.schema_id.encode()))
+    target = schema.declared[schema.target]
+    rng = np.random.default_rng(zlib.crc32(schema.name.encode()))
     return {
-        "schema_id": schema.schema_id,
+        "schema_id": schema.name,
         "voice": str(rng.choice(VOICES)),
-        "domain": schema.description,
+        "domain": schema.doc,
         "outcome": {
             "column": schema.target,
-            "description": target.desc,
+            "description": target.doc,
             "values": list(found["outcome_shares"]),
             "shares": found["outcome_shares"],
         },
         "columns": {
             name: {
-                "description": schema.nodes[name].desc,
+                "description": schema.declared[name].doc,
                 **(
-                    {"values": list(schema.nodes[name].levels)} if schema.nodes[name].levels else {}
+                    {"values": level_names(schema.declared[name])}
+                    if hasattr(schema.declared[name], "levels")
+                    else {}
                 ),
                 "role": role[name],
                 **measured,
             }
             for name, measured in found["columns"].items()
         },
-        "unrecorded_cause": any(schema.nodes[n].hidden for n in _ancestors(schema, schema.target)),
+        "unrecorded_cause": any(
+            isinstance(schema.declared[n], Hidden) for n in ancestors(schema, schema.target)
+        ),
     }
 
 
-def lint(written: dict, schema: WorldSchema, brief: dict) -> list[str]:
+def lint(written: dict, schema: Table, brief: dict) -> list[str]:
     """What is wrong with a schema's written world knowledge; empty when it may ship."""
     problems = []
     if not isinstance(written.get("description"), str) or not written["description"].strip():
         problems.append("description is required")
     elif re.search(STOCK_OPENING, written["description"], re.IGNORECASE):
         problems.append("stock opening: say what a record stands for in the domain's own way")
-    expected = {*schema.feature_names(), schema.target}
+    expected = {*features(schema), schema.target}
     notes = written.get("columns", {})
     if set(notes) != expected:
         problems.append(f"columns must be exactly {sorted(expected)}")
@@ -187,7 +178,7 @@ def lint(written: dict, schema: WorldSchema, brief: dict) -> list[str]:
     # the schema's own column names may hold a banned word (a simulation_runs column is domain language)
     prose = re.sub("|".join(map(re.escape, sorted(expected, key=len, reverse=True))), "", text)
     problems += [f"banned wording: {w}" for w in BANNED if re.search(w, prose, re.IGNORECASE)]
-    hidden = [n for n, node in schema.nodes.items() if node.hidden]
+    hidden = [n for n, entry in schema.declared.items() if isinstance(entry, Hidden)]
     low = text.lower()
     problems += [f"names the unrecorded cause {n}" for n in hidden if n.lower() in low or n.lower().replace("_", " ") in low]  # fmt: skip
     known = set(re.findall(r"\d+", json.dumps(brief)))

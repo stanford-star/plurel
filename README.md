@@ -73,30 +73,37 @@ frame.to_csv("customers.csv", index=False)
 | Column | Holds |
 |---|---|
 | `PrimaryKey()` | Row positions, or the given `values` |
-| `Numeric(marginal, causes, noise, missing, clip, round)` | Numbers following `marginal`, any distribution such as `Normal(50, 10)`, `Uniform(18, 80)`, `LogNormal(3, 0.5)`, `Poisson(4)` or `Exponential()` |
-| `Categorical(levels, causes, noise, missing)` | Levels, as a sequence of equally common levels or a dict of level to share |
+| `Numeric(marginal, causes, noise, missing, clip, round, zeros, missing_by, how)` | Numbers following `marginal`, any distribution such as `Normal(50, 10)`, `Uniform(18, 80)`, `LogNormal(3, 0.5)`, `Poisson(4)` or `Exponential()` |
+| `Categorical(levels, causes, noise, missing, ordered, scores, missing_by, how)` | Levels, as a sequence of equally common levels or a dict of level to share |
 | `Timestamp(start, end, causes, noise, missing)` | Times in the span |
 | `Hidden(causes, noise)` | A cause that other columns read but no column records |
+| `Derived(function)` | A number computed from recorded numbers, named by the function's parameters |
 | `Real(values)` | Given values, kept as they are |
 
 **Causes** map a column's name to its effect:
 
-| Effect | Means |
+| Cause and effect | Means |
 |---|---|
-| `0.8` | A weight: higher in the cause means higher here, and a negative weight means lower |
-| `(0.8, "tanh")` | A weight and a transform: `tanh`, `square` (U-shaped), `step`, `relu`, `abs`, `sin`, `exp`, `log`, or any function |
-| `{"gold": 1.5}` | An effect per level of a categorical cause; levels left out have none |
+| `"age": 0.8` | A weight: higher in the cause means higher here, and a negative weight means lower |
+| `"age": (0.8, "tanh")` | A weight and a transform: `tanh`, `square` (U-shaped), `step`, `relu`, `abs`, `sin`, `exp`, `log`, or any function |
+| `"segment": {"gold": 1.5}` | An effect per level of a categorical cause; levels left out have none |
+| `"segment": 0.8` | A weight on a categorical cause, which needs `ordered=True` on it: its levels are then a scale |
+| `("age", "tenure"): 0.8` | A weight on the product of two causes |
+| `("segment", "age"): {"gold": 1.5}` | A slope of the second cause per level of the first |
 
-A column adds up its causes' effects and puts them on a unit scale, then adds `noise` of that
-standard deviation, 0.5 by default, so a smaller `noise` follows the causes more closely. The rows
-then take the `marginal`'s values in that order, which means a column holds its marginal whatever
-its causes. A categorical column cuts the same order at its shares, so a positive weight pushes rows
-toward its later levels. Causes are read on an internal unit scale, not in the units of their
-marginals, so a `Numeric` without a marginal is a score, plus the noise, as floats. The exception is
-a count below, which is exact.
+A column is its causes' effects added up plus `noise`, a standard deviation of 0.5 by default, and
+a root is a unit normal. So `y = 2 * x + noise` is what `causes={"x": 2.0}` says: a larger weight or
+a smaller `noise` follows the causes more closely. `how` combines the effects another way: `max`,
+`min`, or `product`, their compounding. The rows then take the `marginal`'s values in that order,
+which means a column holds its marginal whatever its causes. A categorical column cuts the same
+order at its shares, so a positive weight pushes rows toward its later levels. Causes are read as
+those sums, not in the units of their marginals, so a `Numeric` without a marginal is the sum itself,
+as floats.
 
 `round` is a step: `round=1` gives whole numbers and `round=0.01` cents. `clip=(lo, hi)` caps the
-values. `Timestamp`'s `end` is exclusive.
+values, and either side may be `None`. `zeros=0.2` records a share of the rows at 0, or at the floor
+of a `Scaled` marginal. `missing=0.1, missing_by=("age", "high")` puts the blanks on the high rows of
+a number. `Timestamp`'s `end` is exclusive.
 
 Sampling is deterministic in the seed.
 
@@ -127,7 +134,7 @@ have no parent. With `nullable=0.02` a share of the rows point at nothing, and a
 the key takes `fill`, which such a key must then set: `ForeignKey("customers", nullable=0.02, fill=0.0)`.
 
 `Summary` reads the rows pointing back. It takes the table and its key, and counts them unless told
-to aggregate a column of theirs on the same unit scale (`Summary("staff", "boss_id", "pay", "mean",
+to aggregate a column of theirs, as its sum (`Summary("staff", "boss_id", "pay", "mean",
 fill=0.0)`; also `sum`, `max` and `min`; all but `sum` need a `fill` for rows that nothing points
 at). With `noise=0` and no marginal a count is exact, and a `Hidden` count lets rows with more
 reports rank higher:
@@ -141,7 +148,7 @@ staff = Table({
     "team_id": ForeignKey("teams"),
     "boss_id": ForeignKey("staff", TreeLink(roots=0.05), fill=0.0),
     "reports": Hidden(causes={Summary("staff", "boss_id"): 1.0}),
-    "grade": Categorical((1, 2, 3), causes={"reports": 1.0}),
+    "grade": Categorical((1, 2, 3), causes={"reports": 1.0}, ordered=True),
     "pay": Numeric(LogNormal(11, 0.3), causes={"grade": 1.0, "team_id.size": 0.3}),
 })
 frames = Schema({"teams": teams, "staff": staff}).sample({"teams": 8, "staff": 200}, seed=0)
@@ -238,48 +245,60 @@ python scripts/synthetic_gen.py --seed_offset 0 --num_dbs 1000 --num_proc 16
 Databases land in `~/.cache/relbench/plurel-<seed>`; see `--help` for the output directory,
 name prefix and validation and test shares.
 
-## Write your own tables
+## Author many tables from one description
 
-To author many tables from one description, a `WorldSchema` says what a table means: what each column is, on what scale, and how it depends on
-the others. A schema authors signs and strength classes; a seed draws the magnitudes, so one schema
-gives many tables. `validate()` names the first rule a schema breaks, which makes the language easy
-for an agent to write against.
+Any number or marginal above may be a range. The table is then a family: `realize(seed)` draws one
+table of it, and one description gives many tables, each reproducible from its seed. `Schema.realize`
+does the same for a whole database, so an agent can author either.
 
 ```python
-from plurel.world import Edge, Node, WorldSchema, realize_world
+from plurel import LOW, MEDIUM, STRONG, WEAK, Categorical, Noise, Numeric, Scaled, Table
 
-schema = WorldSchema(
-    schema_id="clinic_referral_outcome",
-    target="outcome",
-    description="Each row is one referral a clinic received; outcome records how it ended.",
-    nodes={
-        "age": Node(kind="numeric", units="duration", dist="right", scale=(0, 90), desc="the patient's age"),
-        "wait_days": Node(
-            kind="numeric", units="duration", scale=(0, 60), rounding=1,
-            parents={"age": Edge(effect=+0.5)}, noise_scale="low", noise_dist="gaussian",
-            desc="days waited",
+referrals = Table(
+    {
+        "age": Numeric(Scaled("duration", 0, 90, shape="right"), doc="the patient's age"),
+        "wait_days": Numeric(
+            Scaled("duration", 0, 60), round=1, causes={"age": WEAK}, noise=LOW, doc="days waited"
         ),
-        "outcome": Node(
-            kind="categorical", levels=["declined", "accepted"], level_probs={"declined": 0.7, "accepted": 0.3},
-            parents={"wait_days": Edge(effect=-1, shape="saturating")},
-            noise_scale="medium", noise_dist="gaussian", desc="how it ended",
+        "outcome": Categorical(
+            {"declined": 0.7, "accepted": 0.3},
+            causes={"wait_days": (-STRONG, "tanh")},
+            noise=Noise("gaussian", MEDIUM),
+            doc="how it ended",
         ),
     },
+    name="clinic_referral_outcome",
+    doc="Each row is one referral a clinic received; outcome records how it ended.",
+    target="outcome",
 )
-population = realize_world(schema, seed=0)
-rows = population.rows(n=1000, draw=0)
+rows = referrals.realize(seed=0).sample(1000, seed=0)
 ```
 
-Nodes can also declare hidden causes, nominal parents, interactions, non-additive mechanisms, derived
-columns and what the record rounds, caps or leaves blank; `compile_schema` returns the plain `Table`.
+`STRONG` and `WEAK` are strengths and `LOW`, `MEDIUM` and `HIGH` noise levels, each a `Range` a seed
+draws from; `-WEAK` is a negative strength.
+
+| Drawable | Draws |
+|---|---|
+| `Range(low, high)` | A number, wherever a weight, an effect or a noise goes |
+| `Scaled(units, low, high, shape=None)` | A marginal on the range, of the given shape or one the `units` allow: `count`, `amount`, `duration`, `ratio`, `score`, `percent`, `signed` |
+| `Shares(levels, concentration)` | A categorical column's shares, around a dict of them or from its levels alone |
+| `Noise(kind, std)` | Noise: `gaussian`, `laplace`, `student_t`, `skewed` or `gumbel` |
+| `ByLevel(column, {level: (low, high)})` | A marginal with its own range per level of a categorical column |
+
+`Categorical(shares, scores={level: {column: weight}})` takes the level that scores highest instead
+of cutting a rank. Realizing fits these scores, and every level cut, to one draw of the rows, so a
+realized table's shares follow its rows and it can be sampled at any size.
+
+`plurel.world` holds what a catalog of such tables needs. `load_catalog` reads a package whose file
+layout is its taxonomy, declared by one plan per sector (`Taxonomy`), and can live in any repository.
+`validate` states a record's rules, `realize_world` draws a record as a `Population` with its card
+and its grouped or joint transforms, `plurel.world.authoring.realism.check` is the gate on a new
+record, `plurel.world.authoring.dedupe` lists near-duplicates, and `brief` and `lint` support writing
+a record's world knowledge. [`examples/world/`](examples/world/) shows them together, and
+[its guide](plurel/world/authoring/GUIDE.md) is written for an agent adding records. A catalog record
+is one table; an authored database goes through `Schema.realize` directly.
 `realize_random(seed, columns=...)` in `plurel.random_scm` gives a table of the same shape from the
 prior, with no text.
-
-A catalog of schemas is a package whose file layout is its taxonomy (`load_catalog`), declared by one
-plan per sector (`Taxonomy`). It can live in any repository. `plurel.world.authoring.realism.check`
-is the gate on a new schema, `plurel.world.authoring.dedupe` lists near-duplicates, and `brief` and
-`lint` support writing a schema's world knowledge. [`examples/world/`](examples/world/) shows them
-together.
 
 ## Development
 

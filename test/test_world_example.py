@@ -7,6 +7,7 @@ import pytest
 
 from plurel.world import brief, lint, load_knowledge, realize_world, roles
 from plurel.world.authoring.realism import check
+from plurel.world.record import domain
 
 EXAMPLE = Path(__file__).parents[1] / "examples" / "world"
 
@@ -18,14 +19,14 @@ def schema(monkeypatch):
         del sys.modules[name]
     from catalog import SCHEMAS
 
-    yield next(s for s in SCHEMAS if s.schema_id == "repair_cafe_item_visit_outcome")
+    yield next(s for s in SCHEMAS if s.name == "repair_cafe_item_visit_outcome")
     for name in [m for m in sys.modules if m == "catalog" or m.startswith("catalog.")]:
         del sys.modules[name]
 
 
 def test_the_example_is_placed_by_its_path(schema):
     assert schema.taxonomy == ("community_services", "repair_and_reuse", "repair_cafes")
-    assert schema.domain == "repair cafes"
+    assert domain(schema) == "repair cafes"
 
 
 def test_the_example_passes_its_own_gate(schema):
@@ -33,7 +34,7 @@ def test_the_example_passes_its_own_gate(schema):
 
 
 def test_the_examples_knowledge_passes_its_lint(schema):
-    written = load_knowledge(EXAMPLE / "world_knowledge")[schema.schema_id]
+    written = load_knowledge(EXAMPLE / "world_knowledge")[schema.name]
     assert lint(written, schema, brief(schema)) == []
 
 
@@ -49,7 +50,7 @@ def test_the_examples_shares_and_graph(schema):
 def test_the_examples_draws_are_pinned(schema):
     frame = realize_world(schema, 0).rows(200, 0)
     digest = hashlib.sha256(frame.round(4).to_csv(index=False).encode()).hexdigest()[:16]
-    assert digest == "023f5120191af4ca"
+    assert digest == "5348765244f054d2"
 
 
 def test_the_example_script_runs(capsys, schema):

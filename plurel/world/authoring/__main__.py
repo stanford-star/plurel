@@ -15,6 +15,7 @@ import re
 import sys
 from pathlib import Path
 
+from plurel import Table
 from plurel.world.authoring import dedupe, knowledge_orders, orders, review
 from plurel.world.authoring.realism import (
     census,
@@ -27,12 +28,12 @@ from plurel.world.authoring.realism import (
 )
 from plurel.world.authoring.workspace import Workspace
 from plurel.world.plans import describe, load_plan
-from plurel.world.schema import WorldSchema
+from plurel.world.record import level_names, validate
 
 DASH = re.compile("[\u2013\u2014]")
 
 
-def load_file(path: Path) -> dict[str, WorldSchema]:
+def load_file(path: Path) -> dict[str, Table]:
     """Every schema of one catalog file, validated, with its taxonomy derived from the path."""
     if DASH.search(path.read_text()):
         sys.exit("FAIL: em or en dash in the file")
@@ -40,27 +41,21 @@ def load_file(path: Path) -> dict[str, WorldSchema]:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     schemas = {}
-    for schema in (v for v in vars(module).values() if isinstance(v, WorldSchema)):
-        if schema.taxonomy is not None:
-            sys.exit(
-                f"FAIL: {schema.schema_id}: taxonomy is loader-derived; never author it inline"
-            )
-        object.__setattr__(
-            schema, "taxonomy", (path.parents[2].name, path.parents[1].name, path.parent.name)
-        )
-        schema.validate()
-        schemas[schema.schema_id] = schema
+    for schema in (v for v in vars(module).values() if isinstance(v, Table)):
+        schema.taxonomy = (path.parents[2].name, path.parents[1].name, path.parent.name)
+        validate(schema)
+        schemas[schema.name] = schema
     return schemas
 
 
-def gate_line(schema: WorldSchema, *, realize: bool) -> tuple[bool, str]:
-    t = schema.nodes[schema.target]
+def gate_line(schema: Table, *, realize: bool) -> tuple[bool, str]:
+    t = schema.declared[schema.target]
     reasons = check(schema, realize=realize)
-    k = len(t.level_probs or t.class_scores)
+    k = len(level_names(t))
     verdict = "OK" if not reasons else "FAIL " + "; ".join(reasons)
     return (
         not reasons,
-        f"{schema.schema_id}: {verdict}  [{target_kind(t)}, {k} classes, {len(schema.nodes) - 1} columns, phenomena={sorted(phenomena(schema))}]",
+        f"{schema.name}: {verdict}  [{target_kind(t)}, {k} classes, {len(schema.declared) - 1} columns, phenomena={sorted(phenomena(schema))}]",
     )
 
 
@@ -90,16 +85,14 @@ def sweep(workspace: Workspace, *, sector: str) -> int:
         reasons = validation(schema, realize=True)
         if reasons:
             invalid += 1
-            print(f"{schema.schema_id}: INVALID " + "; ".join(reasons))
+            print(f"{schema.name}: INVALID " + "; ".join(reasons))
     print(
         f"validation: {len(schemas) - invalid} OK, {invalid} INVALID of {len(schemas)} schemas in {sector}"
     )
     print(
         f"hygiene findings (authoring rules, not blocking): {sum(bool(hygiene(s)) for s in schemas)} schemas"
     )
-    pairs = dedupe.candidates(
-        catalog, threshold=dedupe.THRESHOLD, among={s.schema_id for s in schemas}
-    )
+    pairs = dedupe.candidates(catalog, threshold=dedupe.THRESHOLD, among={s.name for s in schemas})
     print(f"duplicate candidates: {len(pairs)}")
     print(dedupe.report(pairs, catalog))
     print(summary(census(schemas)))

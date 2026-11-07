@@ -8,8 +8,9 @@ import re
 
 import pandas as pd
 
-from plurel.world.compiler import realize_world
-from plurel.world.schema import Node, WorldSchema
+from plurel import Categorical, Derived, Hidden, Numeric, Table
+from plurel.world.realize import realize_world
+from plurel.world.record import features, level_names, pairs, shares
 
 ID_NAME = re.compile(
     r"(_id|_number|_num|_code|_serial|_ticket|_locator|_tag|_key|_ref|_barcode)$|^(id|ref)_"
@@ -63,41 +64,36 @@ def sourced(text: str) -> bool:
     return bool(SOURCE_WORD.search(text) or SOURCE_NAME.search(text))
 
 
-def target_kind(node: Node) -> str:
-    return "argmax" if node.class_scores else ("graded" if node.ordinal else "nominal")
+def target_kind(entry: Categorical) -> str:
+    return "argmax" if entry.scores else ("graded" if entry.ordered else "nominal")
 
 
-def features(schema: WorldSchema) -> dict[str, Node]:
-    return {k: n for k, n in schema.nodes.items() if k != schema.target}
-
-
-def phenomena(schema: WorldSchema) -> set[str]:
+def phenomena(schema: Table) -> set[str]:
     """The record phenomena the schema carries, by name (see PHENOMENA): each is a mechanism of the Table."""
-    feats = features(schema)
+    entries = schema.declared.values()
+    numbers = [e for e in entries if isinstance(e, Numeric)]
     carried = {
-        "mar_or_mnar": any(n.missing_by is not None for n in feats.values()),
-        "censor_or_rounding": any(
-            n.censor is not None or n.rounding is not None for n in feats.values()
-        ),
-        "zero_inflation": any(n.zero_inflation is not None for n in feats.values()),
-        "hidden_cause": any(n.hidden for n in feats.values()),
-        "non_additive_mechanism": any(n.mechanism != "additive" for n in schema.nodes.values()),
-        "interaction": any(n.interactions for n in schema.nodes.values()),
+        "mar_or_mnar": any(getattr(e, "missing_by", None) is not None for e in entries),
+        "censor_or_rounding": any(n.clip is not None or n.round is not None for n in numbers),
+        "zero_inflation": any(n.zeros for n in numbers),
+        "hidden_cause": any(isinstance(e, Hidden) for e in entries),
+        "non_additive_mechanism": any(getattr(e, "how", "sum") != "sum" for e in entries),
+        "interaction": any(pairs(e) for e in entries),
     }
     return {name for name in PHENOMENA if carried[name]}
 
 
-def validation(schema: WorldSchema, *, realize: bool) -> list[str]:
+def validation(schema: Table, *, realize: bool) -> list[str]:
     """Defects that make a schema unusable as training data; empty when it passes. ``realize`` also draws
     rows to catch absent classes and constant columns. Read off the mechanism, never off names."""
-    t, feats = schema.nodes[schema.target], features(schema)
+    t, feats = schema.declared[schema.target], features(schema)
     reasons: list[str] = []
-    classes = len(t.level_probs or t.class_scores or {})
+    classes = len(level_names(t))
     if not MIN_CLASSES <= classes <= MAX_CLASSES:
         reasons.append(
             f"target has {classes} classes; {MIN_CLASSES} to {MAX_CLASSES}: merge the rarest into their real parent category or predict the decision the record holds"
         )
-    probs = t.level_probs or {}
+    probs = shares(t) or {}
     if probs:
         values = list(probs.values())
         if max(values) - min(values) < 1e-9:
@@ -108,11 +104,12 @@ def validation(schema: WorldSchema, *, realize: bool) -> list[str]:
             )
     thin = [
         k
-        for k, n in feats.items()
-        if n.kind == "categorical"
-        and not n.parents
-        and n.level_probs is None
-        and len(n.levels or []) >= 4
+        for k in feats
+        if isinstance(n := schema.declared[k], Categorical)
+        and not n.causes
+        and not n.scores
+        and shares(n) is None
+        and len(level_names(n)) >= 4
     ]
     if thin:
         reasons.append(
@@ -120,15 +117,13 @@ def validation(schema: WorldSchema, *, realize: bool) -> list[str]:
         )
     if realize:
         try:
-            population = realize_world(
-                schema=schema, seed=0, share_concentration=SHARE_CONCENTRATION
-            )
+            population = realize_world(schema, seed=0, share_concentration=SHARE_CONCENTRATION)
             frame = population.rows(n=CONSTANT_CHECK_ROWS, draw=0)
             seen = set(population.rows(n=CLASS_CHECK_ROWS, draw=1)[schema.target].astype(str))
-            absent = [c for c in (t.levels or list(t.class_scores)) if str(c) not in seen]
+            absent = [c for c in level_names(t) if str(c) not in seen]
             if absent:
                 reasons.append(f"classes absent from {CLASS_CHECK_ROWS} rows: {absent}")
-            flat = [c for c in feats if not feats[c].hidden and frame[c].nunique(dropna=True) < 2]
+            flat = [c for c in feats if frame[c].nunique(dropna=True) < 2]
             if flat:
                 reasons.append(f"constant feature columns: {flat}")
         except Exception as e:  # noqa: BLE001
@@ -136,16 +131,14 @@ def validation(schema: WorldSchema, *, realize: bool) -> list[str]:
     return reasons
 
 
-def hygiene(schema: WorldSchema) -> list[str]:
+def hygiene(schema: Table) -> list[str]:
     """Authoring rules for a new file: the record's framing, the copy guards and the provenance of its
     numbers. The gate enforces them on new work; over the catalog they are reported, not blocking."""
     feats = features(schema)
     reasons: list[str] = []
-    if not schema.description.startswith("Each row is"):
+    if not schema.doc.startswith("Each row is"):
         reasons.append("description must open with 'Each row is'")
-    ids = [
-        k for k, n in feats.items() if n.kind == "numeric" and not n.hidden and ID_NAME.search(k)
-    ]
+    ids = [k for k in feats if _numeric(schema, k) and ID_NAME.search(k)]
     if ids:
         reasons.append(f"identifiers rendered as numeric features: {ids}")
     if BAND_TARGET.search(schema.target):
@@ -158,21 +151,30 @@ def hygiene(schema: WorldSchema) -> list[str]:
         reasons.append(
             f"description or rationale names a public dataset rather than the organisation's own record: {words}"
         )
-    facts = QUANT.findall(schema.rationale)
+    rationale = schema.sources or ""
+    facts = QUANT.findall(rationale)
     if len(facts) < MIN_FACTS:
         reasons.append(
             f"rationale anchors {len(facts)} quantitative facts, wanted {MIN_FACTS} or more (shares, rates, typical values with % or per)"
         )
-    if not sourced(schema.rationale):
+    if not sourced(rationale):
         reasons.append(
             "rationale names no statistical source (a registry, survey, report, standard or agency)"
         )
     return reasons
 
 
-def check(schema: WorldSchema, *, realize: bool) -> list[str]:
+def check(schema: Table, *, realize: bool) -> list[str]:
     """The gate on a new file: validation, then hygiene."""
     return validation(schema, realize=realize) + hygiene(schema)
+
+
+def _numeric(schema: Table, name: str) -> bool:
+    return isinstance(schema.declared[name], Numeric | Derived)
+
+
+def placed(schema: Table) -> tuple[str, str, str]:
+    return getattr(schema, "taxonomy", ("", "", ""))
 
 
 ENTITY = re.compile(
@@ -185,17 +187,19 @@ def census(schemas) -> pd.DataFrame:
     defects and its hygiene findings."""
     rows = []
     for s in schemas:
-        t, feats = s.nodes[s.target], features(s)
-        numeric = [n for n in feats.values() if n.kind == "numeric"]
-        m = ENTITY.search(s.description)
+        t, feats = s.declared[s.target], features(s)
+        numeric = [k for k in feats if _numeric(s, k)]
+        m = ENTITY.search(s.doc)
+        probs = shares(t) or {}
+        rationale = s.sources or ""
         rows.append(dict(
-            schema_id=s.schema_id, sector=(s.taxonomy or ("", "", ""))[0], division=(s.taxonomy or ("", "", ""))[1],
+            schema_id=s.name, sector=placed(s)[0], division=placed(s)[1],
             entity=m.group(1).strip() if m else "", n_features=len(feats), n_numeric=len(numeric),
             target_kind=target_kind(t),
-            n_classes=len(t.levels or t.class_scores or []), majority=max((t.level_probs or {0: float("nan")}).values()),
-            round_shares=bool(t.level_probs) and all(abs(p * 20 - round(p * 20)) < 1e-9 for p in t.level_probs.values()),
-            identifiers=sum(bool(ID_NAME.search(k)) for k, n in feats.items() if n.kind == "numeric"),
-            facts=len(QUANT.findall(s.rationale)), sourced=sourced(s.rationale),
+            n_classes=len(level_names(t)), majority=max((probs or {0: float("nan")}).values()),
+            round_shares=bool(probs) and all(abs(p * 20 - round(p * 20)) < 1e-9 for p in probs.values()),
+            identifiers=sum(bool(ID_NAME.search(k)) for k in numeric),
+            facts=len(QUANT.findall(rationale)), sourced=sourced(rationale),
             phenomena="|".join(sorted(phenomena(s))), invalid=len(validation(s, realize=False)), hygiene=len(hygiene(s)),
         ))  # fmt: skip
     return pd.DataFrame(rows)
@@ -212,12 +216,13 @@ f"schemas valid on the static rules {(table.invalid == 0).mean():.2f}", f"schema
     return "\n".join(lines)
 
 
-def copied_precision(schema: WorldSchema) -> list[str]:
+def copied_precision(schema: Table) -> list[str]:
     """Signs that a published table was copied to the decimal: two or more target shares above the floor finer
     than half a percent point, a percentage with two decimals, or one of ten or more quoted to a decimal without a
     hedge word before it."""
     out: list[str] = []
-    probs = schema.nodes[schema.target].level_probs or {}
+    probs = shares(schema.declared[schema.target]) or {}
+    rationale = schema.sources or ""
     precise = [
         p
         for p in probs.values()
@@ -225,8 +230,8 @@ def copied_precision(schema: WorldSchema) -> list[str]:
     ]
     if len(precise) >= 2:
         out.append(f"target shares {precise} are finer than {SHARE_QUANTUM:.3f}")
-    for m in PRECISE_PERCENT.finditer(schema.rationale):
-        hedged = HEDGES.search(schema.rationale[max(0, m.start() - 40) : m.start()])
+    for m in PRECISE_PERCENT.finditer(rationale):
+        hedged = HEDGES.search(rationale[max(0, m.start() - 40) : m.start()])
         whole, decimals = int(m.group(1)), len(m.group(2))
         if (
             decimals >= 3
@@ -237,12 +242,12 @@ def copied_precision(schema: WorldSchema) -> list[str]:
     return out
 
 
-def public_data_words(schema: WorldSchema) -> list[str]:
+def public_data_words(schema: Table) -> list[str]:
     """Words that say the record is a public dataset rather than an organisation's own file."""
     return sorted(
         {
             m.group(0).lower()
-            for text in (schema.description, schema.rationale)
+            for text in (schema.doc or "", schema.sources or "")
             for m in PUBLIC_DATA.finditer(text)
         }
     )

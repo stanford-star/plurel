@@ -17,9 +17,9 @@ from plurel.world.authoring.realism import check  # noqa: E402
 
 
 def main() -> None:
-    schema = next(s for s in SCHEMAS if s.schema_id == "repair_cafe_item_visit_outcome")
+    schema = next(s for s in SCHEMAS if s.name == "repair_cafe_item_visit_outcome")
     print(
-        f"{schema.schema_id} in {'/'.join(schema.taxonomy)}: gate {check(schema, realize=True) or 'OK'}"
+        f"{schema.name} in {'/'.join(schema.taxonomy)}: gate {check(schema, realize=True) or 'OK'}"
     )
 
     # the seed draws the magnitudes, the draw the rows; both repeat anywhere
@@ -29,7 +29,7 @@ def main() -> None:
     print(rows["outcome"].value_counts(normalize=True).round(2).to_string())
 
     print(roles(schema))
-    written = load_knowledge(HERE / "world_knowledge")[schema.schema_id]
+    written = load_knowledge(HERE / "world_knowledge")[schema.name]
     print(f"world knowledge lint: {lint(written, schema, brief(schema)) or 'OK'}")
     print(written["description"])
 

@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
+from plurel import Table
 from plurel.world.knowledge import load_knowledge
-from plurel.world.schema import WorldSchema
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -32,7 +32,7 @@ class Workspace:
     extra_rules: str = ""
     extra_fix_rules: str = ""
 
-    def schemas(self) -> dict[str, WorldSchema]:
+    def schemas(self) -> dict[str, Table]:
         """The catalog's schemas, by id."""
         return catalog_schemas(self.catalog_module)
 
@@ -49,8 +49,8 @@ class Workspace:
 
 
 @cache
-def catalog_schemas(module: str) -> dict[str, WorldSchema]:
-    return {schema.schema_id: schema for schema in importlib.import_module(module).SCHEMAS}
+def catalog_schemas(module: str) -> dict[str, Table]:
+    return {schema.name: schema for schema in importlib.import_module(module).SCHEMAS}
 
 
 @cache

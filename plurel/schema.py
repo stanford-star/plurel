@@ -7,12 +7,35 @@ import numpy as np
 import pandas as pd
 
 from plurel.columns import Column
-from plurel.declare import CODE, Declaration, ForeignKey, PrimaryKey, Real
-from plurel.graph import AGGREGATES, COMPLETE, Edge, Foreign, LevelEdge, LinearEdge, Node, Summary
+from plurel.declare import (
+    CODE,
+    ByLevel,
+    Declaration,
+    Derived,
+    ForeignKey,
+    PrimaryKey,
+    Real,
+)
+from plurel.graph import (
+    AGGREGATES,
+    COMPLETE,
+    Edge,
+    Foreign,
+    LevelEdge,
+    LinearEdge,
+    LookupEdge,
+    Node,
+    Summary,
+    level_edges,
+)
 from plurel.links import TreeLink
 from plurel.random import Seed, generator, lane
 
 Links = dict[tuple[str, str], np.ndarray]
+
+CALIBRATION_ROWS = 4096  # rows of the draw that realizing fits a table's edges and scores to
+CALIBRATION_PASSES = 100
+CALIBRATION_TOLERANCE = 0.01  # the largest bias step, in noise units, at which a fit stops
 
 
 def checked(name: str, node: Node, latent: np.ndarray, n: int) -> np.ndarray:
@@ -30,8 +53,8 @@ def bind(edge: Edge, parent: Node | Column | None) -> Edge:
         if not categorical:
             raise ValueError(f"effects per level need a categorical parent, not {edge.parent!r}")
         return edge.bound(parent.categories)
-    if categorical and isinstance(edge, LinearEdge) and parent.values is not None:
-        raise ValueError(f"{edge.parent!r} holds real levels in no order: give effects per level")
+    if categorical and isinstance(edge, LinearEdge) and not parent.ordered:
+        raise ValueError(f"{edge.parent!r} holds levels in no order: give effects per level")
     return edge
 
 
@@ -43,24 +66,45 @@ def topological[T: Hashable](parents: Mapping[T, tuple[T, ...]]) -> tuple[T, ...
 
 
 class Table:
-    """A table: a dict of its keys, its columns (`Numeric`, `Categorical`, `Timestamp`, `Real`) and
-    the `Hidden` causes they read. The lower-level `Node` and `Column` are accepted too."""
+    """A table: a dict of its keys, its columns (`Numeric`, `Categorical`, `Timestamp`, `Real`,
+    `Derived`) and the `Hidden` causes they read. The lower-level `Node` and `Column` are accepted
+    too. A table holding ranges is a family: `realize(seed)` draws one table of it. `doc`, `target`
+    and `sources` say what the table records, what it is read for and where its numbers come from."""
 
-    def __init__(self, table: Mapping[str, object], *, time_column: str | None = None) -> None:
+    def __init__(
+        self,
+        table: Mapping[str, object],
+        *,
+        time_column: str | None = None,
+        name: str | None = None,
+        doc: str | None = None,
+        target: str | None = None,
+        sources: str | None = None,
+    ) -> None:
+        self.declared = dict(table)
+        self.name, self.doc, self.target, self.sources = name, doc, target, sources
+        self.family = any(isinstance(e, Declaration) and e.family for e in self.declared.values())
+        table = self.draws(0, "probe") if self.family else self.declared
         keys = {name for name, entry in table.items() if isinstance(entry, ForeignKey)}
-        self.table: dict[str, Node | Column | ForeignKey | PrimaryKey] = {}
+        self.table: dict[str, Node | Column | ForeignKey | PrimaryKey | Derived] = {}
+        self.levelled = {
+            name: entry.marginal
+            for name, entry in table.items()
+            if isinstance(getattr(entry, "marginal", None), ByLevel)
+        }
         for name, entry in table.items():
             if isinstance(entry, Declaration):
                 entries = entry.entries(name, keys)
                 if clash := (set(entries) - {name}) & set(table):
                     raise ValueError(f"{name!r} needs the names {sorted(clash)} for itself")
                 self.table.update(entries)
-            elif isinstance(entry, Node | Column | ForeignKey | PrimaryKey):
+            elif isinstance(entry, Node | Column | ForeignKey | PrimaryKey | Derived):
                 self.table[name] = entry
             else:
                 raise ValueError(f"{name!r} must be a key, a column or a hidden cause")
         self.bind_local()
         self.fkeys = {name: e for name, e in self.table.items() if isinstance(e, ForeignKey)}
+        self.derived = {name: e for name, e in self.table.items() if isinstance(e, Derived)}
         self.columns = {
             name: e for name, e in self.table.items() if isinstance(e, Column | PrimaryKey)
         }
@@ -100,6 +144,128 @@ class Table:
         if len(sizes) > 1:
             raise ValueError(f"given values disagree on the row count: {sorted(sizes)}")
         self.size = sizes.pop() if sizes else None
+        self.check_records(table, kinds)
+
+    def check_records(self, table: Mapping[str, object], kinds: Mapping[str, str]) -> None:
+        """The columns a table's records read by name."""
+        for name, column in self.columns.items():
+            by = getattr(column, "missing_by", None)
+            if by is not None and kinds.get(by[0]) != "numeric":
+                raise ValueError(f"{name!r} is blank by {by[0]!r}, which is no numeric column")
+        for name, derived in self.derived.items():
+            if unknown := [c for c in derived.inputs if kinds.get(c) != "numeric"]:
+                raise ValueError(f"{name!r} reads {unknown}, which are no numeric columns")
+        for name, levels in self.levelled.items():
+            if kinds.get(levels.parent) != "categorical":
+                raise ValueError(f"{name!r} takes ranges from {levels.parent!r}: no categorical")
+            if set(levels.ranges) != set(self.columns[levels.parent].categories):
+                raise ValueError(f"{name!r} needs one range per level of {levels.parent!r}")
+        numbers = {*self.hidden, *(name for name, kind in kinds.items() if kind == "numeric")}
+        for name, entry in table.items():
+            for scored in (getattr(entry, "scores", None) or {}).values():
+                if unknown := set(scored) - numbers:
+                    raise ValueError(f"{name!r} scores {sorted(unknown)}: no numbers of its table")
+        if self.target is not None and self.target not in self.table:
+            raise ValueError(f"target {self.target!r} is no column of the table")
+
+    @property
+    def metadata(self) -> dict[str, str | None]:
+        return {
+            "time_column": self.time_column,
+            "name": self.name,
+            "doc": self.doc,
+            "target": self.target,
+            "sources": self.sources,
+        }
+
+    def draws(self, root: int, table: str) -> dict[str, object]:
+        """Every entry as one seed draws it, each from its own stream: adding a column moves no
+        other."""
+        return {
+            name: entry.draw(lane(root, "world", table, name))
+            if isinstance(entry, Declaration)
+            else entry
+            for name, entry in self.declared.items()
+        }
+
+    def like(self, entries: Mapping[str, object]) -> "Table":
+        """This table under other entries of a seed's drawing: nothing left to draw."""
+        table = Table(entries, **self.metadata)
+        table.family, table.declared = False, self.declared
+        table.levelled = self.levelled
+        return table
+
+    def drawn(self, root: int, table: str = "table") -> "Table":
+        return self.like(self.draws(root, table)) if self.family else self
+
+    def realize(self, seed: int) -> "Table":
+        """One table of this family: every range drawn from `seed`, then its level cuts and scores
+        fit to one draw of its rows."""
+        return Schema({"table": self}).realize(seed).tables["table"]
+
+    def finish(self, frame: pd.DataFrame, latents: Mapping[str, np.ndarray]) -> pd.DataFrame:
+        """What is computed from a draw's recorded values: ranges by level, then derived columns.
+        A marginal is taken in the order of a draw's rows, and one row has none."""
+        if len(frame) == 1 and any(getattr(c, "marginal", None) for c in self.columns.values()):
+            raise ValueError("a marginal follows the order of a draw's rows: draw at least two")
+        for name, levels in self.levelled.items():
+            codes = latents[levels.parent + CODE][:, 0]
+            order = self.columns[levels.parent].categories
+            frame[name] = levels.apply(frame[name].to_numpy(dtype=float), codes, order)
+        for name, derived in self.derived.items():
+            frame[name] = derived.compute(frame)
+        return frame[[name for name in self.table if name in frame]]
+
+    def fit_scores(self, latents: Mapping[str, np.ndarray], rng: np.random.Generator) -> "Table":
+        """Biases under which each scored column meets its shares: a fixed point on one draw and
+        fresh Gumbel noise, each pass shifting a level by the noise scale times the log of its
+        wanted over its seen share."""
+        entries = dict(self.table)
+        for name, column in self.columns.items():
+            if not getattr(column, "fit_shares", None):
+                continue
+            node = column.node
+            n = len(next(iter(latents.values())))
+            scores = sum(edge.apply(latents[edge.parent]) for edge in node.edges)
+            noise = rng.gumbel(0.0, node.noise.scale, size=(n, node.dim))
+            wanted, biases = np.asarray(column.fit_shares), np.zeros(node.dim)
+            for _ in range(CALIBRATION_PASSES):
+                codes = np.argmax(scores + biases + noise, axis=1)
+                shares = np.bincount(codes, minlength=node.dim) / n
+                step = node.noise.scale * np.log(wanted / np.maximum(shares, 1.0 / n))
+                if np.abs(step).max() < CALIBRATION_TOLERANCE * node.noise.scale:
+                    break
+                biases += step
+            bias = tuple(float(b) for b in biases - biases.mean())
+            entries[name] = replace(column, node=replace(node, bias=bias))
+        return self.like(entries)
+
+    def cut(self, latents: Mapping[str, np.ndarray]) -> "Table":
+        """Every binned column cut at fixed edges, its latent's quantiles at its shares, and what
+        reads its levels cut there too."""
+        edges = {
+            name: tuple(float(e) for e in level_edges(latents[name], column.category_probabilities))
+            for name, column in self.columns.items()
+            if column.kind == "categorical" and column.values is None and column.node.dim == 1
+        }
+
+        def fixed(node: Node) -> Node:
+            reads = (
+                replace(e, edges=edges[e.parent])
+                if isinstance(e, LookupEdge) and e.parent in edges
+                else e
+                for e in node.edges
+            )
+            return replace(node, edges=tuple(reads))
+
+        entries: dict[str, object] = {}
+        for name, entry in self.table.items():
+            if isinstance(entry, Column) and entry.values is None:
+                entry = replace(entry, node=fixed(entry.node), binning=edges.get(name))
+            elif isinstance(entry, Node):
+                entry = fixed(entry)
+            entries[name] = entry
+        return self.like(entries)
 
     @classmethod
     def from_frame(
@@ -156,12 +322,17 @@ class Table:
         *,
         seed: Seed = None,
         held: Mapping[str, np.ndarray] | None = None,
+        finish: bool = True,
     ) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
-        """This table alone, through a one-table Schema; `held` nodes take the given values."""
+        """This table alone, through a one-table Schema; `held` nodes take the given values and
+        without `finish` the draw leaves out what is computed from its recorded values."""
         if self.fkeys:
             raise ValueError(f"keys {sorted(self.fkeys)} need the tables of a Schema")
         frames, latents = Schema({"table": self}).sample_with_latents(
-            {} if n is None else {"table": n}, seed=seed, held={"table": held} if held else None
+            {} if n is None else {"table": n},
+            seed=seed,
+            held={"table": held} if held else None,
+            finish=finish,
         )
         return frames["table"], latents["table"]
 
@@ -335,6 +506,7 @@ class Schema:
         latents: dict[str, dict[str, np.ndarray]],
         links: Links,
         root: int,
+        finish: bool = True,
     ) -> dict[str, pd.DataFrame]:
         """Turn latents into one frame per table: its columns, then its key columns."""
         frames = {}
@@ -352,6 +524,8 @@ class Schema:
                 else:
                     keys = given.astype("Int64") if pd.api.types.is_integer_dtype(given) else given
                     frame[column] = keys.take(indices).reset_index(drop=True).mask(indices < 0)
+            if finish:
+                frame = scm.finish(frame, latents[table])
             frames[table] = frame[[name for name in scm.table if name in frame]]
         return frames
 
@@ -369,9 +543,12 @@ class Schema:
         *,
         seed: Seed = None,
         held: Mapping[str, Mapping[str, np.ndarray]] | None = None,
+        finish: bool = True,
     ) -> tuple[dict[str, pd.DataFrame], dict[str, dict[str, np.ndarray]]]:
         """One frame and the latents per table; a table of given values has their row count, and
         `held` nodes take the given `(n, dim)` values."""
+        if family := [table for table, scm in self.tables.items() if scm.family]:
+            raise ValueError(f"{family} hold ranges: draw one table with realize(seed)")
         rows = dict(rows or {})
         for table, scm in self.tables.items():
             if scm.size is not None and rows.setdefault(table, scm.size) != scm.size:
@@ -394,4 +571,21 @@ class Schema:
             if scm.real:
                 held[table] = {**scm.real, **held.get(table, {})}
         latents = self.propagate(rows, links, root, held)
-        return self.observe(rows, latents, links, root), latents
+        return self.observe(rows, latents, links, root, finish), latents
+
+    def realize(self, seed: int) -> "Schema":
+        """One database of this family: see `Table.realize`."""
+        return Schema({t: scm.drawn(seed, t) for t, scm in self.tables.items()}).fitted(seed)
+
+    def fitted(self, seed: int) -> "Schema":
+        """Scores and level cuts fit to one draw of `CALIBRATION_ROWS` rows per table."""
+        tables, rng = dict(self.tables), lane(seed, "fit")
+        rows = {t: CALIBRATION_ROWS if scm.size is None else scm.size for t, scm in tables.items()}
+        for table, scm in self.tables.items():
+            if any(
+                column.fit_shares for column in scm.columns.values() if isinstance(column, Column)
+            ):
+                latents = Schema(tables).sample_with_latents(rows, seed=rng)[1]
+                tables[table] = scm.fit_scores(latents[table], rng)
+        latents = Schema(tables).sample_with_latents(rows, seed=rng)[1]
+        return Schema({t: scm.cut(latents[t]) for t, scm in tables.items()})

@@ -69,7 +69,9 @@ def test_categorical_shares_order_and_level_effects():
     frame = Table(
         {
             "age": Numeric(Normal()),
-            "tier": Categorical({"low": 0.5, "mid": 0.3, "top": 0.2}, causes={"age": 1.0}),
+            "tier": Categorical(
+                {"low": 0.5, "mid": 0.3, "top": 0.2}, causes={"age": 1.0}, ordered=True
+            ),
             "after_rank": Numeric(causes={"tier": 1.0}, noise=0.0),
             "after_top": Numeric(causes={"tier": {"top": 5.0}}, noise=0.0),
         }
@@ -100,7 +102,6 @@ def test_clip_round_and_missing_apply_to_the_column():
 @pytest.mark.parametrize(
     "table, match",
     [
-        ({"x": Categorical("abc")}, "not one string"),
         ({"x": Numeric(causes={"y": 1.0})}, "unknown parents"),
         ({"y": Hidden(), "x": Numeric(causes={"y": 1.0}, noise=-1.0)}, "standard deviation"),
         ({"y": Hidden(), "x": Numeric(causes={"y": {"a": 1.0}})}, "categorical parent"),
@@ -385,3 +386,8 @@ def test_a_grouped_reading_keeps_clip_and_round():
     grouping = Grouping("replicates", ("a",), 5.0, 0.5, 0.2, None)
     frame = grouping.draw(table, 300, np.random.default_rng(0))[0]
     assert frame.a.between(30.0, 60.0).all() and (frame.a % 1 == 0).all()
+
+
+def test_one_string_is_no_levels():
+    with pytest.raises(ValueError, match="not one string"):
+        Categorical("abc")

@@ -10,8 +10,9 @@ import re
 import numpy as np
 from scipy import sparse
 
+from plurel import Table
 from plurel.world.authoring.realism import ENTITY
-from plurel.world.schema import WorldSchema
+from plurel.world.record import level_names
 
 STOP = frozenset(
     [
@@ -52,16 +53,15 @@ def _tokens(text: str) -> frozenset[str]:
     )
 
 
-def record_tokens(schema: WorldSchema) -> frozenset[str]:
+def record_tokens(schema: Table) -> frozenset[str]:
     """The row entity: the id and the description's entity clause."""
-    entity = ENTITY.search(schema.description)
-    return _tokens(" ".join([schema.schema_id, entity.group(1) if entity else ""]))
+    entity = ENTITY.search(schema.doc)
+    return _tokens(" ".join([schema.name, entity.group(1) if entity else ""]))
 
 
-def target_tokens(schema: WorldSchema) -> frozenset[str]:
+def target_tokens(schema: Table) -> frozenset[str]:
     """The outcome: the target name and its class names."""
-    node = schema.nodes[schema.target]
-    return _tokens(" ".join([schema.target, *(node.levels or list(node.class_scores))]))
+    return _tokens(" ".join([schema.target, *level_names(schema.declared[schema.target])]))
 
 
 def _jaccard(sets: list[frozenset[str]]) -> np.ndarray:
@@ -92,7 +92,7 @@ def candidates(
     keep = score[rows, cols] >= threshold
     out = []
     for i, j in zip(rows[keep], cols[keep], strict=True):
-        a, b = schemas[i].schema_id, schemas[j].schema_id
+        a, b = schemas[i].name, schemas[j].name
         if among is None or a in among or b in among:
             out.append((a, b, float(score[i, j])))
     return sorted(out, key=lambda x: -x[2])
@@ -100,7 +100,7 @@ def candidates(
 
 def report(pairs: list[tuple[str, str, float]], schemas) -> str:
     """One line per candidate pair with both files, for the reader who confirms or clears them."""
-    where = {s.schema_id: "/".join(s.taxonomy) if s.taxonomy else "?" for s in schemas}
+    where = {s.name: "/".join(getattr(s, "taxonomy", ("?",))) for s in schemas}
     return (
         "\n".join(f"{score:.2f}  {a}  ({where[a]})  vs  {b}  ({where[b]})" for a, b, score in pairs)
         or "no candidate pairs"

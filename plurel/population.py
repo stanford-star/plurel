@@ -107,9 +107,9 @@ class Grouping:
         sizes_rng, entity_rng, row_rng, noise_rng, id_rng = rng.spawn(5)
         sizes = self.sizes(n, sizes_rng)
         entities = np.repeat(np.arange(len(sizes)), sizes)
-        each, latents = plan.sample_with_latents(len(sizes), seed=entity_rng)
+        each, latents = plan.sample_with_latents(len(sizes), seed=entity_rng, finish=False)
         held = {node: latents[node][entities] for node in self.fixed}
-        frame = plan.sample_with_latents(n, seed=row_rng, held=held)[0]
+        frame, row_latents = plan.sample_with_latents(n, seed=row_rng, held=held, finish=False)
         fixed = set(self.fixed)
         for name in plan.order:
             node = plan.nodes[name]
@@ -127,6 +127,7 @@ class Grouping:
                 frame[name] = frame[name].where(frame[name].isna(), column.shaped(noisy, noise_rng))
             else:  # the entity's value as its own draw observed it (an in-draw rank map would bias ties)
                 frame[name] = each[name].iloc[entities].set_axis(frame.index)
+        frame = plan.finish(frame, row_latents)
         codes = id_rng.choice(ENTITY_CODES, size=len(sizes), replace=False)
         names = np.array([f"{chr(ord('A') + int(c) // 100_000)}{int(c) % 100_000:05d}" for c in codes], dtype=object)  # fmt: skip
         return frame, entities, names

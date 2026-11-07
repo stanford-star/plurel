@@ -57,7 +57,7 @@ Rules that are not negotiable:
 {commands}
   The gate must print OK for every id and "every schema in the file validates"; dedupe must print "no candidate pairs"; any other command must pass.{extra}
 - dedupe imports the whole catalog, and other fix agents edit other files in this worktree at the same time. If a command fails with an import error naming a schema that is not in your file, wait a minute and retry once; if it fails again, report the gate's lines, name the blocking file, and stop. A candidate pair that names one of your ids is yours to resolve even when the other id is in another file. The operator then runs `sweep --sector` once for the whole batch; it must pass before the batch is committed.
-- Delete a schema: remove its whole `NAME = WorldSchema(...)` block, any constant only it used and its line in the module docstring. Never leave a dangling name.
+- Delete a schema: remove its whole `NAME = Table(...)` block, any constant only it used and its line in the module docstring. Never leave a dangling name.
 - Recut a schema: keep the id unless the finding says otherwise; make the row a record the named organisation keeps, with that record's own fields, units and codes; drop any public dataset's variable list, weights, top codes and wordings; keep the aggregate statistics as anchors in the rationale.
 - Numbers: approximations with "about" wording anchored to a named aggregate publisher, rounded to the point or half point; level probabilities sum to 1 within 1e-6.
 - A duplicate candidate is resolved in the schemas: delete the one whose organisation does not keep the record, or tell two genuinely different records apart in their ids, descriptions and target class names until dedupe no longer pairs them. There is no list of cleared pairs.
