@@ -26,7 +26,6 @@ from plurel import (
     Table,
     Timestamp,
 )
-from plurel.population import Grouping, Population, TableMetadata
 
 
 def spearman(a, b) -> float:
@@ -460,53 +459,6 @@ def test_a_family_may_generate_on_real_rows():
     frame = table.realize(0).sample(seed=0)
     assert frame.age.equals(real.age) and frame.city.equals(real.city)
     assert spearman(frame.age, frame.spend) > 0.8
-
-
-def test_grouped_rows_blank_row_by_row():
-    plan = Table({"x": Numeric(Normal(), missing=0.3), "k": Categorical(["a", "b"], missing=0.3)})
-    frame, entities = Grouping(
-        "replicates", ("x", "k"), rows=8.0, spread=0.0, measurement=0.0, column=None
-    ).draw(plan, 2000, np.random.default_rng(0))[:2]
-    for column in ("x", "k"):
-        assert frame[column].isna().mean() == pytest.approx(0.3, abs=0.05)
-        mixed = frame[column].isna().groupby(entities).nunique().eq(2).mean()
-        assert mixed > 0.5
-
-
-@pytest.mark.parametrize("measurement", [0.0, 0.5])
-def test_a_grouped_entity_is_at_the_floor_in_all_its_rows_or_none(measurement):
-    plan = Table({"x": Numeric(Normal(), zeros=0.3)})
-    frame, entities = Grouping(
-        "replicates", ("x",), rows=8.0, spread=0.0, measurement=measurement, column=None
-    ).draw(plan, 4000, np.random.default_rng(0))[:2]
-    zero = frame.x.eq(0.0)
-    assert zero.groupby(entities).nunique().max() == 1
-    assert zero.mean() == pytest.approx(0.3, abs=0.06)
-
-
-def test_grouped_rows_recompute_what_they_derive():
-    plan = Table(
-        {
-            "x": Numeric(Scaled("score", 0, 10)),
-            "k": Categorical({"a": 0.5, "b": 0.5}, causes={"x": 1.0}, noise=0.2),
-            "y": Numeric(ByLevel("k", {"a": (0, 1), "b": (5, 6)}), causes={"x": 0.5}, noise=0.2),
-            "d": Derived(lambda x, y: x + y),
-        },
-        target="k",
-    ).realize(0)
-    grouping = Grouping(
-        "replicates", ("x", "k"), rows=4.0, spread=0.3, measurement=0.0, column=None
-    )
-    population = Population(
-        TableMetadata(["x", "y", "d"], ["numeric"] * 3, target="k", plan=plan),
-        lanes=(1,),
-        render=None,
-        grouping=grouping,
-    )
-    frame, entities = population.entity_rows(400, 0)
-    assert np.allclose(frame.d, frame.x + frame.y, atol=1e-5)
-    assert frame.groupby(entities).x.nunique().max() == 1
-    assert frame.y[frame.k == "b"].between(5, 6).all()
 
 
 def test_real_columns_stay_unranged():

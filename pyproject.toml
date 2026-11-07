@@ -35,7 +35,6 @@ classifiers = [
 dependencies = [
     "numpy",
     "pandas",
-    "pyyaml",
     "relbench>=3.0.0",
     "scipy",
 ]

@@ -192,7 +192,7 @@ class Table:
         entry: adding a column moves no other. The table is named by `table`, else its own name."""
         table = table or self.name or "table"
         return {
-            name: entry.draw(lane(root, "world", table, name))
+            name: entry.draw(lane(root, "realize", table, name))
             if isinstance(entry, Declaration)
             else entry
             for name, entry in self.declared.items()
@@ -284,17 +284,14 @@ class Table:
         *,
         seed: Seed = None,
         held: Mapping[str, np.ndarray] | None = None,
-        finish: bool = True,
     ) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
-        """This table alone, through a one-table Schema; `held` nodes take the given values and
-        without `finish` the draw leaves out what is computed from its recorded values."""
+        """This table alone, through a one-table Schema; `held` nodes take the given values."""
         if self.fkeys:
             raise ValueError(f"keys {sorted(self.fkeys)} need the tables of a Schema")
         frames, latents = Schema({"table": self}).sample_with_latents(
             {} if n is None else {"table": n},
             seed=seed,
             held={"table": held} if held else None,
-            finish=finish,
         )
         return frames["table"], latents["table"]
 
@@ -468,7 +465,6 @@ class Schema:
         latents: dict[str, dict[str, np.ndarray]],
         links: Links,
         root: int,
-        finish: bool = True,
     ) -> dict[str, pd.DataFrame]:
         """Turn latents into one frame per table: its columns, then its key columns."""
         frames = {}
@@ -486,9 +482,7 @@ class Schema:
                 else:
                     keys = given.astype("Int64") if pd.api.types.is_integer_dtype(given) else given
                     frame[column] = keys.take(indices).reset_index(drop=True).mask(indices < 0)
-            if finish:
-                frame = scm.finish(frame, latents[table])
-            frames[table] = frame[[name for name in scm.table if name in frame]]
+            frames[table] = scm.finish(frame, latents[table])
         return frames
 
     def sample(
@@ -505,7 +499,6 @@ class Schema:
         *,
         seed: Seed = None,
         held: Mapping[str, Mapping[str, np.ndarray]] | None = None,
-        finish: bool = True,
     ) -> tuple[dict[str, pd.DataFrame], dict[str, dict[str, np.ndarray]]]:
         """One frame and the latents per table; a table of given values has their row count, and
         `held` nodes take the given `(n, dim)` values."""
@@ -533,7 +526,7 @@ class Schema:
             if scm.real:
                 held[table] = {**scm.real, **held.get(table, {})}
         latents = self.propagate(rows, links, root, held)
-        return self.observe(rows, latents, links, root, finish), latents
+        return self.observe(rows, latents, links, root), latents
 
     def realize(self, seed: int) -> "Schema":
         """One database of this family: see `Table.realize`."""

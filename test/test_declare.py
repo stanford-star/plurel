@@ -19,7 +19,6 @@ from plurel import (
     Uniform,
     create_database,
 )
-from plurel.population import Grouping
 
 
 def spearman(a, b) -> float:
@@ -379,13 +378,6 @@ def test_real_levels_have_no_order_to_summarize():
 def test_rounding_lands_on_the_step():
     frame = Table({"x": Numeric(Uniform(0.0, 1.0), round=0.01)}).sample(500, seed=0)
     assert (frame.x == frame.x.round(2)).all()
-
-
-def test_a_grouped_reading_keeps_clip_and_round():
-    table = Table({"a": Numeric(Uniform(18.0, 80.0), round=1.0, clip=(30.0, 60.0)), "b": Numeric()})
-    grouping = Grouping("replicates", ("a",), 5.0, 0.5, 0.2, None)
-    frame = grouping.draw(table, 300, np.random.default_rng(0))[0]
-    assert frame.a.between(30.0, 60.0).all() and (frame.a % 1 == 0).all()
 
 
 def test_one_string_is_no_levels():

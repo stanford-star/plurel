@@ -294,17 +294,6 @@ of cutting a rank. Realizing fits these scores and the level cuts to one draw of
 realized table's shares follow its rows and it can be sampled at any size. A column that depends on a
 key keeps its shares exactly in every draw instead, since rows sharing a parent are not independent.
 
-`plurel.world` holds what a catalog of such tables needs. `load_catalog` reads a package whose file
-layout is its taxonomy, declared by one plan per sector (`Taxonomy`), and can live in any repository.
-`validate` states a record's rules, `realize_world` draws a record as a `Population` with its card
-and its grouped or joint transforms, `plurel.world.authoring.realism.check` is the gate on a new
-record, `plurel.world.authoring.dedupe` lists near-duplicates, and `brief` and `lint` support writing
-a record's world knowledge. [`examples/world/`](examples/world/) shows them together, and
-[its guide](plurel/world/authoring/GUIDE.md) is written for an agent adding records. A catalog record
-is one table; an authored database goes through `Schema.realize` directly.
-`realize_random(seed, columns=...)` in `plurel.random_scm` gives a table of the same shape from the
-prior, with no text.
-
 ## Development
 
 Set up the environment with [pixi](https://pixi.sh/latest/installation/):
