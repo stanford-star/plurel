@@ -44,12 +44,15 @@ realizes as the same causal graphs.
 ## Installation
 
 PluRel needs Python 3.12 or newer. This README describes PluRel 2, which is not on PyPI yet, so
-install it from this repository (`pip install plurel` gives 1.1.0, the
+install it from this repository's `v2` branch (`pip install plurel` gives 1.1.0, the
 [earlier API](https://github.com/stanford-star/plurel/tree/v1.1.0)):
 
 ```bash
-pip install git+https://github.com/stanford-star/plurel.git
+pip install "git+https://github.com/stanford-star/plurel.git@v2"
 ```
+
+`v2` moves; for a training run you want to reproduce, pin a commit instead, as in
+`pip install "git+https://github.com/stanford-star/plurel.git@<commit>"`.
 
 ## Getting Started
 
@@ -98,7 +101,7 @@ a smaller `noise` follows the causes more closely. `how` combines the effects an
 which means a column holds its marginal whatever its causes. A categorical column cuts the same
 order at its shares, so a positive weight pushes rows toward its later levels. Causes are read as
 those sums, not in the units of their marginals, so a `Numeric` without a marginal is the sum itself,
-as floats.
+as floats; [Latent and recorded values](#latent-and-recorded-values) works through an example.
 
 A weight's size is how closely a column follows a cause. With one unit-normal cause and the default
 noise, the rank correlation is:
@@ -118,6 +121,48 @@ a number. Blanks are only in the record: columns that read a blanked column stil
 `Timestamp`'s `end` is exclusive.
 
 Sampling is deterministic in the seed.
+
+### Latent and recorded values
+
+Every column has a latent value, the sum of its causes' effects plus noise, and a recorded value,
+what its frame holds. A marginal maps the one to the other by rank: the row with the highest latent
+takes the highest of the marginal's values. Causes read latents, never recorded values:
+
+```python
+import numpy as np
+
+table = Table({
+    "x": Numeric(Uniform(100, 200)),
+    "y": Numeric(causes={"x": 2.0}, noise=0),          # no marginal: y is the sum itself
+    "z": Numeric(Uniform(0, 1), causes={"x": 2.0}),   # a marginal: z holds Uniform(0, 1) by rank
+})
+frame, latents = table.sample_with_latents(1000, seed=0)
+assert np.allclose(frame.y, 2 * latents["x"][:, 0])   # x is about 100 to 200, y about -5 to 6
+```
+
+`y` is twice the latent `x`, a unit normal, not twice the recorded `x`. A weight therefore says how
+closely a column follows a cause, not how many units it moves per unit of the cause.
+
+`held` sets a node's latents, which is how to intervene. Holding `x` one higher shifts `y` by
+exactly 2, but leaves the recorded `x` and `z` as they were: every row moved alike, so their ranks
+and hence their recorded values did not change. An intervention is guaranteed to show in a column
+without a marginal and in the order of rows; a recorded column with a marginal changes only where
+the intervention reorders its rows.
+
+```python
+held, _ = table.sample_with_latents(1000, seed=0, held={"x": latents["x"] + 1.0})
+assert np.allclose(held.y - frame.y, 2.0) and held.x.equals(frame.x) and held.z.equals(frame.z)
+```
+
+A key's `fill` and every `Summary` are in latent units too: `fill=0.0` reads as the latent mean,
+and `Summary("staff", "team_id", "pay", "sum")` sums the latent `pay`, not the recorded pay. Only a
+count is in rows.
+
+When latents tie, as with `noise=0` over a discrete or repeated cause, the tied rows take the same
+level, so a categorical column can miss its shares rather than split equal rows at random. Give it
+some `noise` when the shares matter. Requested shares are met exactly by each draw of a table that
+is not realized; a realized table pins its cuts on one calibration draw, so its draws vary around
+them; a column that depends on a key cuts each draw.
 
 ### Link tables into a database
 
@@ -198,6 +243,12 @@ frames = Schema({"people": people, "purchases": purchases}).sample({"purchases":
 
 Real child tables work the same way: `foreign_keys={"customer_id": "people"}` keeps their key values
 and `time_column` names their events. Real levels have no order, so read them by level.
+
+This is augmentation, not learned synthesis. The real table keeps its own row count and keys in every
+draw, `extra` and the generated tables are authored mechanisms that read it, and those tables take
+any row count. plurel does not fit a model of the real rows or draw more rows like them. As a
+cause, a real number is read as its standardized rank, with a blank at the middle rank, and a real
+level by an effect per level, so generated columns follow the real values' order, not their units.
 
 ### Save a database
 
