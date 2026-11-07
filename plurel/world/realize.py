@@ -10,10 +10,10 @@ import pandas as pd
 
 from plurel import Categorical, Noise, Range, Schema, Shares, Table
 from plurel.columns import Column
+from plurel.fit import CALIBRATION_ROWS
 from plurel.graph import LinearEdge, MatrixEdge, ReadEdge, bin_levels
 from plurel.graph import Node as PlanNode
 from plurel.population import Grouping, Population, TableMetadata, category_order, levels, table_id
-from plurel.schema import CALIBRATION_ROWS
 from plurel.world.record import (
     children,
     domain,

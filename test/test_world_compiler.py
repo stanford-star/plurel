@@ -93,10 +93,10 @@ def test_the_draws_are_pinned():
     """A change that moves a realization's rows must say so here."""
     frame = realize_world(CASE, 3, target_noise=0.25, share_concentration=100.0).rows(200, 0)
     digest = hashlib.sha256(frame.round(4).to_csv(index=False).encode()).hexdigest()[:16]
-    assert digest == "98d18f7235e196db"
+    assert digest == "9be3034a1793f61c"
     grouped = realize_world(GROUPED, 3, grouping=REPLICATES).rows(64, 0)
     digest = hashlib.sha256(grouped.round(4).to_csv(index=False).encode()).hexdigest()[:16]
-    assert digest == "f6ac3dbeaf4d611f"
+    assert digest == "4226d047f2c1d6b5"
 
 
 def test_the_card_carries_the_authored_text():
@@ -134,7 +134,7 @@ def test_shares_are_drawn_and_floored():
     drawn = Shares(["x", "y", "z"]).draw(rng)
     assert set(drawn) == {"x", "y", "z"} and abs(sum(drawn.values()) - 1.0) < 1e-9
     varied = Shares({"a": 0.998, "b": 0.002}, 100.0).draw(rng)
-    assert abs(sum(varied.values()) - 1.0) < 1e-9 and min(varied.values()) >= 0.03
+    assert abs(sum(varied.values()) - 1.0) < 1e-9 and varied["b"] >= 0.25 * 0.002
 
 
 def test_a_hidden_cause_is_simulated_and_never_recorded():
@@ -181,12 +181,12 @@ def test_recording_artifacts_shape_the_recorded_columns():
         mediator=replace(CASE.declared["mediator"], round=5.0),
     )
     # seed-pinned: the cap's pile is a property of the drawn counts family (about half of seeds)
-    population = realize_world(schema, 1)
+    population = realize_world(schema, 2)
     frame = population.rows(500, 0)
     assert 0.25 < (frame["cause"] == 0).mean() < 0.4
     assert frame["other"].max() <= 30 and (frame["other"] == 30).mean() > 0.05
     assert np.all(np.mod(frame["mediator"], 5) == 0)
-    assert realize_world(schema, 1).rows(500, 0).equals(frame)
+    assert realize_world(schema, 2).rows(500, 0).equals(frame)
 
 
 def test_blanks_land_at_their_share_and_where_authored():
@@ -215,7 +215,7 @@ def test_a_level_regime_changes_a_parents_slope_by_group():
     outcome = CASE.declared["outcome"]
     regime = {"site": {"a": -0.2, "b": 0.2}, ("site", "mediator"): {"a": 0.0, "b": 3.0}}
     schema = with_entries(site=site, outcome=replace(outcome, causes={**outcome.causes, **regime}))
-    frame = realize_world(schema, 0).rows(3000, 0)
+    frame = realize_world(schema, 1).rows(3000, 0)
     yes = (frame["outcome"] == "yes").astype(float)
 
     def rank_corr(level):

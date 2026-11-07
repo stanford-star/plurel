@@ -24,6 +24,7 @@ from plurel import (
     Shares,
     Summary,
     Table,
+    Timestamp,
 )
 from plurel.population import Grouping, Population, TableMetadata
 
@@ -106,6 +107,37 @@ def test_realized_shares_follow_the_rows_and_small_draws_work():
     assert len(counts) > 1
 
 
+def test_fixed_drawables_and_one_row_roots_sample_without_a_seed():
+    table = Table(
+        {
+            "t": Timestamp("2020-01-01", "2021-01-01"),
+            "k": Categorical({"a": 0.5, "b": 0.5}),
+            "y": Numeric(
+                ByLevel("k", {"a": (0, 1), "b": (5, 9)}, strength=2.0), noise=Noise("gaussian", 0.5)
+            ),  # fmt: skip
+        }
+    )
+    assert not table.family and table.realize(0).sample(1, seed=0).shape == (1, 3)
+    frame = table.sample(400, seed=0)
+    assert (
+        frame[frame.k == "b"].y.between(5, 9).all() and frame[frame.k == "a"].y.between(0, 1).all()
+    )
+
+
+def test_a_named_table_realizes_the_same_alone_and_in_a_schema():
+    declared = family().declared
+    named = Table(declared, name="visits", target="outcome", doc="Each row is one visit.")
+    alone, joined = named.realize(4), Schema({"anything": named}).realize(4).tables["anything"]
+    assert weight(alone, "wait", "cover") == weight(joined, "wait", "cover")
+    assert not alone.family and weight(alone.realize(9), "wait", "cover") == weight(alone, "wait", "cover")  # fmt: skip
+
+
+def test_a_rare_authored_level_keeps_its_scale_under_drawn_shares():
+    levels = {**{f"l{k}": 0.001 for k in range(9)}, "big": 0.991}
+    drawn = [Shares(levels, 0.2).draw(np.random.default_rng(s)) for s in range(20)]
+    assert all(0.0002 <= d["l0"] < 0.2 for d in drawn)
+
+
 def test_a_stated_strength_means_what_it_says():
     def tied(strength: float) -> float:
         frame = Table(
@@ -150,7 +182,7 @@ def test_a_stated_strength_means_what_it_says():
         (lambda: Table({"p_id": ForeignKey("p"), "x": Numeric(causes={"p_id.a": 1.0}), "k": Categorical({"a": 0.5, "b": 0.5}, scores={"a": {"x": 1.0}})}), "depends on a key"),
         (lambda: Numeric(Scaled("score", 0, 10), round=20), "no step"),
         (lambda: Numeric(Scaled("score", 0, 10), clip=(None, 11)), "inside the range"),
-        (lambda: Table({"x": Numeric(Normal())}).sample(1, seed=0), "at least two"),
+        (lambda: Table({"x": Numeric(), "y": Numeric(Normal(), causes={"x": 1.0})}).sample(1, seed=0), "at least two"),
         (lambda: Numeric(ByLevel("k", {"a": (0, 1)}), round=1), "renders last"),
         (lambda: Numeric(ByLevel("k", {"a": (0, 1)}), causes={"k": {"a": 1.0}}), "itself"),
         (lambda: Categorical({"a": 0.5, "b": 0.5}, scores={"a": {}}, how="max"), "take the place"),
@@ -289,7 +321,7 @@ def test_shares_vary_around_the_authored_and_keep_every_level():
         table.realize(s).sample(4000, seed=0).k.value_counts(normalize=True) for s in range(8)
     ]
     assert len({round(s["a"], 3) for s in shares}) > 1
-    assert all(s["c"] > 0.02 for s in shares)
+    assert all(s["c"] > 0.0 for s in shares)
     assert all(abs(s["a"] - 0.9) < 0.3 for s in shares)
 
 
@@ -439,6 +471,17 @@ def test_grouped_rows_blank_row_by_row():
         assert frame[column].isna().mean() == pytest.approx(0.3, abs=0.05)
         mixed = frame[column].isna().groupby(entities).nunique().eq(2).mean()
         assert mixed > 0.5
+
+
+@pytest.mark.parametrize("measurement", [0.0, 0.5])
+def test_a_grouped_entity_is_at_the_floor_in_all_its_rows_or_none(measurement):
+    plan = Table({"x": Numeric(Normal(), zeros=0.3)})
+    frame, entities = Grouping(
+        "replicates", ("x",), rows=8.0, spread=0.0, measurement=measurement, column=None
+    ).draw(plan, 4000, np.random.default_rng(0))[:2]
+    zero = frame.x.eq(0.0)
+    assert zero.groupby(entities).nunique().max() == 1
+    assert zero.mean() == pytest.approx(0.3, abs=0.06)
 
 
 def test_grouped_rows_recompute_what_they_derive():

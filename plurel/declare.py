@@ -12,6 +12,7 @@ import pandas as pd
 
 from plurel.columns import Column
 from plurel.distributions import (
+    CENTRAL,
     Affine,
     Bounded,
     Calendar,
@@ -21,6 +22,7 @@ from plurel.distributions import (
     Laplace,
     Normal,
     StudentT,
+    record_step,
     shape,
 )
 from plurel.graph import (
@@ -71,9 +73,12 @@ def drawn(value: object, rng: np.random.Generator) -> object:
 
 
 def ranged(value: object) -> bool:
+    """Whether drawing the value can give different values under different seeds."""
     if isinstance(value, Mapping):
         return any(ranged(item) for item in value.values())
-    return hasattr(value, "draw") or (isinstance(value, tuple) and any(map(ranged, value)))
+    if hasattr(value, "draw"):
+        return getattr(value, "family", True)
+    return isinstance(value, tuple) and any(map(ranged, value))
 
 
 @dataclass(frozen=True)
@@ -103,21 +108,18 @@ class Scaled:
     def draw(self, rng: np.random.Generator) -> Bounded:
         kinds = UNITS[self.units]
         base = shape(self.shape or kinds[int(rng.integers(len(kinds)))], rng)
-        ends = np.quantile(base.sample(BOUNDED_ROWS, rng), [0.005, 0.995])
+        ends = np.quantile(base.sample(BOUNDED_ROWS, rng), CENTRAL)
         scale = (self.high - self.low) / (ends[1] - ends[0] if ends[1] > ends[0] else 1.0)
         whole = float(self.low).is_integer() and float(self.high).is_integer()
-        step = (
-            1.0
-            if whole and self.units == "count"
-            else 10.0 ** np.floor(np.log10((self.high - self.low) / 500.0))
-        )
+        step = 1.0 if whole and self.units == "count" else record_step(self.low, self.high)
         return Bounded(base, self.low - scale * ends[0], scale, self.low, self.high, step)
 
 
 @dataclass(frozen=True)
 class Shares:
     """Level shares drawn per seed: around the given shares of a mapping, or from nothing but the
-    levels of a sequence; a higher `concentration` holds them tighter, and no level vanishes."""
+    levels of a sequence; a higher `concentration` holds them tighter, and no level falls below its
+    authored share or a floor, whichever is lower."""
 
     levels: Sequence[object] | Mapping[object, float]
     concentration: float | Range = Range(0.2, 5.0)
@@ -127,7 +129,7 @@ class Shares:
         k = len(self.levels)
         center = np.asarray(tuple(self.levels.values())) if given else np.full(k, 1.0)
         shares = rng.dirichlet(drawn(self.concentration, rng) * center)
-        shares = np.clip(shares, min(0.04, 0.25 / k), None)
+        shares = np.maximum(shares, np.minimum(center / center.sum(), min(0.04, 0.25 / k)))
         return dict(zip(self.levels, (shares / shares.sum()).tolist(), strict=True))
 
 
@@ -138,6 +140,10 @@ class Noise:
     kind: str
     std: float | Range
     factor: float = 1.0
+
+    @property
+    def family(self) -> bool:
+        return self.kind in ("student_t", "skewed") or ranged(self.std)
 
     def draw(self, rng: np.random.Generator) -> Distribution:
         std = drawn(self.std, rng) * self.factor
@@ -290,23 +296,12 @@ class ByLevel:
         spread = float(mids.std()) or 1.0
         return dict(zip(self.ranges, ((mids - mids.mean()) / spread).tolist(), strict=True))
 
+    @property
+    def family(self) -> bool:
+        return ranged(self.strength)
+
     def draw(self, rng: np.random.Generator) -> "ByLevel":
         return replace(self, strength=drawn(self.strength, rng))
-
-    def apply(
-        self, values: np.ndarray, codes: np.ndarray, levels: tuple[object, ...]
-    ) -> np.ndarray:
-        """The values cut per level onto its range, each level's central 99% spanning it."""
-        out = np.where(codes < 0, np.nan, values)
-        for code, level in enumerate(levels):
-            low, high = self.ranges[level]
-            rows = (codes == code) & np.isfinite(out)
-            if rows.any():
-                ends = np.quantile(out[rows], [0.005, 0.995])
-                unit = np.clip((out[rows] - ends[0]) / (ends[1] - ends[0] or 1.0), 0.0, 1.0)
-                step = 10.0 ** np.floor(np.log10((high - low) / 500.0))
-                out[rows] = np.clip(np.round((low + unit * (high - low)) / step) * step, low, high)
-        return out
 
 
 @dataclass(frozen=True)
@@ -343,9 +338,10 @@ class Numeric(Declaration):
                 raise ValueError(f"clip {self.clip} must lie inside the range ({low}, {high})")
 
     def entries(self, name: str, keys: Collection[str]) -> dict[str, Node | Column]:
-        causes, marginal = self.causes, self.marginal
+        causes, marginal, by_level = self.causes, self.marginal, None
         if isinstance(marginal, ByLevel):
             causes = {**causes, marginal.parent: (marginal.strength, marginal.effects)}
+            by_level = (marginal.parent, tuple((k, *span) for k, span in marginal.ranges.items()))
             marginal = None
         node, helpers = _node(name, causes, self.noise, keys, self.how)
         bounded, clip = isinstance(marginal, Bounded), self.clip
@@ -363,6 +359,7 @@ class Numeric(Declaration):
             round=self.round,
             zeros=(self.zeros, marginal.low if bounded else 0.0) if self.zeros else None,
             missing_by=self.missing_by,
+            by_level=by_level,
         )
         return {**helpers, name: column}
 

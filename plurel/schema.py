@@ -9,13 +9,13 @@ import pandas as pd
 from plurel.columns import Column
 from plurel.declare import (
     CODE,
-    ByLevel,
     Declaration,
     Derived,
     ForeignKey,
     PrimaryKey,
     Real,
 )
+from plurel.fit import fitted
 from plurel.graph import (
     AGGREGATES,
     COMPLETE,
@@ -23,19 +23,13 @@ from plurel.graph import (
     Foreign,
     LevelEdge,
     LinearEdge,
-    LookupEdge,
     Node,
     Summary,
-    level_edges,
 )
 from plurel.links import TreeLink
 from plurel.random import Seed, generator, lane
 
 Links = dict[tuple[str, str], np.ndarray]
-
-CALIBRATION_ROWS = 4096  # rows of the draw that realizing fits a table's edges and scores to
-CALIBRATION_PASSES = 100
-CALIBRATION_TOLERANCE = 0.01  # the largest bias step, in noise units, at which a fit stops
 
 
 def checked(name: str, node: Node, latent: np.ndarray, n: int) -> np.ndarray:
@@ -84,14 +78,9 @@ class Table:
         self.declared = dict(table)
         self.name, self.doc, self.target, self.sources = name, doc, target, sources
         self.family = any(isinstance(e, Declaration) and e.family for e in self.declared.values())
-        table = self.draws(0, "probe") if self.family else self.declared
+        table = self.draws(0)
         keys = {name for name, entry in table.items() if isinstance(entry, ForeignKey)}
         self.table: dict[str, Node | Column | ForeignKey | PrimaryKey | Derived] = {}
-        self.levelled = {
-            name: entry.marginal
-            for name, entry in table.items()
-            if isinstance(getattr(entry, "marginal", None), ByLevel)
-        }
         for name, entry in table.items():
             if isinstance(entry, Declaration):
                 entries = entry.entries(name, keys)
@@ -161,11 +150,11 @@ class Table:
         for name, derived in self.derived.items():
             if unknown := [c for c in derived.inputs if kinds.get(c) != "numeric"]:
                 raise ValueError(f"{name!r} reads {unknown}, which are no numeric columns")
-        for name, levels in self.levelled.items():
-            if kinds.get(levels.parent) != "categorical":
-                raise ValueError(f"{name!r} takes ranges from {levels.parent!r}: no categorical")
-            if set(levels.ranges) != set(self.columns[levels.parent].categories):
-                raise ValueError(f"{name!r} needs one range per level of {levels.parent!r}")
+        for name, (parent, ranges) in self.by_level.items():
+            if kinds.get(parent) != "categorical":
+                raise ValueError(f"{name!r} takes ranges from {parent!r}: no categorical")
+            if {level for level, *_ in ranges} != set(self.columns[parent].categories):
+                raise ValueError(f"{name!r} needs one range per level of {parent!r}")
         for name, column in self.columns.items():
             if getattr(column, "fit_shares", None) and name in self.crossing:
                 raise ValueError(
@@ -189,9 +178,19 @@ class Table:
             "sources": self.sources,
         }
 
-    def draws(self, root: int, table: str) -> dict[str, object]:
-        """Every entry as one seed draws it, each from its own stream: adding a column moves no
-        other."""
+    @property
+    def by_level(self) -> dict[str, tuple[str, tuple[tuple[object, float, float], ...]]]:
+        """The columns placed on a range per level of a categorical, by that parent and the ranges."""
+        return {
+            name: column.by_level
+            for name, column in self.columns.items()
+            if getattr(column, "by_level", None) is not None
+        }
+
+    def draws(self, root: int, table: str | None = None) -> dict[str, object]:
+        """Every entry as one seed draws it, each from its own stream named by the table and the
+        entry: adding a column moves no other. The table is named by `table`, else its own name."""
+        table = table or self.name or "table"
         return {
             name: entry.draw(lane(root, "world", table, name))
             if isinstance(entry, Declaration)
@@ -200,80 +199,35 @@ class Table:
         }
 
     def like(self, entries: Mapping[str, object]) -> "Table":
-        """This table under other entries of a seed's drawing: nothing left to draw."""
-        table = Table(entries, **self.metadata)
-        table.family, table.declared = False, self.declared
-        table.levelled = self.levelled
-        return table
+        """A table of other entries under this one's metadata."""
+        return Table(entries, **self.metadata)
 
-    def drawn(self, root: int, table: str = "table") -> "Table":
-        return self.like(self.draws(root, table)) if self.family else self
+    def drawn(self, root: int, table: str | None = None) -> "Table":
+        """The table one seed draws, compiled, so nothing in it is left to draw; itself when it
+        holds nothing to draw."""
+        return self.like(self.like(self.draws(root, table)).table) if self.family else self
 
     def realize(self, seed: int) -> "Table":
         """One table of this family: every range drawn from `seed`, then its level cuts and scores
-        fit to one draw of its rows."""
-        return Schema({"table": self}).realize(seed).tables["table"]
+        fit to one draw of its rows. A table draws by its name, so a named table realizes the same
+        alone and in a Schema; one with nothing left to draw is only fit again."""
+        return Schema({self.name or "table": self}).realize(seed).tables[self.name or "table"]
 
     def finish(self, frame: pd.DataFrame, latents: Mapping[str, np.ndarray]) -> pd.DataFrame:
         """What is computed from a draw's recorded values: ranges by level, then derived columns.
-        A marginal is taken in the order of a draw's rows, and one row has none."""
-        if len(frame) == 1 and any(getattr(c, "marginal", None) for c in self.columns.values()):
-            raise ValueError("a marginal follows the order of a draw's rows: draw at least two")
-        for name, levels in self.levelled.items():
-            codes = latents[levels.parent + CODE][:, 0]
-            order = self.columns[levels.parent].categories
-            frame[name] = levels.apply(frame[name].to_numpy(dtype=float), codes, order)
+        A marginal over causes is taken in the order of a draw's rows, and one row has none."""
+        if len(frame) == 1 and any(
+            getattr(c, "marginal", None) and (c.node.parents or c.node.across)
+            for c in self.columns.values()
+        ):
+            raise ValueError("a marginal follows its causes in a draw's order: draw at least two")
+        for name, (parent, _ranges) in self.by_level.items():
+            codes, order = latents[parent + CODE][:, 0], self.columns[parent].categories
+            values = frame[name].to_numpy(dtype=float)
+            frame[name] = self.columns[name].placed_by_level(values, codes, order)
         for name, derived in self.derived.items():
             frame[name] = derived.compute(frame)
         return frame[[name for name in self.table if name in frame]]
-
-    def fit_score(self, name: str, latents: Mapping[str, np.ndarray], rng: np.random.Generator) -> "Table":  # fmt: skip
-        """A bias under which a scored column meets its shares: a fixed point on one draw and fresh
-        Gumbel noise, each pass shifting a level by the noise scale times the log of its wanted over
-        its seen share."""
-        column = self.columns[name]
-        node, n = column.node, len(latents[name])
-        scores = sum(edge.apply(latents[edge.parent]) for edge in node.edges)
-        noise = rng.gumbel(0.0, node.noise.scale, size=(n, node.dim))
-        wanted, biases = np.asarray(column.fit_shares), np.zeros(node.dim)
-        for _ in range(CALIBRATION_PASSES):
-            codes = np.argmax(scores + biases + noise, axis=1)
-            shares = np.bincount(codes, minlength=node.dim) / n
-            step = node.noise.scale * np.log(wanted / np.maximum(shares, 1.0 / n))
-            if np.abs(step).max() < CALIBRATION_TOLERANCE * node.noise.scale:
-                break
-            biases += step
-        bias = tuple(float(b) for b in biases - biases.mean())
-        return self.like({**self.table, name: replace(column, node=replace(node, bias=bias))})
-
-    def cut(self, latents: Mapping[str, np.ndarray]) -> "Table":
-        """Every binned column cut at fixed edges, its latent's quantiles at its shares, and what
-        reads its levels cut there too. Rows sharing a parent are not independent, so a column that
-        depends on a key keeps cutting each draw at its shares."""
-        edges = {
-            name: tuple(float(e) for e in level_edges(latents[name], column.category_probabilities))
-            for name, column in self.columns.items()
-            if column.kind == "categorical" and column.values is None and column.node.dim == 1
-            if name not in self.crossing
-        }
-
-        def fixed(node: Node) -> Node:
-            reads = (
-                replace(e, edges=edges[e.parent])
-                if isinstance(e, LookupEdge) and e.parent in edges
-                else e
-                for e in node.edges
-            )
-            return replace(node, edges=tuple(reads))
-
-        entries: dict[str, object] = {}
-        for name, entry in self.table.items():
-            if isinstance(entry, Column) and entry.values is None:
-                entry = replace(entry, node=fixed(entry.node), binning=edges.get(name))
-            elif isinstance(entry, Node):
-                entry = fixed(entry)
-            entries[name] = entry
-        return self.like(entries)
 
     @classmethod
     def from_frame(
@@ -583,22 +537,9 @@ class Schema:
 
     def realize(self, seed: int) -> "Schema":
         """One database of this family: see `Table.realize`."""
-        return Schema({t: scm.drawn(seed, t) for t, scm in self.tables.items()}).fitted(seed)
+        drawn = {t: scm.drawn(seed, scm.name or t) for t, scm in self.tables.items()}
+        return Schema(drawn).fitted(seed)
 
     def fitted(self, seed: int) -> "Schema":
-        """Scores and level cuts fit to one draw of `CALIBRATION_ROWS` rows per table, each scored
-        column after those it reads. Given rows cut each draw: they are all the rows there are."""
-        tables, rng = dict(self.tables), lane(seed, "fit")
-        rows = {t: CALIBRATION_ROWS if scm.size is None else scm.size for t, scm in tables.items()}
-        for (_table, _column), fk in self.keys.items():
-            if fk.values is not None and self.parent_keys(fk) is None and fk.values.notna().any():
-                rows[fk.parent] = max(rows[fk.parent], int(fk.values.max()) + 1)
-        for table, scm in self.tables.items():
-            for name in scm.order:
-                if getattr(scm.columns.get(name), "fit_shares", None):
-                    latents = Schema(tables).sample_with_latents(rows, seed=rng)[1]
-                    tables[table] = tables[table].fit_score(name, latents[table], rng)
-        latents = Schema(tables).sample_with_latents(rows, seed=rng)[1]
-        return Schema(
-            {t: scm if scm.size is not None else scm.cut(latents[t]) for t, scm in tables.items()}
-        )
+        """Scores and level cuts fit to one draw: see `plurel.fit.fitted`."""
+        return fitted(self, seed)

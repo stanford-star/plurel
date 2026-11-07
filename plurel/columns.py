@@ -4,7 +4,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from plurel.distributions import Calendar, Distribution
+from plurel.distributions import Calendar, Distribution, placed
 from plurel.graph import Node, bin_levels, level_edges, standardize
 
 Kind = Literal["numeric", "categorical", "timestamp"]
@@ -37,6 +37,7 @@ class Column:
     missing_by: tuple[str, str] | None = None
     zeros: tuple[float, float] | None = None
     fit_shares: tuple[float, ...] | None = None
+    by_level: tuple[str, tuple[tuple[object, float, float], ...]] | None = None
 
     def __post_init__(self) -> None:
         if self.kind is None:
@@ -44,8 +45,9 @@ class Column:
             object.__setattr__(self, "kind", kind)
         if self.kind not in ("numeric", "categorical", "timestamp"):
             raise ValueError(f"unknown column kind {self.kind!r}")
-        if self.kind != "numeric" and (self.clip, self.round, self.zeros) != (None, None, None):
-            raise ValueError("clip, round and zeros are for numeric columns")
+        options = (self.clip, self.round, self.zeros, self.by_level)
+        if self.kind != "numeric" and options != (None,) * 4:
+            raise ValueError("clip, round, zeros and ranges by level are for numeric columns")
         if self.clip is not None:
             low, high = self.clip
             if (low is None and high is None) or (None not in self.clip and not low < high):
@@ -155,6 +157,19 @@ class Column:
         if self.round is not None:
             out = np.round(np.round(out / self.round) * self.round, 10)
         return (out if self.clip is None else np.clip(out, *self.clip)) + 0.0  # no -0.0 on record
+
+    def placed_by_level(
+        self, values: np.ndarray, codes: np.ndarray, levels: tuple[object, ...]
+    ) -> np.ndarray:
+        """The values placed per level of `by_level`'s parent onto that level's range; a row with
+        no level is blank."""
+        ranges = {level: (low, high) for level, low, high in self.by_level[1]}
+        out = np.where(codes < 0, np.nan, values)
+        for code, level in enumerate(levels):
+            rows = (codes == code) & np.isfinite(out)
+            if rows.any():
+                out[rows] = placed(out[rows], *ranges[level])
+        return out
 
     def codes(self, latent: np.ndarray) -> np.ndarray:
         if latent.shape[1] > 1:

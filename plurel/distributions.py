@@ -329,6 +329,22 @@ class Calendar:
         return np.sort(np.concatenate(kept)[:n])
 
 
+CENTRAL = (0.005, 0.995)  # the quantiles a placed range spans
+
+
+def record_step(low: float, high: float) -> float:
+    """The power of ten a value on `[low, high]` is recorded to: about a 500th of the span."""
+    return float(10.0 ** np.floor(np.log10((high - low) / 500.0)))
+
+
+def placed(values: np.ndarray, low: float, high: float) -> np.ndarray:
+    """The values moved so their central 99% spans `[low, high]`, recorded to its step."""
+    ends = np.quantile(values, CENTRAL)
+    unit = (values - ends[0]) / (ends[1] - ends[0] or 1.0)
+    step = record_step(low, high)
+    return np.clip(np.round((low + unit * (high - low)) / step) * step, low, high)
+
+
 @dataclass(frozen=True)
 class Bounded:
     """A distribution moved by `loc` and `scale` onto `[low, high]`, recorded to a `step`."""

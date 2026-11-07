@@ -110,7 +110,7 @@ class Grouping:
         sizes = self.sizes(n, sizes_rng)
         entities = np.repeat(np.arange(len(sizes)), sizes)
         whole = plan.like({
-            name: replace(entry, missing=0.0, missing_by=None) if isinstance(entry, Column) else entry
+            name: replace(entry, missing=0.0, missing_by=None, zeros=None) if isinstance(entry, Column) else entry
             for name, entry in plan.table.items()
         })  # fmt: skip
         each, latents = whole.sample_with_latents(len(sizes), seed=entity_rng, finish=False)
@@ -130,10 +130,17 @@ class Grouping:
                 latent = latents[name][:, 0]
                 noise = self.measurement * latent.std() * noise_rng.standard_normal(n)
                 noisy = latent[entities] + noise
-                frame[name] = frame[name].where(frame[name].isna(), column.shaped(noisy, noise_rng))
+                read = replace(column, zeros=None).shaped(noisy, noise_rng)
+                frame[name] = frame[name].where(frame[name].isna(), read)
             else:  # the entity's value as its own draw observed it (an in-draw rank map would bias ties)
                 value = each[name].iloc[entities].set_axis(frame.index)
                 frame[name] = value.where(frame[name].notna())
+            if (
+                column.zeros is not None
+            ):  # an entity's value is at the floor in all its rows or none
+                share, floor = column.zeros
+                zeroed = (noise_rng.random(len(sizes)) < share)[entities]
+                frame[name] = frame[name].mask(zeroed & frame[name].notna().to_numpy(), floor)
         frame = plan.finish(frame, row_latents)
         codes = id_rng.choice(ENTITY_CODES, size=len(sizes), replace=False)
         names = np.array([f"{chr(ord('A') + int(c) // 100_000)}{int(c) % 100_000:05d}" for c in codes], dtype=object)  # fmt: skip
