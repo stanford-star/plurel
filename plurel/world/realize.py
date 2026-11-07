@@ -8,7 +8,7 @@ from dataclasses import replace
 import numpy as np
 import pandas as pd
 
-from plurel import Categorical, Noise, Schema, Shares, Table
+from plurel import Categorical, Noise, Range, Schema, Shares, Table
 from plurel.columns import Column
 from plurel.graph import LinearEdge, MatrixEdge, ReadEdge, bin_levels
 from plurel.graph import Node as PlanNode
@@ -81,15 +81,18 @@ def _lane(table: Table, seed: int, which: int, *rest: int) -> np.random.Generato
     )
 
 
-def _louder(noise: object, factor: float) -> Noise:
-    """The noise a target takes at ``factor``, whatever form it was authored in."""
+def _louder(target: Categorical, factor: float) -> Noise:
+    """The noise a target takes at ``factor``: a number, a range or a ``Noise`` scale; a fixed
+    distribution does not."""
+    noise = target.noise
     if isinstance(noise, Noise):
         return replace(noise, factor=factor)
-    if noise is None:
-        return Noise("gumbel", 1.0, factor)
-    if isinstance(noise, float | int) or hasattr(noise, "draw"):
-        return Noise("gaussian", noise, factor)
-    raise ValueError(f"a target's noise of {noise!r} cannot be scaled")
+    kind = "gaussian" if target.scores is None else "gumbel"
+    if noise is None and target.scores is not None:
+        return Noise(kind, 1.0, factor)
+    if isinstance(noise, float | int | Range):
+        return Noise(kind, noise, factor)
+    raise ValueError(f"a target's noise of {noise!r} cannot be scaled: author a Noise")
 
 
 def _varied(table: Table, target_noise: float, concentration: float | None) -> Table:
@@ -100,7 +103,7 @@ def _varied(table: Table, target_noise: float, concentration: float | None) -> T
             if isinstance(entry.levels, Mapping):
                 entry = replace(entry, levels=Shares(entry.levels, concentration))
         if name == table.target and target_noise != 1.0:
-            entry = replace(entry, noise=_louder(entry.noise, target_noise))
+            entry = replace(entry, noise=_louder(entry, target_noise))
         entries[name] = entry
     return Table(entries, **table.metadata)
 

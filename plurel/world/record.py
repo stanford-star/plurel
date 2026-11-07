@@ -119,6 +119,9 @@ def validate(table: Table) -> None:
                 f"{name!r}: a number names its units and range with Scaled or ByLevel",
             )
         scored = isinstance(entry, Categorical) and entry.scores is not None
+        if isinstance(entry, Categorical):
+            named = all(isinstance(level, str) and level.strip() for level in level_names(entry))
+            check(named, f"{name!r}: levels are names")
         if getattr(entry, "causes", None):
             check(entry.noise is not None, f"{name!r}: a column with causes authors its noise")
         if entry.how != "sum":

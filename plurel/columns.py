@@ -154,7 +154,7 @@ class Column:
             out = np.where(rng.random(len(out)) < self.zeros[0], self.zeros[1], out)
         if self.round is not None:
             out = np.round(np.round(out / self.round) * self.round, 10)
-        return out if self.clip is None else np.clip(out, *self.clip)
+        return (out if self.clip is None else np.clip(out, *self.clip)) + 0.0  # no -0.0 on record
 
     def codes(self, latent: np.ndarray) -> np.ndarray:
         if latent.shape[1] > 1:

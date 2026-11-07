@@ -1,7 +1,7 @@
 """What a table's entries say: its keys, its columns and the causes each column follows. Each
-compiles to the nodes and columns of `plurel.graph` and `plurel.columns`. Any number or marginal
-may be a range or another drawable: one declaration is then a family of tables, and each seed of
-`Table.realize` draws one."""
+compiles to the nodes and columns of `plurel.graph` and `plurel.columns`. Any weight, effect, noise
+or marginal may be a range or another drawable: one declaration is then a family of tables, and each
+seed of `Table.realize` draws one."""
 
 import inspect
 from collections.abc import Callable, Collection, Mapping, Sequence
@@ -178,12 +178,18 @@ def _checked(transform: Function) -> Function:
     return transform
 
 
+def _scaled_levels(effect: Effect) -> Effect:
+    """A weight and the effects per level it scales, as those effects scaled."""
+    if isinstance(effect, tuple) and isinstance(effect[1], Mapping):
+        return {level: effect[0] * value for level, value in effect[1].items()}
+    return effect
+
+
 def _cause(cause: str | Summary, effect: Effect, keys: Collection[str]) -> Edge:
     """The edge of one cause: a weight, a weight and a transform, one effect per level, or a weight
     and the effects it scales."""
     tail = _tail(cause, keys)
-    if isinstance(effect, tuple) and isinstance(effect[1], Mapping):
-        effect = {level: effect[0] * value for level, value in effect[1].items()}
+    effect = _scaled_levels(effect)
     if isinstance(effect, Mapping):
         return _levels(tail, effect)
     weight, transform = effect if isinstance(effect, tuple) else (effect, "identity")
@@ -198,6 +204,7 @@ def _pair(
     first, second = pair
     if any(_tail(cause, keys) != cause for cause in pair):
         raise ValueError(f"{pair} crosses a key: a product reads this table's own columns")
+    effect = _scaled_levels(effect)
     if isinstance(effect, Mapping):
         edges, weight = (_levels(first, effect), LinearEdge(second)), 1.0
     else:
@@ -229,6 +236,13 @@ def _node(
         if noise is not None:
             raise ValueError("noise is relative to a column's causes, and this one has none")
         return Node(), {}
+    if HOW[how] != "sum" and any(
+        not isinstance(cause, tuple)
+        and _tail(cause, keys) != cause
+        or not isinstance(cause, tuple | str)
+        for cause in causes
+    ):
+        raise ValueError(f"how={how!r} reads this table's own columns: a cause across a key adds")
     edges, helpers = [], {}
     for cause, effect in causes.items():
         if isinstance(cause, tuple):
@@ -265,6 +279,10 @@ class ByLevel:
     ranges: Mapping[object, tuple[float, float]]
     strength: float | Range = STRONG
 
+    def __post_init__(self) -> None:
+        if not all(np.isfinite(low) and np.isfinite(high) and low < high for low, high in self.ranges.values()):  # fmt: skip
+            raise ValueError("each range is a finite low and a higher high")
+
     @property
     def effects(self) -> dict[object, float]:
         mids = np.array([(low + high) / 2.0 for low, high in self.ranges.values()])
@@ -279,7 +297,7 @@ class ByLevel:
         self, values: np.ndarray, codes: np.ndarray, levels: tuple[object, ...]
     ) -> np.ndarray:
         """The values cut per level onto its range, each level's central 99% spanning it."""
-        out = values.copy()
+        out = np.where(codes < 0, np.nan, values)
         for code, level in enumerate(levels):
             low, high = self.ranges[level]
             rows = (codes == code) & np.isfinite(out)
@@ -375,10 +393,12 @@ class Categorical(Declaration):
                 raise ValueError("scores take the place of causes, how and an order")
             if not isinstance(self.levels, Mapping | Shares):
                 raise ValueError("scores need the shares they are fit to")
-            if not isinstance(self.noise, type(None) | Gumbel | Noise | float | int):
+            if not isinstance(self.noise, type(None) | Gumbel | Noise | Range | float | int):
                 raise ValueError("scores take Gumbel noise")
             if isinstance(self.noise, Noise) and self.noise.kind != "gumbel":
                 raise ValueError("scores take Gumbel noise")
+            if isinstance(self.noise, float | int) and self.noise <= 0.0:
+                raise ValueError("scores need noise above zero")
 
     @property
     def family(self) -> bool:
@@ -473,8 +493,9 @@ class Derived:
         return tuple(inspect.signature(self.function).parameters)
 
     def compute(self, frame: pd.DataFrame) -> np.ndarray:
-        args = (frame[name].to_numpy(dtype=float) for name in self.inputs)
-        return np.round(np.asarray(self.function(*args), dtype=float), 6)
+        args = [frame[name].to_numpy(dtype=float) for name in self.inputs]
+        computed = np.round(np.asarray(self.function(*args), dtype=float), 6)
+        return np.where(np.isnan(args).any(0), np.nan, computed)
 
 
 def _real_column(values: pd.Series) -> Column:

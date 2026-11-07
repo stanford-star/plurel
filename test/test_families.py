@@ -144,6 +144,10 @@ def test_a_stated_strength_means_what_it_says():
         (lambda: Table({"k": Categorical(["a", "b"]), "y": Numeric(causes={"k": 1.0})}), "no order"),
         (lambda: Table({"k": Categorical(["a", "b"]), "s": Categorical({"p": 0.5, "q": 0.5}, scores={"p": {"k": 1.0}})}), "no numbers"),
         (lambda: Table({"x": Numeric(Normal())}, target="y"), "target"),
+        (lambda: Categorical({"a": 0.5, "b": 0.5}, scores={"a": {}}, noise=0.0), "above zero"),
+        (lambda: ByLevel("k", {"a": (5, 5)}), "higher high"),
+        (lambda: Table({"p_id": ForeignKey("p"), "x": Numeric(causes={"p_id.a": 1.0, "p_id.b": 1.0}, how="max")}), "across a key"),
+        (lambda: Table({"p_id": ForeignKey("p"), "x": Numeric(causes={"p_id.a": 1.0}), "k": Categorical({"a": 0.5, "b": 0.5}, scores={"a": {"x": 1.0}})}), "depends on a key"),
         (lambda: Numeric(Scaled("score", 0, 10), round=20), "no step"),
         (lambda: Numeric(Scaled("score", 0, 10), clip=(None, 11)), "inside the range"),
         (lambda: Table({"x": Numeric(Normal())}).sample(1, seed=0), "at least two"),
@@ -267,7 +271,7 @@ def test_scores_are_fit_to_their_shares():
     table = Table(
         {
             "x": Numeric(Normal()),
-            "k": Categorical(wanted, scores={"a": {"x": 2.0}, "c": {"x": -Range(1, 3)}}, noise=0.0),
+            "k": Categorical(wanted, scores={"a": {"x": 2.0}, "c": {"x": -Range(1, 3)}}),
         }
     )
     assert table.family
@@ -326,6 +330,90 @@ def test_an_authored_database_realizes_across_its_keys():
     )
 
 
+def test_a_column_across_a_key_keeps_its_shares_with_few_parents():
+    schema = Schema(
+        {
+            "p": Table({"id": PrimaryKey(), "x": Numeric(Scaled("score", 0, 1))}),
+            "c": Table(
+                {
+                    "id": PrimaryKey(),
+                    "p_id": ForeignKey("p"),
+                    "y": Hidden(causes={"p_id.x": STRONG}, noise=LOW),
+                    "k": Categorical({"a": 0.85, "b": 0.15}, causes={"y": WEAK}, noise=LOW),
+                    "z": Numeric(causes={"k": {"b": 1.0}}, noise=0.0),
+                }
+            ),
+        }
+    )
+    for seed in range(6):
+        frame = schema.realize(seed).sample({"p": 10, "c": 2000}, seed=seed)["c"]
+        assert (frame.k == "b").mean() == pytest.approx(0.15, abs=0.002)
+        assert (frame.z[frame.k == "b"] == 1.0).all() and (frame.z[frame.k == "a"] == 0.0).all()
+
+
+def test_scored_columns_fit_in_the_order_they_read_each_other():
+    wanted = {"p": 0.05, "q": 0.15, "r": 0.8}
+    table = Table(
+        {
+            "x": Numeric(),
+            "c": Categorical(
+                {"a": 0.5, "b": 0.3, "d": 0.2}, scores={"a": {"x": 1.0}, "b": {"x": -1.0}}
+            ),
+            "y": Numeric(causes={"c": {"a": 2.0, "b": -2.0}}, noise=0.2),
+            "s": Categorical(wanted, scores={"p": {"y": 2.0}, "q": {"y": -1.0}}),
+        }
+    ).realize(0)
+    shares = table.sample(8000, seed=0).s.value_counts(normalize=True)
+    for level, share in wanted.items():
+        assert shares[level] == pytest.approx(share, abs=0.03)
+
+
+def test_a_blank_real_level_leaves_a_blank_by_level():
+    real = pd.DataFrame({"city": ["A", "B", None] * 100})
+    extra = {"v": Numeric(ByLevel("city", {"A": (100, 110), "B": (500, 510)}), noise=0.5)}
+    frame = Table.from_frame(real, extra=extra).realize(0).sample(seed=0)
+    assert frame.v[frame.city.isna()].isna().all()
+    assert frame.v[frame.city == "A"].between(100, 110).all()
+
+
+def test_real_keys_past_the_calibration_rows_realize():
+    child = pd.DataFrame({"pid": [0, 5000, 6000]})
+    schema = Schema(
+        {
+            "par": Table({"id": PrimaryKey(), "u": Numeric(Scaled("score", 0, 1))}),
+            "kid": Table.from_frame(child, foreign_keys={"pid": "par"}),
+        }
+    )
+    assert len(schema.realize(0).sample({"par": 7000}, seed=0)["kid"]) == 3
+
+
+def test_given_rows_keep_their_shares_when_realized():
+    real = pd.DataFrame({"x": np.arange(20.0)})
+    table = Table.from_frame(
+        real, extra={"k": Categorical({"a": 0.9, "b": 0.1}, causes={"x": 1.0}, noise=1.0)}
+    )
+    assert all((table.realize(s).sample(seed=s).k == "b").mean() == 0.1 for s in range(5))
+
+
+def test_derived_keeps_a_blank_whatever_its_function():
+    frame = Table(
+        {"a": Numeric(Normal(), missing=0.3), "d": Derived(lambda a: np.where(a > 0, 1.0, 0.0))}
+    ).sample(2000, seed=0)
+    assert (frame.d.isna() == frame.a.isna()).all()
+
+
+def test_a_pair_takes_a_weight_scaling_its_slopes():
+    frame = Table(
+        {
+            "k": Categorical(["a", "b"]),
+            "x": Numeric(),
+            "y": Numeric(causes={("k", "x"): (2.0, {"b": 1.5})}, noise=0.0),
+        }
+    ).sample(500, seed=0)
+    steep = frame[frame.k == "b"]
+    assert np.allclose(steep.y, 3.0 * steep.x)
+
+
 def test_a_family_may_generate_on_real_rows():
     real = pd.DataFrame({"age": np.arange(300.0), "city": np.resize(["Boston", "Lima"], 300)})
     table = Table.from_frame(
@@ -340,6 +428,17 @@ def test_a_family_may_generate_on_real_rows():
     frame = table.realize(0).sample(seed=0)
     assert frame.age.equals(real.age) and frame.city.equals(real.city)
     assert spearman(frame.age, frame.spend) > 0.8
+
+
+def test_grouped_rows_blank_row_by_row():
+    plan = Table({"x": Numeric(Normal(), missing=0.3), "k": Categorical(["a", "b"], missing=0.3)})
+    frame, entities = Grouping(
+        "replicates", ("x", "k"), rows=8.0, spread=0.0, measurement=0.0, column=None
+    ).draw(plan, 2000, np.random.default_rng(0))[:2]
+    for column in ("x", "k"):
+        assert frame[column].isna().mean() == pytest.approx(0.3, abs=0.05)
+        mixed = frame[column].isna().groupby(entities).nunique().eq(2).mean()
+        assert mixed > 0.5
 
 
 def test_grouped_rows_recompute_what_they_derive():

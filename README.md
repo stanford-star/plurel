@@ -191,7 +191,7 @@ and `time_column` names their events. Real levels have no order, so read them by
 
 `create_database` orders event tables by time and gives keys as row positions, the
 [relbench](https://github.com/stanford-star/relbench) form, which `write_database` saves and
-`read_database` loads back.
+`read_database` loads back; it writes a `db` directory and a `manifest.yaml` under the given path.
 
 ```python
 from plurel import create_database, split_timestamps, write_database
@@ -247,7 +247,7 @@ name prefix and validation and test shares.
 
 ## Author many tables from one description
 
-Any number or marginal above may be a range. The table is then a family: `realize(seed)` draws one
+Any weight, effect, noise or marginal above may be drawn from a range. The table is then a family: `realize(seed)` draws one
 table of it, and one description gives many tables, each reproducible from its seed. `Schema.realize`
 does the same for a whole database, so an agent can author either.
 
@@ -285,9 +285,14 @@ draws from; `-WEAK` is a negative strength.
 | `Noise(kind, std)` | Noise: `gaussian`, `laplace`, `student_t`, `skewed` or `gumbel` |
 | `ByLevel(column, {level: (low, high)})` | A marginal with its own range per level of a categorical column |
 
+A database is the same: `schema.realize(seed=0).sample({"clinics": 40, "visits": 5000}, seed=0)` gives
+a dict of DataFrames. Without a `shape`, `Scaled` draws one per seed, which can be `zero_inflated`
+where the units allow it, so name the `shape` when a column's form matters.
+
 `Categorical(shares, scores={level: {column: weight}})` takes the level that scores highest instead
-of cutting a rank. Realizing fits these scores, and every level cut, to one draw of the rows, so a
-realized table's shares follow its rows and it can be sampled at any size.
+of cutting a rank. Realizing fits these scores and the level cuts to one draw of the rows, so a
+realized table's shares follow its rows and it can be sampled at any size. A column that depends on a
+key keeps its shares exactly in every draw instead, since rows sharing a parent are not independent.
 
 `plurel.world` holds what a catalog of such tables needs. `load_catalog` reads a package whose file
 layout is its taxonomy, declared by one plan per sector (`Taxonomy`), and can live in any repository.

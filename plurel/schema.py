@@ -118,6 +118,10 @@ class Table:
             if unknown := set(node.parents) - set(self.nodes):
                 raise ValueError(f"{child!r} refers to unknown parents {sorted(unknown)}")
         self.order = topological({name: node.parents for name, node in self.nodes.items()})
+        self.crossing: set[str] = set()
+        for name in self.order:
+            if self.nodes[name].across or self.crossing.intersection(self.nodes[name].parents):
+                self.crossing.add(name)
         for name, column in self.columns.items():
             if isinstance(column.missing, str) and (
                 column.missing not in self.nodes
@@ -138,6 +142,8 @@ class Table:
             for name, column in self.columns.items()
             if isinstance(column, Column) and column.values is not None
         }
+        for latent in self.real.values():
+            latent.setflags(write=False)
         sizes = {
             len(e.values) for e in self.table.values() if getattr(e, "values", None) is not None
         }
@@ -160,6 +166,11 @@ class Table:
                 raise ValueError(f"{name!r} takes ranges from {levels.parent!r}: no categorical")
             if set(levels.ranges) != set(self.columns[levels.parent].categories):
                 raise ValueError(f"{name!r} needs one range per level of {levels.parent!r}")
+        for name, column in self.columns.items():
+            if getattr(column, "fit_shares", None) and name in self.crossing:
+                raise ValueError(
+                    f"{name!r} is scored and depends on a key: no fit holds its shares"
+                )
         numbers = {*self.hidden, *(name for name, kind in kinds.items() if kind == "numeric")}
         for name, entry in table.items():
             for scored in (getattr(entry, "scores", None) or {}).values():
@@ -216,37 +227,34 @@ class Table:
             frame[name] = derived.compute(frame)
         return frame[[name for name in self.table if name in frame]]
 
-    def fit_scores(self, latents: Mapping[str, np.ndarray], rng: np.random.Generator) -> "Table":
-        """Biases under which each scored column meets its shares: a fixed point on one draw and
-        fresh Gumbel noise, each pass shifting a level by the noise scale times the log of its
-        wanted over its seen share."""
-        entries = dict(self.table)
-        for name, column in self.columns.items():
-            if not getattr(column, "fit_shares", None):
-                continue
-            node = column.node
-            n = len(next(iter(latents.values())))
-            scores = sum(edge.apply(latents[edge.parent]) for edge in node.edges)
-            noise = rng.gumbel(0.0, node.noise.scale, size=(n, node.dim))
-            wanted, biases = np.asarray(column.fit_shares), np.zeros(node.dim)
-            for _ in range(CALIBRATION_PASSES):
-                codes = np.argmax(scores + biases + noise, axis=1)
-                shares = np.bincount(codes, minlength=node.dim) / n
-                step = node.noise.scale * np.log(wanted / np.maximum(shares, 1.0 / n))
-                if np.abs(step).max() < CALIBRATION_TOLERANCE * node.noise.scale:
-                    break
-                biases += step
-            bias = tuple(float(b) for b in biases - biases.mean())
-            entries[name] = replace(column, node=replace(node, bias=bias))
-        return self.like(entries)
+    def fit_score(self, name: str, latents: Mapping[str, np.ndarray], rng: np.random.Generator) -> "Table":  # fmt: skip
+        """A bias under which a scored column meets its shares: a fixed point on one draw and fresh
+        Gumbel noise, each pass shifting a level by the noise scale times the log of its wanted over
+        its seen share."""
+        column = self.columns[name]
+        node, n = column.node, len(latents[name])
+        scores = sum(edge.apply(latents[edge.parent]) for edge in node.edges)
+        noise = rng.gumbel(0.0, node.noise.scale, size=(n, node.dim))
+        wanted, biases = np.asarray(column.fit_shares), np.zeros(node.dim)
+        for _ in range(CALIBRATION_PASSES):
+            codes = np.argmax(scores + biases + noise, axis=1)
+            shares = np.bincount(codes, minlength=node.dim) / n
+            step = node.noise.scale * np.log(wanted / np.maximum(shares, 1.0 / n))
+            if np.abs(step).max() < CALIBRATION_TOLERANCE * node.noise.scale:
+                break
+            biases += step
+        bias = tuple(float(b) for b in biases - biases.mean())
+        return self.like({**self.table, name: replace(column, node=replace(node, bias=bias))})
 
     def cut(self, latents: Mapping[str, np.ndarray]) -> "Table":
         """Every binned column cut at fixed edges, its latent's quantiles at its shares, and what
-        reads its levels cut there too."""
+        reads its levels cut there too. Rows sharing a parent are not independent, so a column that
+        depends on a key keeps cutting each draw at its shares."""
         edges = {
             name: tuple(float(e) for e in level_edges(latents[name], column.category_probabilities))
             for name, column in self.columns.items()
             if column.kind == "categorical" and column.values is None and column.node.dim == 1
+            if name not in self.crossing
         }
 
         def fixed(node: Node) -> Node:
@@ -578,14 +586,19 @@ class Schema:
         return Schema({t: scm.drawn(seed, t) for t, scm in self.tables.items()}).fitted(seed)
 
     def fitted(self, seed: int) -> "Schema":
-        """Scores and level cuts fit to one draw of `CALIBRATION_ROWS` rows per table."""
+        """Scores and level cuts fit to one draw of `CALIBRATION_ROWS` rows per table, each scored
+        column after those it reads. Given rows cut each draw: they are all the rows there are."""
         tables, rng = dict(self.tables), lane(seed, "fit")
         rows = {t: CALIBRATION_ROWS if scm.size is None else scm.size for t, scm in tables.items()}
+        for (_table, _column), fk in self.keys.items():
+            if fk.values is not None and self.parent_keys(fk) is None and fk.values.notna().any():
+                rows[fk.parent] = max(rows[fk.parent], int(fk.values.max()) + 1)
         for table, scm in self.tables.items():
-            if any(
-                column.fit_shares for column in scm.columns.values() if isinstance(column, Column)
-            ):
-                latents = Schema(tables).sample_with_latents(rows, seed=rng)[1]
-                tables[table] = scm.fit_scores(latents[table], rng)
+            for name in scm.order:
+                if getattr(scm.columns.get(name), "fit_shares", None):
+                    latents = Schema(tables).sample_with_latents(rows, seed=rng)[1]
+                    tables[table] = tables[table].fit_score(name, latents[table], rng)
         latents = Schema(tables).sample_with_latents(rows, seed=rng)[1]
-        return Schema({t: scm.cut(latents[t]) for t, scm in tables.items()})
+        return Schema(
+            {t: scm if scm.size is not None else scm.cut(latents[t]) for t, scm in tables.items()}
+        )

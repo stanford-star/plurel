@@ -5,9 +5,11 @@ population's seed lanes and the draw's index, so a seed gives the same rows anyw
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
+
+from plurel.columns import Column
 
 ENTITY_ROWS_MAX = 256  # the most rows one entity of a grouped population holds
 ENTITY_CODES = 26 * 100_000  # an entity's id is a letter and five digits
@@ -107,7 +109,11 @@ class Grouping:
         sizes_rng, entity_rng, row_rng, noise_rng, id_rng = rng.spawn(5)
         sizes = self.sizes(n, sizes_rng)
         entities = np.repeat(np.arange(len(sizes)), sizes)
-        each, latents = plan.sample_with_latents(len(sizes), seed=entity_rng, finish=False)
+        whole = plan.like({
+            name: replace(entry, missing=0.0, missing_by=None) if isinstance(entry, Column) else entry
+            for name, entry in plan.table.items()
+        })  # fmt: skip
+        each, latents = whole.sample_with_latents(len(sizes), seed=entity_rng, finish=False)
         held = {node: latents[node][entities] for node in self.fixed}
         frame, row_latents = plan.sample_with_latents(n, seed=row_rng, held=held, finish=False)
         fixed = set(self.fixed)
@@ -126,7 +132,8 @@ class Grouping:
                 noisy = latent[entities] + noise
                 frame[name] = frame[name].where(frame[name].isna(), column.shaped(noisy, noise_rng))
             else:  # the entity's value as its own draw observed it (an in-draw rank map would bias ties)
-                frame[name] = each[name].iloc[entities].set_axis(frame.index)
+                value = each[name].iloc[entities].set_axis(frame.index)
+                frame[name] = value.where(frame[name].notna())
         frame = plan.finish(frame, row_latents)
         codes = id_rng.choice(ENTITY_CODES, size=len(sizes), replace=False)
         names = np.array([f"{chr(ord('A') + int(c) // 100_000)}{int(c) % 100_000:05d}" for c in codes], dtype=object)  # fmt: skip
