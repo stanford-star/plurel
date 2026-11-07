@@ -80,12 +80,10 @@ class Column:
             return
         if self.marginal is not None:
             raise ValueError("categorical columns have no marginal")
-        if (
-            self.categories is None
-            or len(set(self.categories)) != len(self.categories)
-            or len(self.categories) < 2
-        ):
-            raise ValueError("categorical columns need at least two distinct categories")
+        if self.categories is None or len(self.categories) < 2:
+            raise ValueError("categorical columns need at least two categories")
+        if len(set(self.categories)) != len(self.categories):
+            raise ValueError(f"categories must be unique, not {list(self.categories)}")
         if self.node.dim not in (1, len(self.categories)):
             raise ValueError("a categorical column needs one dimension or one per category")
         if self.node.dim > 1 and (self.probabilities is not None or self.binning is not None):

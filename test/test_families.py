@@ -25,6 +25,7 @@ from plurel import (
     Summary,
     Table,
     Timestamp,
+    Uniform,
 )
 
 
@@ -190,6 +191,11 @@ def test_a_stated_strength_means_what_it_says():
         (lambda: Categorical({"a": 0.5, "b": 0.5}, scores={"a": {}}, noise=Normal()), "Gumbel"),
         (lambda: Table({"x": Numeric(Normal()), "k": Categorical({"a": 0.5, "b": 0.7}, scores={"a": {"x": 1.0}})}), "summing to one"),
         (lambda: Table({"p_id": ForeignKey("p"), "x": Numeric(causes={("p_id.a", "p_id.b"): 1.0})}), "crosses"),
+        (lambda: Table({"k": Categorical(["a", "a", "b"])}), "unique"),
+        (lambda: Table({"x": Numeric(), "y": Numeric(causes={"x": float("nan")})}), "finite"),
+        (lambda: Table({"k": Categorical(["a", "b"]), "y": Numeric(causes={"k": {"a": float("inf")}})}), "finite"),
+        (lambda: Table({"x": Numeric(), "k": Categorical({"a": .5, "b": .5}, scores={"a": {"x": float("nan")}})}), "finite"),
+        (lambda: Table({"a": Numeric(Uniform(0, 1), round=1), "d": Derived(lambda a: 1 / a)}).sample(50, seed=0), "non-finite"),
     ],
 )  # fmt: skip
 def test_a_mistake_raises_when_the_table_is_built(build, message):

@@ -171,11 +171,17 @@ def _tail(cause: str | Summary, keys: Collection[str]) -> str | Foreign | Summar
     return Foreign(head, rest) if dot and head in keys else cause
 
 
+def _finite(value: object) -> float:
+    if not np.isfinite(value := float(value)):
+        raise ValueError(f"weights and effects must be finite, not {value}")
+    return value
+
+
 def _levels(tail: str | Foreign | Summary, effects: Mapping[object, float]) -> Edge:
     if isinstance(tail, Summary):
         raise ValueError("a summary is a number: give it a weight, not an effect per level")
     code = replace(tail, node=tail.node + CODE) if isinstance(tail, Foreign) else tail + CODE
-    return LevelEdge(code, tuple(effects.items()))
+    return LevelEdge(code, tuple((level, _finite(e)) for level, e in effects.items()))
 
 
 def _checked(transform: Function) -> Function:
@@ -199,7 +205,7 @@ def _cause(cause: str | Summary, effect: Effect, keys: Collection[str]) -> Edge:
     if isinstance(effect, Mapping):
         return _levels(tail, effect)
     weight, transform = effect if isinstance(effect, tuple) else (effect, "identity")
-    return LinearEdge(tail, float(weight), _checked(transform))
+    return LinearEdge(tail, _finite(weight), _checked(transform))
 
 
 def _pair(
@@ -217,7 +223,7 @@ def _pair(
         default = "step" if how == "rules" else "identity"
         weight, transform = effect if isinstance(effect, tuple) else (effect, default)
         edges = tuple(LinearEdge(cause, 1.0, _checked(transform)) for cause in pair)
-    return Node(edges, op="product", noise=None), LinearEdge(term, float(weight))
+    return Node(edges, op="product", noise=None), LinearEdge(term, _finite(weight))
 
 
 def _noise(noise: float | Distribution | None) -> Distribution | None:
@@ -436,7 +442,7 @@ class Categorical(Declaration):
         weights: dict[str, np.ndarray] = {}
         for k, level in enumerate(categories):
             for feature, weight in self.scores.get(level, {}).items():
-                weights.setdefault(feature, np.zeros((1, len(categories))))[0, k] = weight
+                weights.setdefault(feature, np.zeros((1, len(categories))))[0, k] = _finite(weight)
         edges = tuple(MatrixEdge(feature, matrix) for feature, matrix in weights.items())
         bias = (0.0,) * len(categories)
         noise = self.noise if isinstance(self.noise, Gumbel) else Gumbel(scale=self.noise or 1.0)
@@ -491,8 +497,12 @@ class Derived:
 
     def compute(self, frame: pd.DataFrame) -> np.ndarray:
         args = [frame[name].to_numpy(dtype=float) for name in self.inputs]
-        computed = np.round(np.asarray(self.function(*args), dtype=float), 6)
-        return np.where(np.isnan(args).any(0), np.nan, computed)
+        with np.errstate(all="ignore"):
+            computed = np.round(np.asarray(self.function(*args), dtype=float), 6)
+        blank = np.isnan(args).any(0)
+        if not np.isfinite(computed[~blank]).all():
+            raise ValueError(f"{self.inputs} gave a non-finite value, such as a division by zero")
+        return np.where(blank, np.nan, computed)
 
 
 def _real_column(values: pd.Series) -> Column:
