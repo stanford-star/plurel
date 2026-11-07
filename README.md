@@ -100,10 +100,22 @@ order at its shares, so a positive weight pushes rows toward its later levels. C
 those sums, not in the units of their marginals, so a `Numeric` without a marginal is the sum itself,
 as floats.
 
+A weight's size is how closely a column follows a cause. With one unit-normal cause and the default
+noise, the rank correlation is:
+
+| Weight | 0.25 | 0.5 | 1.0 | 2.0 |
+|---|---|---|---|---|
+| Rank correlation | 0.41 | 0.68 | 0.88 | 0.97 |
+
+Each further cause adds to the sum and so weakens the others. An effect per level moves that level's
+rows by the effect on the same scale, so `{"Boston": 1.0}` shifts Boston's rows by twice the default
+noise.
+
 `round` is a step: `round=1` gives whole numbers and `round=0.01` cents. `clip=(lo, hi)` caps the
 values, and either side may be `None`. `zeros=0.2` records a share of the rows at 0, or at the floor
 of a `Scaled` marginal. `missing=0.1, missing_by=("age", "high")` puts the blanks on the high rows of
-a number. `Timestamp`'s `end` is exclusive.
+a number. Blanks are only in the record: columns that read a blanked column still see its value.
+`Timestamp`'s `end` is exclusive.
 
 Sampling is deterministic in the seed.
 
@@ -192,6 +204,7 @@ and `time_column` names their events. Real levels have no order, so read them by
 `create_database` orders event tables by time and gives keys as row positions, the
 [relbench](https://github.com/stanford-star/relbench) form, which `write_database` saves and
 `read_database` loads back; it writes a `db` directory and a `manifest.yaml` under the given path.
+It refuses a path that already holds a dataset unless given `overwrite=True`.
 
 ```python
 from plurel import create_database, split_timestamps, write_database
@@ -209,7 +222,10 @@ write_database(
 `TablePrior` and `SchemaPrior` draw whole tables and databases. Every knob is a `Range` or a
 `Choices`, and their docstrings list them all. By default a database has 2 to 20 tables
 (`table_count`), 500 to 1,000 rows per entity table (`entity_row_count`) and 10,000 to 30,000 per
-event table (`activity_row_count`).
+event table (`activity_row_count`). To scale a database's rows, scale both ranges: twice the default
+is `entity_row_count=LogIntegersRange(1000, 2000), activity_row_count=LogIntegersRange(20000, 60000)`,
+and `prior.rows(drawn, seed=...)` then draws the counts. `TablePrior`'s `column_count` counts the
+columns besides the key.
 
 ```python
 from plurel import IntegersRange, LogIntegersRange, SchemaPrior, TablePrior
@@ -286,8 +302,24 @@ draws from; `-WEAK` is a negative strength.
 | `ByLevel(column, {level: (low, high)})` | A marginal with its own range per level of a categorical column |
 
 A database is the same: `schema.realize(seed=0).sample({"clinics": 40, "visits": 5000}, seed=0)` gives
-a dict of DataFrames. Without a `shape`, `Scaled` draws one per seed, which can be `zero_inflated`
-where the units allow it, so name the `shape` when a column's form matters.
+a dict of DataFrames.
+
+`Scaled` places the central 99% of a shape on `[low, high]`. Without a `shape` it draws one per seed
+from those its units allow, so name the `shape` when a column's form matters:
+
+| Units | Shapes |
+|---|---|
+| `count` | `counts`, `zero_inflated` |
+| `amount` | `right`, `zero_inflated`, `symmetric`, `bimodal` |
+| `duration` | `right`, `symmetric`, `bimodal` |
+| `ratio` | `right`, `symmetric`, `left` |
+| `score` | `symmetric`, `left`, `bimodal`, `right` |
+| `percent` | `symmetric`, `left`, `right`, `bimodal`, `multimodal` |
+| `signed` | `symmetric`, `bimodal`, `multimodal` |
+
+`right` is skewed by a degree each seed draws, from mild to a long tail, so its median can sit near
+the middle of the range. For values that are mostly small with a long tail in every seed, give the
+marginal itself, such as `Numeric(LogNormal(4, 1), clip=(20, 2000))`.
 
 `Categorical(shares, scores={level: {column: weight}})` takes the level that scores highest instead
 of cutting a rank. Realizing fits these scores and the level cuts to one draw of the rows, so a
