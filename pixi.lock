@@ -1887,7 +1887,6 @@ packages:
   requires_dist:
   - numpy
   - pandas
-  - pyyaml
   - relbench>=3.0.0
   - scipy
   requires_python: '>=3.12'

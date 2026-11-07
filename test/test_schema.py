@@ -5,29 +5,36 @@ import pandas as pd
 import pytest
 
 from plurel import (
-    DEFAULT_CALENDAR,
-    SCM,
-    Column,
     Exponential,
+    ForeignKey,
     Gumbel,
-    LinearEdge,
     LogNormal,
+    Normal,
+    PrimaryKey,
+    Schema,
+    Table,
+    Uniform,
+)
+from plurel.columns import DEFAULT_CALENDAR, Column
+from plurel.graph import (
+    AGGREGATES,
+    Edge,
+    Foreign,
+    LinearEdge,
     MatrixEdge,
     NearestEdge,
     Node,
-    Normal,
     ReadEdge,
-    Uniform,
+    Summary,
+    standardize,
 )
-from plurel.graph import AGGREGATES, Edge, Foreign, Summary, standardize
 from plurel.links import HSBMLink, RandomLink, TreeLink
-from plurel.schema import FK, Schema
 
 N = 300
 
 
 def wired(tables, keys=(), crossings=None):
-    """The tables joined by `keys` of (table, column, FK), their nodes reading `crossings`."""
+    """The tables joined by `keys` of (table, column, ForeignKey), their nodes reading `crossings`."""
     joined = {name: dict(scm.table) for name, scm in tables.items()}
     for table, column, fk in keys:
         joined[table][column] = fk
@@ -38,7 +45,7 @@ def wired(tables, keys=(), crossings=None):
         node = replace(node, edges=node.edges + edges)
         joined[table][name] = replace(entry, node=node) if isinstance(entry, Column) else node
     return Schema(
-        {name: SCM(table, time_column=tables[name].time_column) for name, table in joined.items()}
+        {name: Table(table, time_column=tables[name].time_column) for name, table in joined.items()}
     )
 
 
@@ -61,7 +68,7 @@ OBSERVED = {name: Column(NODES[name]) for name in ("y", "xz", "x", "z")}
 
 @pytest.fixture
 def scm():
-    return SCM({**NODES, **OBSERVED})
+    return Table({**NODES, **OBSERVED})
 
 
 def test_sampling_evaluates_every_node_in_topological_order(scm):
@@ -94,32 +101,32 @@ def test_a_held_node_takes_its_values_and_keeps_the_other_noise(scm):
 def test_a_reading_moves_no_other_draw():
     table = {"a": Column(Node()), "b": Column(Node(LinearEdge("a"))), "c": Column(Node())}
     read = Node(ReadEdge("a"), noise=None)
-    plain = SCM(table).sample(N, seed=0)
+    plain = Table(table).sample(N, seed=0)
     for name in ("first", "second"):
         table = {name: Column(read), **table}
-    grown = SCM(table).sample(N, seed=0)
+    grown = Table(table).sample(N, seed=0)
     pd.testing.assert_frame_equal(grown[list(plain)], plain)
     np.testing.assert_array_equal(grown["first"], plain["a"])
 
 
 def test_adding_a_node_or_a_column_moves_no_other_draw():
     table = {"a": Column(Node(), marginal=Uniform()), "b": Column(Node(LinearEdge("a")))}
-    plain = SCM(table).sample(N, seed=0)
-    grown = SCM(
+    plain = Table(table).sample(N, seed=0)
+    grown = Table(
         {"early": Node(), **table, "late": Column(Node(LinearEdge("early")), marginal=Uniform())}
     ).sample(N, seed=0)
     pd.testing.assert_frame_equal(grown[list(plain)], plain)
 
 
 def test_a_summary_never_reads_a_table_with_a_time_column():
-    parent = SCM(
+    parent = Table(
         {
-            "id": Column(kind="key"),
+            "id": PrimaryKey(),
             "n": Node(LinearEdge(Summary("c", "k", "x", "count")), noise=None),
         }
     )
-    child = SCM(
-        {"k": FK("p"), "x": Node(), "t": Column(Node(noise=DEFAULT_CALENDAR), "timestamp")},
+    child = Table(
+        {"k": ForeignKey("p"), "x": Node(), "t": Column(Node(noise=DEFAULT_CALENDAR), "timestamp")},
         time_column="t",
     )
     with pytest.raises(ValueError, match="later events"):
@@ -127,42 +134,42 @@ def test_a_summary_never_reads_a_table_with_a_time_column():
 
 
 def test_a_summary_never_reads_through_a_key_to_a_timed_table():
-    timed = SCM(
-        {"id": Column(kind="key"), "t": Column(Node(noise=DEFAULT_CALENDAR), "timestamp")},
+    timed = Table(
+        {"id": PrimaryKey(), "t": Column(Node(noise=DEFAULT_CALENDAR), "timestamp")},
         time_column="t",
     )
-    middle = SCM({"id": Column(kind="key"), "e": FK("timed"), "x": Node()})
-    parent = SCM(
+    middle = Table({"id": PrimaryKey(), "e": ForeignKey("timed"), "x": Node()})
+    parent = Table(
         {
-            "id": Column(kind="key"),
+            "id": PrimaryKey(),
             "n": Node(LinearEdge(Summary("c", "k", "x", "count")), noise=None),
         }
     )
-    child = SCM({"k": FK("p"), "m": FK("middle"), "x": Node()})
+    child = Table({"k": ForeignKey("p"), "m": ForeignKey("middle"), "x": Node()})
     with pytest.raises(ValueError, match="later events"):
         Schema({"p": parent, "c": child, "middle": middle, "timed": timed})
 
 
 def test_held_values_name_known_tables_and_nodes():
-    schema = Schema({"t": SCM({"x": Node()})})
+    schema = Schema({"t": Table({"x": Node()})})
     with pytest.raises(ValueError, match="unknown table"):
         schema.sample_with_latents({"t": 3}, seed=0, held={"nope": {}})
     with pytest.raises(ValueError, match="two-class"):
-        SCM({"m": Node(dim=2), "x": Column(Node(), missing="m")})
+        Table({"m": Node(dim=2), "x": Column(Node(), missing="m")})
 
 
 def test_construction_rejects_unknown_parents_and_cycles():
     with pytest.raises(ValueError):
-        SCM({"y": Node((LinearEdge("x"),))})
+        Table({"y": Node((LinearEdge("x"),))})
     with pytest.raises(ValueError):
-        SCM({"a": Node((LinearEdge("b"),)), "b": Node((LinearEdge("a"),))})
+        Table({"a": Node((LinearEdge("b"),)), "b": Node((LinearEdge("a"),))})
 
 
 def test_sampling_rejects_a_node_that_breaks_its_declared_width():
-    scm = SCM({"h": Node(dim=3), "y": Node((LinearEdge("h"),))})
+    scm = Table({"h": Node(dim=3), "y": Node((LinearEdge("h"),))})
     with pytest.raises(ValueError, match="declared"):
         scm.sample_with_latents(N, seed=0)
-    overflow = SCM({"x": Node(), "y": Node((LinearEdge("x", np.inf),))})
+    overflow = Table({"x": Node(), "y": Node((LinearEdge("x", np.inf),))})
     with pytest.raises(ValueError, match="non-finite"):
         overflow.sample_with_latents(N, seed=0)
 
@@ -171,7 +178,7 @@ def test_sample_observes_columns_from_one_draw(scm):
     frame, latents = scm.sample_with_latents(N, seed=0)
     assert list(frame) == ["y", "xz", "x", "z"] and len(frame) == N
     np.testing.assert_array_equal(frame["x"], latents["x"].ravel())
-    typed = SCM(
+    typed = Table(
         {
             **NODES,
             "amount": Column(Node(LinearEdge("y"), noise=None), marginal=Uniform(), missing=0.1),
@@ -185,23 +192,25 @@ def test_sample_observes_columns_from_one_draw(scm):
     assert list(frame) == ["segment", "amount", "when"]
     assert frame["when"].dtype == "datetime64[ns]" and set(typed.hidden) == set(NODES) - {"segment"}
     assert set(frame["segment"]) == {"a", "b", "c"} and 0.05 < frame["amount"].isna().mean() < 0.15
-    mnar = SCM({**NODES, "y": Column(NODES["y"], missing="hidden")}).sample_with_latents(N, seed=0)
+    mnar = Table({**NODES, "y": Column(NODES["y"], missing="hidden")}).sample_with_latents(
+        N, seed=0
+    )
     frame, latents = mnar
     assert frame["y"].isna().to_numpy().tolist() == (latents["hidden"][:, 1] == 1.0).tolist()
     assert latents["y"][frame["y"].isna()].mean() > latents["y"][frame["y"].notna()].mean()
     with pytest.raises(ValueError, match="two-class"):
-        SCM({**NODES, "c": Column(NODES["y"], missing="nobody")})
-    with pytest.raises(ValueError, match="a Node, a Column or an FK"):
-        SCM({"x": "y"})
+        Table({**NODES, "c": Column(NODES["y"], missing="nobody")})
+    with pytest.raises(ValueError, match="a key, a column or a hidden cause"):
+        Table({"x": "y"})
     with pytest.raises(TypeError):
-        SCM({"x": Node()}, {"x": Column(Node())})
+        Table({"x": Node()}, {"x": Column(Node())})
 
 
 def test_a_table_holds_its_keys_and_the_edges_that_cross_them():
-    customers = SCM({"id": Column(kind="key"), "spend": Column(Node())})
-    orders = SCM(
+    customers = Table({"id": PrimaryKey(), "spend": Column(Node())})
+    orders = Table(
         {
-            "customer_id": FK("customers"),
+            "customer_id": ForeignKey("customers"),
             "amount": Column(Node(LinearEdge(Foreign("customer_id", "spend"), 2.0), noise=None)),
         }
     )
@@ -214,11 +223,11 @@ def test_a_table_holds_its_keys_and_the_edges_that_cross_them():
     with pytest.raises(ValueError, match="need the tables of a Schema"):
         orders.sample(5, seed=0)
     with pytest.raises(ValueError, match="need the tables of a Schema"):
-        SCM({"k": FK("table"), "x": Column(Node())}).sample(5, seed=0)
+        Table({"k": ForeignKey("table"), "x": Column(Node())}).sample(5, seed=0)
     across = LinearEdge(Foreign("customer_id", "spend"))
     assert Node(across, dim=3, noise=None).dim == 3 and Node(across, noise=None).dim == 1
     assert Node(across, bias=(0.0, 1.0), noise=None).dim == 2
-    wide = SCM({"customer_id": FK("customers"), "w": Node(across, dim=3, noise=None)})
+    wide = Table({"customer_id": ForeignKey("customers"), "w": Node(across, dim=3, noise=None)})
     latents = Schema({"customers": customers, "orders": wide}).sample_with_latents(
         {"customers": 5, "orders": 5}, seed=0
     )[1]
@@ -235,7 +244,7 @@ def copy(dim=1):
 
 
 def customers():
-    return SCM(
+    return Table(
         {
             "segment": Column(
                 Node(bias=(0.0, 0.5, -0.5), onehot=True, noise=Gumbel()),
@@ -252,7 +261,7 @@ def customers():
 
 
 def orders():
-    return SCM(
+    return Table(
         {
             "segment": copy(3),
             "value": Column(copy()),
@@ -268,7 +277,7 @@ def orders():
 
 
 def employees():
-    return SCM(
+    return Table(
         {
             "level": Column(Node()),
             "manager_level": copy(),
@@ -280,8 +289,12 @@ def employees():
 
 
 FKEYS = (
-    ("orders", "customer_id", FK("customers", HSBMLink((2,), (2,)), nullable=0.1, fill=0.0)),
-    ("employees", "manager_id", FK("employees", TreeLink(roots=0.2), fill=0.0)),
+    (
+        "orders",
+        "customer_id",
+        ForeignKey("customers", HSBMLink((2,), (2,)), nullable=0.1, fill=0.0),
+    ),
+    ("employees", "manager_id", ForeignKey("employees", TreeLink(roots=0.2), fill=0.0)),
 )
 CROSSINGS = {
     ("customers", "n_orders"): (LinearEdge(Summary("orders", "customer_id", "amount", "count")),),
@@ -335,10 +348,10 @@ def test_sample_propagates_latents_in_both_directions(schema):
 
 
 def test_keys_read_integer_parents_as_floats():
-    parent = SCM({"x": Node()})
-    child = SCM(
+    parent = Table({"x": Node()})
+    child = Table(
         {
-            "k": FK("p", nullable=0.5, fill=0.5),
+            "k": ForeignKey("p", nullable=0.5, fill=0.5),
             "y": Node(LinearEdge(Foreign("k", "x"), 2.0), noise=None),
         }
     )
@@ -356,7 +369,7 @@ def test_sampling_is_deterministic(schema):
     for table in ROWS:
         pd.testing.assert_frame_equal(frames[table], again[table])
     with pytest.raises(ValueError, match="no key column"):
-        SCM({"x": Node((LinearEdge(Foreign("k", "y")),))}).sample(3, seed=0)
+        Table({"x": Node((LinearEdge(Foreign("k", "y")),))}).sample(3, seed=0)
 
 
 def test_aggregates_handle_empty_groups():
@@ -374,8 +387,8 @@ def test_aggregates_handle_empty_groups():
     for name, aggregate in AGGREGATES.items():
         np.testing.assert_array_equal(aggregate(values, index, 3), expected[name])
     schema = wired(
-        {"a": SCM({"x": Node()}), "b": SCM({"x": Node(dim=2)})},
-        (("b", "a_id", FK("a", nullable=0.5)),),
+        {"a": Table({"x": Node()}), "b": Table({"x": Node(dim=2)})},
+        (("b", "a_id", ForeignKey("a", nullable=0.5)),),
     )
     rows, latents = {"a": 3, "b": 3}, {"a": {"x": values[:, :1]}, "b": {"x": values}}
     links = {("b", "a_id"): index}
@@ -403,10 +416,10 @@ def test_aggregates_handle_empty_groups():
 
 def test_schema_validation():
     with pytest.raises(ValueError):
-        wired(tables(), (("orders", "customer_id", FK("shops")),))
+        wired(tables(), (("orders", "customer_id", ForeignKey("shops")),))
     with pytest.raises(ValueError, match="no key column"):
         wired(tables(), FKEYS[1:], CROSSINGS)
-    twice = FKEYS + (("orders", "referrer_id", FK("customers", RandomLink())),)
+    twice = FKEYS + (("orders", "referrer_id", ForeignKey("customers", RandomLink())),)
     referred = {**CROSSINGS, ("orders", "value"): (LinearEdge(Foreign("referrer_id", "value")),)}
     schema = wired(tables(), twice, referred)
     assert schema.source("orders", Foreign("referrer_id", "value")) == ("customers", "value")
@@ -426,9 +439,9 @@ def test_schema_validation():
     with pytest.raises(ValueError):
         Summary("orders", "customer_id", "amount", "count", fill=0.0)
     with pytest.raises(ValueError):
-        ("orders", "customer_id", FK("customers", nullable=1.0))
+        ("orders", "customer_id", ForeignKey("customers", nullable=1.0))
     with pytest.raises(ValueError):
-        ("orders", "customer_id", FK("customers", fill=np.inf))
+        ("orders", "customer_id", ForeignKey("customers", fill=np.inf))
     looped = {
         **CROSSINGS,
         ("customers", "value"): (LinearEdge(Summary("orders", "customer_id", "value", "mean")),),
@@ -457,16 +470,16 @@ def test_order_puts_every_node_after_its_parents(schema):
 
 def test_influence_flows_child_to_parent_to_other_child():
     tables = {
-        "a": SCM({"total": Column(copy())}),
-        "b": SCM({"x": Column(Node())}),
-        "c": SCM({"from_a": Column(copy())}),
-        "d": SCM({"from_b": Column(copy()), "from_c": Column(copy())}),
+        "a": Table({"total": Column(copy())}),
+        "b": Table({"x": Column(Node())}),
+        "c": Table({"from_a": Column(copy())}),
+        "d": Table({"from_b": Column(copy()), "from_c": Column(copy())}),
     }
     fkeys = (
-        ("b", "a_id", FK("a")),
-        ("c", "a_id", FK("a")),
-        ("d", "b_id", FK("b")),
-        ("d", "c_id", FK("c")),
+        ("b", "a_id", ForeignKey("a")),
+        ("c", "a_id", ForeignKey("a")),
+        ("d", "b_id", ForeignKey("b")),
+        ("d", "c_id", ForeignKey("c")),
     )
     crossings = {
         ("a", "total"): (LinearEdge(Summary("b", "a_id", "x", "sum")),),
@@ -495,9 +508,12 @@ def test_influence_flows_child_to_parent_to_other_child():
 
 
 def test_edges_read_through_the_key_they_name():
-    buyer_seller = SCM({"buyer_value": Column(copy()), "seller_value": Column(copy())})
-    both = SCM({"value": Node(), "bought": Column(copy()), "sold": Column(copy())})
-    fkeys = (("orders", "buyer_id", FK("customers")), ("orders", "seller_id", FK("customers")))
+    buyer_seller = Table({"buyer_value": Column(copy()), "seller_value": Column(copy())})
+    both = Table({"value": Node(), "bought": Column(copy()), "sold": Column(copy())})
+    fkeys = (
+        ("orders", "buyer_id", ForeignKey("customers")),
+        ("orders", "seller_id", ForeignKey("customers")),
+    )
     crossings = {
         ("orders", "buyer_value"): (LinearEdge(Foreign("buyer_id", "value")),),
         ("orders", "seller_value"): (LinearEdge(Foreign("seller_id", "value")),),
@@ -519,8 +535,8 @@ def test_edges_read_through_the_key_they_name():
     np.testing.assert_array_equal(frames["orders"]["seller_value"], value[seller])
     np.testing.assert_array_equal(frames["customers"]["bought"], np.bincount(buyer, minlength=50))
     np.testing.assert_array_equal(frames["customers"]["sold"], np.bincount(seller, minlength=50))
-    assert SCM({"x": Column(Node())}).sample(5, seed=0).shape == (5, 1)
-    assert SCM({}).sample(4, seed=0).shape == (4, 0)
+    assert Table({"x": Column(Node())}).sample(5, seed=0).shape == (5, 1)
+    assert Table({}).sample(4, seed=0).shape == (4, 0)
 
 
 class BadLink:
@@ -532,10 +548,10 @@ class BadLink:
 
 
 def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
-    customers = SCM(
+    customers = Table(
         {"segment": Node(bias=(0.0, 0.0, 0.0), onehot=True, noise=Gumbel()), "value": Node()}
     )
-    orders = SCM(
+    orders = Table(
         {
             "segment": Column(copy(3), categories=("a", "b", "c")),
             "amount": Column(copy(), marginal=LogNormal()),
@@ -545,7 +561,7 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
         ("orders", "segment"): (LinearEdge(Foreign("customer_id", "segment"), dim=3),),
         ("orders", "amount"): (LinearEdge(Foreign("customer_id", "value")),),
     }
-    fkeys = (("orders", "customer_id", FK("customers", nullable=0.3, fill=0.0)),)
+    fkeys = (("orders", "customer_id", ForeignKey("customers", nullable=0.3, fill=0.0)),)
     schema = wired({"customers": customers, "orders": orders}, fkeys, crossings)
     frames = schema.sample({"customers": 20, "orders": 1000}, seed=0)
     orphan = frames["orders"]["customer_id"].isna()
@@ -555,12 +571,12 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
     assert amount.isna().to_numpy().tolist() == orphan.tolist() and (amount.dropna() > 0).all()
     with pytest.raises(ValueError, match="integers"):
         schema.sample({"customers": 20.0, "orders": 10}, seed=0)
-    unfilled = (("orders", "customer_id", FK("customers", nullable=0.3)),)
+    unfilled = (("orders", "customer_id", ForeignKey("customers", nullable=0.3)),)
     with pytest.raises(ValueError, match="fill"):
         wired({"customers": customers, "orders": orders}, unfilled, crossings).sample(
             {"customers": 20, "orders": 10}, seed=0
         )
-    complete = (("orders", "customer_id", FK("customers")),)
+    complete = (("orders", "customer_id", ForeignKey("customers")),)
     assert (
         wired({"customers": customers, "orders": orders}, complete, crossings)
         .sample({"customers": 20, "orders": 10}, seed=0)["orders"]
@@ -568,7 +584,7 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
         .all()
         .all()
     )
-    childless = SCM({**customers.nodes, "mean": copy()})
+    childless = Table({**customers.nodes, "mean": copy()})
     unfilled_summary = {
         **crossings,
         ("customers", "mean"): (LinearEdge(Summary("orders", "customer_id", "amount", "mean")),),
@@ -578,11 +594,11 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
             {"customers": 20, "orders": 10}, seed=0
         )
     with pytest.raises(ValueError, match="self-referential"):
-        wired(tables(), (("orders", "customer_id", FK("customers", TreeLink())),))
+        wired(tables(), (("orders", "customer_id", ForeignKey("customers", TreeLink())),))
     for bad in (np.zeros(10), np.zeros(9, dtype=int), np.full(10, 20), np.full(10, -2)):
         broken = wired(
             {"customers": customers, "orders": orders},
-            (("orders", "customer_id", FK("customers", BadLink(bad), fill=0.0)),),
+            (("orders", "customer_id", ForeignKey("customers", BadLink(bad), fill=0.0)),),
             crossings,
         )
         with pytest.raises(ValueError, match="link"):
@@ -590,8 +606,8 @@ def test_orphans_and_bad_inputs_surface_instead_of_looking_like_data():
 
 
 def test_child_events_follow_their_parent_events():
-    customers = SCM({"signup": Column(Node(noise=DEFAULT_CALENDAR), "timestamp")})
-    orders = SCM(
+    customers = Table({"signup": Column(Node(noise=DEFAULT_CALENDAR), "timestamp")})
+    orders = Table(
         {
             "signup": copy(),
             "when": Column(
@@ -602,7 +618,7 @@ def test_child_events_follow_their_parent_events():
     )
     schema = wired(
         {"customers": customers, "orders": orders},
-        (("orders", "customer_id", FK("customers")),),
+        (("orders", "customer_id", ForeignKey("customers")),),
         {("orders", "signup"): (LinearEdge(Foreign("customer_id", "signup")),)},
     )
     frames = schema.sample({"customers": 50, "orders": 500}, seed=0)
@@ -613,10 +629,10 @@ def test_child_events_follow_their_parent_events():
 
 
 def test_crossing_terms_join_a_standardized_signal():
-    parent = SCM({"id": Column(kind="key"), "x": Node(noise=Normal(5.0, 10.0))})
-    child = SCM({"id": Column(kind="key"), "y": Node(dim=1, noise=None, standardize=True)})
+    parent = Table({"id": PrimaryKey(), "x": Node(noise=Normal(5.0, 10.0))})
+    child = Table({"id": PrimaryKey(), "y": Node(dim=1, noise=None, standardize=True)})
     crossings = {("c", "y"): (LinearEdge(Foreign("p_id", "x"), 3.0),)}
-    schema = wired({"p": parent, "c": child}, (("c", "p_id", FK("p")),), crossings)
+    schema = wired({"p": parent, "c": child}, (("c", "p_id", ForeignKey("p")),), crossings)
     frames, latents = schema.sample_with_latents({"p": 50, "c": 400}, seed=1)
     read = latents["p"]["x"][frames["c"]["p_id"].to_numpy(dtype=int)]
     assert np.allclose(latents["c"]["y"], standardize(3.0 * read))
@@ -624,7 +640,7 @@ def test_crossing_terms_join_a_standardized_signal():
 
 def test_the_short_forms_mean_the_same_tables():
     matrix = np.array([[1.0, -1.0]])
-    short = SCM(
+    short = Table(
         {
             "x": Column(Node()),
             "y": Column(Node(LinearEdge("x", 2.0)), marginal=Uniform()),
@@ -633,7 +649,7 @@ def test_the_short_forms_mean_the_same_tables():
             ),
         }
     )
-    spelled = SCM(
+    spelled = Table(
         {
             "x": Column(Node(), "numeric"),
             "y": Column(Node((LinearEdge("x", 2.0),)), "numeric", marginal=Uniform()),
@@ -648,13 +664,13 @@ def test_the_short_forms_mean_the_same_tables():
     pd.testing.assert_frame_equal(short.sample(50, seed=0), expected)
     with pytest.raises(ValueError, match="one tuple"):
         Node(LinearEdge("x"), LinearEdge("y"))
-    parent = SCM({"id": Column(kind="key"), "x": Column(Node())})
-    child = SCM({"y": Column(Node(noise=None))})
+    parent = Table({"id": PrimaryKey(), "x": Column(Node())})
+    child = Table({"y": Column(Node(noise=None))})
     edge = LinearEdge(Foreign("k", "x"))
     one, tupled = (
-        wired({"p": parent, "c": child}, (("c", "k", FK("p")),), {("c", "y"): edges}).sample(
-            {"p": 5, "c": 9}, seed=0
-        )
+        wired(
+            {"p": parent, "c": child}, (("c", "k", ForeignKey("p")),), {("c", "y"): edges}
+        ).sample({"p": 5, "c": 9}, seed=0)
         for edges in (edge, (edge,))
     )
     pd.testing.assert_frame_equal(one["c"], tupled["c"])

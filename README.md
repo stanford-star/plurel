@@ -55,111 +55,200 @@ pip install git+https://github.com/stanford-star/plurel.git
 
 ### Build a table
 
-A table is a causal graph. A `Node` holds a block of latent values; its value is a reduction
-over the `Edge`s from its parents, plus bias and noise. A `Column` holds a node and observes it as a
-numeric, categorical, timestamp or key column; a bare `Node` stays hidden. A dict of them is the
-table's `SCM`.
+A `Table` is a dict of its columns. Each column says what it holds and what causes it:
 
 ```python
-import numpy as np
-from plurel import SCM, Column, Gumbel, LinearEdge, LogNormal, MatrixEdge, Node, Normal, Uniform
+from plurel import Categorical, LogNormal, Numeric, PrimaryKey, Table, Uniform
 
-customers = SCM({
-    "id": Column(kind="key"),
-    "age": Column(Node(noise=Uniform(-1.7, 1.7)), marginal=Uniform(18.0, 80.0)),
-    "segment": Column(
-        Node(
-            MatrixEdge("age", np.array([[1.0, -1.0, 0.3]])),
-            bias=(0.0, 0.0, -0.5), onehot=True, noise=Gumbel(), standardize=True,
-        ),
-        categories=("bronze", "silver", "gold"),
-    ),
-    "spend": Column(
-        Node(LinearEdge("age", 0.8, "tanh"), noise=Normal(std=0.3), standardize=True),
-        marginal=LogNormal(3.0, 0.5), missing=0.05,
-    ),
+customers = Table({
+    "id": PrimaryKey(),
+    "age": Numeric(Uniform(18, 80), round=1),
+    "segment": Categorical({"bronze": 0.6, "silver": 0.3, "gold": 0.1}, causes={"age": 1.0}),
+    "spend": Numeric(LogNormal(3, 0.5), causes={"age": 0.8, "segment": {"gold": 1.5}}, missing=0.05),
 })
-frame = customers.sample(500, seed=0)
+frame = customers.sample(500, seed=0)  # a DataFrame; hidden causes are not in it
+frame.to_csv("customers.csv", index=False)
 ```
 
-Each node has at most one column. To observe a node again, or one slot of a wide node, give the
-column a node of its own that reads it: `Column(Node(ReadEdge("age"), noise=None))`. A node that
-only reads moves no other draw.
+| Column | Holds |
+|---|---|
+| `PrimaryKey()` | Row positions, or the given `values` |
+| `Numeric(marginal, causes, noise, missing, clip, round, zeros, missing_by, how)` | Numbers following `marginal`, any distribution such as `Normal(50, 10)`, `Uniform(18, 80)`, `LogNormal(3, 0.5)`, `Poisson(4)` or `Exponential()` |
+| `Categorical(levels, causes, noise, missing, ordered, scores, missing_by, how)` | Levels, as a sequence of equally common levels or a dict of level to share |
+| `Timestamp(start, end, causes, noise, missing)` | Times in the span |
+| `Hidden(causes, noise)` | A cause that other columns read but no column records |
+| `Derived(function)` | A number computed from recorded numbers, named by the function's parameters |
+| `Real(values)` | Given values, kept as they are |
+
+**Causes** map a column's name to its effect:
+
+| Cause and effect | Means |
+|---|---|
+| `"age": 0.8` | A weight: higher in the cause means higher here, and a negative weight means lower |
+| `"age": (0.8, "tanh")` | A weight and a transform: `tanh`, `square` (U-shaped), `step`, `relu`, `abs`, `sin`, `exp`, `log`, or any function |
+| `"segment": {"gold": 1.5}` | An effect per level of a categorical cause; levels left out have none |
+| `"segment": 0.8` | A weight on a categorical cause, which needs `ordered=True` on it: its levels are then a scale |
+| `("age", "tenure"): 0.8` | A weight on the product of two causes |
+| `("segment", "age"): {"gold": 1.5}` | A slope of the second cause per level of the first |
+
+A column is its causes' effects added up plus `noise`, a standard deviation of 0.5 by default, and
+a root is a unit normal. So `y = 2 * x + noise` is what `causes={"x": 2.0}` says: a larger weight or
+a smaller `noise` follows the causes more closely. `how` combines the effects another way: `max`,
+`min`, or `product`, their compounding. The rows then take the `marginal`'s values in that order,
+which means a column holds its marginal whatever its causes. A categorical column cuts the same
+order at its shares, so a positive weight pushes rows toward its later levels. Causes are read as
+those sums, not in the units of their marginals, so a `Numeric` without a marginal is the sum itself,
+as floats.
+
+A weight's size is how closely a column follows a cause. With one unit-normal cause and the default
+noise, the rank correlation is:
+
+| Weight | 0.25 | 0.5 | 1.0 | 2.0 |
+|---|---|---|---|---|
+| Rank correlation | 0.41 | 0.68 | 0.88 | 0.97 |
+
+Each further cause adds to the sum and so weakens the others. An effect per level moves that level's
+rows by the effect on the same scale, so `{"Boston": 1.0}` shifts Boston's rows by twice the default
+noise.
+
+`round` is a step: `round=1` gives whole numbers and `round=0.01` cents. `clip=(lo, hi)` caps the
+values, and either side may be `None`. `zeros=0.2` records a share of the rows at 0, or at the floor
+of a `Scaled` marginal. `missing=0.1, missing_by=("age", "high")` puts the blanks on the high rows of
+a number. Blanks are only in the record: columns that read a blanked column still see its value.
+`Timestamp`'s `end` is exclusive.
 
 Sampling is deterministic in the seed.
 
-### Draw a table from the prior
-
-`TablePrior` draws such plans; every knob is a `Range` or a `Choices`, and its docstring lists
-them all. With `time=True` the table gets a time column.
-
-```python
-from plurel import IntegersRange, Range, TablePrior
-
-prior = TablePrior(node_count=IntegersRange(4, 8), column_missing_share=Range(0.0, 0.0))
-events = prior.realize(seed=0, time=True)
-frame = events.sample(1000, seed=0)
-```
-
 ### Link tables into a database
 
-A table can hold an `FK` to another table, and any edge can read across a key: `Foreign(key, node)`
-reads the row the key points at, `Summary(table, key, node, how)` aggregates the rows pointing back.
-A term read across a key adds to the node's signal whatever its `op`. A `Schema` joins the tables,
-and a table with keys samples only through one.
+A `ForeignKey` points at another table, and `"key.column"` reads a column of the row it points at.
+A `Schema` joins the tables, and `time_column` names the column that orders a table's events.
 
 ```python
-import pandas as pd
-from plurel import FK, Calendar, Foreign, HSBMLink, Pareto, Schema
+from plurel import ForeignKey, HSBMLink, Pareto, Schema, Timestamp
 
-orders = SCM(
+orders = Table(
     {
-        "id": Column(kind="key"),
-        "time": Column(
-            Node(noise=Calendar(pd.Timestamp("2020-01-01"), pd.Timestamp("2024-01-01"))),
-            kind="timestamp",
-        ),
-        "customer_id": FK("customers", HSBMLink(popularity=Pareto(2.5)), nullable=0.02, fill=0.0),
-        "amount": Column(
-            Node(LinearEdge(Foreign("customer_id", "spend"), 1.0), noise=Normal(std=0.5), standardize=True),
-            marginal=LogNormal(),
-        ),
+        "id": PrimaryKey(),
+        "customer_id": ForeignKey("customers", HSBMLink(popularity=Pareto(2.5))),
+        "time": Timestamp("2020-01-01", "2024-01-01"),
+        "amount": Numeric(LogNormal(), causes={"customer_id.spend": 1.0, "customer_id.segment": {"gold": 0.5}}),
     },
     time_column="time",
 )
 schema = Schema({"customers": customers, "orders": orders})
-frames = schema.sample({"customers": 500, "orders": 5000}, seed=0)
+frames = schema.sample({"customers": 500, "orders": 5000}, seed=0)  # a dict of DataFrames by table
 ```
 
-An order's amount follows the spend of its customer; an order without one reads `fill`. The
-same schema also returns its latents:
+`link` says how rows pick their parent: `RandomLink()` by default, `HSBMLink(popularity=Pareto(2.5))`
+for a few very popular parents, or `TreeLink(roots=0.05)` on a key to the same table, whose roots
+have no parent. With `nullable=0.02` a share of the rows point at nothing, and a number read across
+the key takes `fill`, which such a key must then set: `ForeignKey("customers", nullable=0.02, fill=0.0)`.
+
+`Summary` reads the rows pointing back. It takes the table and its key, and counts them unless told
+to aggregate a column of theirs, as its sum (`Summary("staff", "boss_id", "pay", "mean",
+fill=0.0)`; also `sum`, `max` and `min`; all but `sum` need a `fill` for rows that nothing points
+at). With `noise=0` and no marginal a count is exact, and a `Hidden` count lets rows with more
+reports rank higher:
 
 ```python
-frames, latents = schema.sample_with_latents({"customers": 500, "orders": 5000}, seed=0)
+from plurel import Hidden, Summary, TreeLink
+
+teams = Table({"id": PrimaryKey(), "size": Numeric(causes={Summary("staff", "team_id"): 1.0}, noise=0)})
+staff = Table({
+    "id": PrimaryKey(),
+    "team_id": ForeignKey("teams"),
+    "boss_id": ForeignKey("staff", TreeLink(roots=0.05), fill=0.0),
+    "reports": Hidden(causes={Summary("staff", "boss_id"): 1.0}),
+    "grade": Categorical((1, 2, 3), causes={"reports": 1.0}, ordered=True),
+    "pay": Numeric(LogNormal(11, 0.3), causes={"grade": 1.0, "team_id.size": 0.3}),
+})
+frames = Schema({"teams": teams, "staff": staff}).sample({"teams": 8, "staff": 200}, seed=0)
 ```
 
-### Draw a database from the prior
+A cause is read within a row's own draw, so a column cannot read itself across a key, and a summary
+cannot read a table with events, which would be reading the future.
 
-`SchemaPrior` draws the table graph, one table per node of it, the keys and the edges across them.
-`create_database` orders event tables by time and `write_database` saves the
-[relbench](https://github.com/stanford-star/relbench) layout that `read_database` loads back.
+### Start from real rows
+
+`Table.from_frame` keeps a real table's rows exactly as they are. Generated tables point at its real
+keys and read its columns as causes, and `extra` adds generated columns to the real rows themselves.
+A table of real rows needs no row count.
 
 ```python
-from plurel import SchemaPrior, create_database, split_timestamps, write_database
+import pandas as pd
 
-prior = SchemaPrior()
-schema = prior.realize(seed=0)
-frames = schema.sample(prior.rows(schema, seed=0), seed=0)
-db = create_database(schema, frames)
+real = pd.DataFrame({
+    "customer_id": ["C1", "C2", "C3", "C4"],
+    "city": ["Boston", "Lima", "Boston", "Oslo"],
+    "age": [34, 51, 29, 62],
+})
+people = Table.from_frame(
+    real,
+    primary_key="customer_id",
+    extra={"churned": Categorical({"no": 0.8, "yes": 0.2}, causes={"age": -1.0})},
+)
+purchases = Table({
+    "id": PrimaryKey(),
+    "customer_id": ForeignKey("people"),
+    "amount": Numeric(LogNormal(), causes={"customer_id.city": {"Boston": 1.0}}),
+})
+frames = Schema({"people": people, "purchases": purchases}).sample({"purchases": 200}, seed=0)
+```
+
+Real child tables work the same way: `foreign_keys={"customer_id": "people"}` keeps their key values
+and `time_column` names their events. Real levels have no order, so read them by level.
+
+### Save a database
+
+`create_database` orders event tables by time and gives keys as row positions, the
+[relbench](https://github.com/stanford-star/relbench) form, which `write_database` saves and
+`read_database` loads back; it writes a `db` directory and a `manifest.yaml` under the given path.
+It refuses a path that already holds a dataset unless given `overwrite=True`.
+
+```python
+from plurel import create_database, split_timestamps, write_database
+
+db = create_database(schema, schema.sample({"customers": 500, "orders": 5000}, seed=0))
 val_timestamp, test_timestamp = split_timestamps(db)
 write_database(
-    db, "~/.cache/relbench/plurel-0", name="plurel-0",
+    db, "~/.cache/relbench/shop", name="shop",
     val_timestamp=val_timestamp, test_timestamp=test_timestamp,
 )
 ```
 
+### Draw random tables and databases
+
+`TablePrior` and `SchemaPrior` draw whole tables and databases. Every knob is a `Range` or a
+`Choices`, and their docstrings list them all. By default a database has 2 to 20 tables
+(`table_count`), 500 to 1,000 rows per entity table (`entity_row_count`) and 10,000 to 30,000 per
+event table (`activity_row_count`). To scale a database's rows, scale both ranges: twice the default
+is `entity_row_count=LogIntegersRange(1000, 2000), activity_row_count=LogIntegersRange(20000, 60000)`,
+and `prior.rows(drawn, seed=...)` then draws the counts. `TablePrior`'s `column_count` counts the
+columns besides the key.
+
+```python
+from plurel import IntegersRange, LogIntegersRange, SchemaPrior, TablePrior
+
+prior = TablePrior(column_count=IntegersRange(8, 8))
+events = prior.realize(seed=0, time=True)
+frame = events.sample(1000, seed=0)
+
+prior = SchemaPrior(table_count=IntegersRange(3, 5), entity_row_count=LogIntegersRange(1000, 2000))
+drawn = prior.realize(seed=0)
+frames = drawn.sample(prior.rows(drawn, seed=0), seed=0)
+db = create_database(drawn, frames)
+```
+
 Every generated database keeps its keys valid under any time cut: only unreferenced tables hold
 events, and summaries run only between static tables.
+
+### Go lower
+
+The columns above compile to the causal graph in `plurel.graph` and `plurel.columns`, which the
+priors build directly: a `Node` is a reduction over `Edge`s (`LinearEdge`, `MatrixEdge`, `MLPEdge`,
+`TreeEdge` and others) plus bias and noise, and a `Column` observes one. A `Table` accepts them next
+to the columns above, for mechanisms the causes can't state.
 
 ### Generate a corpus
 
@@ -172,48 +261,70 @@ python scripts/synthetic_gen.py --seed_offset 0 --num_dbs 1000 --num_proc 16
 Databases land in `~/.cache/relbench/plurel-<seed>`; see `--help` for the output directory,
 name prefix and validation and test shares.
 
-## Write your own tables
+## Author many tables from one description
 
-A `WorldSchema` says what a table means: what each column is, on what scale, and how it depends on
-the others. A schema authors signs and strength classes; a seed draws the magnitudes, so one schema
-gives many tables. `validate()` names the first rule a schema breaks, which makes the language easy
-for an agent to write against.
+Any weight, effect, noise or marginal above may be drawn from a range. The table is then a family: `realize(seed)` draws one
+table of it, and one description gives many tables, each reproducible from its seed. `Schema.realize`
+does the same for a whole database, so an agent can author either.
 
 ```python
-from plurel.world import Edge, Node, WorldSchema, realize_world
+from plurel import LOW, MEDIUM, STRONG, WEAK, Categorical, Noise, Numeric, Scaled, Table
 
-schema = WorldSchema(
-    schema_id="clinic_referral_outcome",
-    target="outcome",
-    description="Each row is one referral a clinic received; outcome records how it ended.",
-    nodes={
-        "age": Node(kind="numeric", units="duration", dist="right", scale=(0, 90), desc="the patient's age"),
-        "wait_days": Node(
-            kind="numeric", units="duration", scale=(0, 60), rounding=1,
-            parents={"age": Edge(effect=+0.5)}, noise_scale="low", noise_dist="gaussian",
-            desc="days waited",
+referrals = Table(
+    {
+        "age": Numeric(Scaled("duration", 0, 90, shape="right"), doc="the patient's age"),
+        "wait_days": Numeric(
+            Scaled("duration", 0, 60), round=1, causes={"age": WEAK}, noise=LOW, doc="days waited"
         ),
-        "outcome": Node(
-            kind="categorical", levels=["declined", "accepted"], level_probs={"declined": 0.7, "accepted": 0.3},
-            parents={"wait_days": Edge(effect=-1, shape="saturating")},
-            noise_scale="medium", noise_dist="gaussian", desc="how it ended",
+        "outcome": Categorical(
+            {"declined": 0.7, "accepted": 0.3},
+            causes={"wait_days": (-STRONG, "tanh")},
+            noise=Noise("gaussian", MEDIUM),
+            doc="how it ended",
         ),
     },
+    name="clinic_referral_outcome",
+    doc="Each row is one referral a clinic received; outcome records how it ended.",
+    target="outcome",
 )
-population = realize_world(schema, seed=0)
-rows = population.rows(n=1000, draw=0)
+rows = referrals.realize(seed=0).sample(1000, seed=0)
 ```
 
-Nodes can also declare hidden causes, nominal parents, interactions, non-additive mechanisms, derived
-columns and what the record rounds, caps or leaves blank; `compile_schema` returns the plain `SCM`.
-`realize_random(seed, columns=...)` in `plurel.random_scm` gives a table of the same shape from the
-prior, with no text.
+`STRONG` and `WEAK` are strengths and `LOW`, `MEDIUM` and `HIGH` noise levels, each a `Range` a seed
+draws from; `-WEAK` is a negative strength.
 
-A catalog of schemas is a package whose file layout is its taxonomy (`load_catalog`), declared by one
-plan per sector (`Taxonomy`). It can live in any repository. `plurel.world.authoring.realism.check`
-is the gate on a new schema, `plurel.world.authoring.dedupe` lists near-duplicates, and `brief` and
-`lint` support writing a schema's world knowledge. [`examples/world/`](examples/world/) shows them
-together.
+| Drawable | Draws |
+|---|---|
+| `Range(low, high)` | A number, wherever a weight, an effect or a noise goes |
+| `Scaled(units, low, high, shape=None)` | A marginal on the range, of the given shape or one the `units` allow: `count`, `amount`, `duration`, `ratio`, `score`, `percent`, `signed` |
+| `Shares(levels, concentration)` | A categorical column's shares, around a dict of them or from its levels alone |
+| `Noise(kind, std)` | Noise: `gaussian`, `laplace`, `student_t`, `skewed` or `gumbel` |
+| `ByLevel(column, {level: (low, high)})` | A marginal with its own range per level of a categorical column |
+
+A database is the same: `schema.realize(seed=0).sample({"clinics": 40, "visits": 5000}, seed=0)` gives
+a dict of DataFrames.
+
+`Scaled` places the central 99% of a shape on `[low, high]`. Without a `shape` it draws one per seed
+from those its units allow, so name the `shape` when a column's form matters:
+
+| Units | Shapes |
+|---|---|
+| `count` | `counts`, `zero_inflated` |
+| `amount` | `right`, `zero_inflated`, `symmetric`, `bimodal` |
+| `duration` | `right`, `symmetric`, `bimodal` |
+| `ratio` | `right`, `symmetric`, `left` |
+| `score` | `symmetric`, `left`, `bimodal`, `right` |
+| `percent` | `symmetric`, `left`, `right`, `bimodal`, `multimodal` |
+| `signed` | `symmetric`, `bimodal`, `multimodal` |
+
+`right` is skewed by a degree each seed draws, from mild to a long tail, so its median can sit near
+the middle of the range. For values that are mostly small with a long tail in every seed, give the
+marginal itself, such as `Numeric(LogNormal(4, 1), clip=(20, 2000))`.
+
+`Categorical(shares, scores={level: {column: weight}})` takes the level that scores highest instead
+of cutting a rank. Realizing fits these scores and the level cuts to one draw of the rows, so a
+realized table's shares follow its rows and it can be sampled at any size. A column that depends on a
+key keeps its shares exactly in every draw instead, since rows sharing a parent are not independent.
 
 ## Development
 

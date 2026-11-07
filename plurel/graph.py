@@ -1,5 +1,5 @@
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import reduce
 
 import numpy as np
@@ -136,6 +136,24 @@ class LookupEdge(Edge):
         if edges is None:
             edges = level_edges(x, self.probabilities or _uniform(len(self.values)))
         return np.asarray(self.values)[bin_levels(x, edges)]
+
+
+@dataclass(frozen=True)
+class LevelEdge(Edge):
+    """An effect per level of a categorical parent's code node, zero for a level it leaves out or
+    a row with none; `bound` lines the effects up with the parent's levels."""
+
+    effects: tuple[tuple[object, float], ...]
+    values: tuple[float, ...] = ()
+
+    def bound(self, levels: tuple[object, ...]) -> "LevelEdge":
+        given = dict(self.effects)
+        if unknown := set(given) - set(levels):
+            raise ValueError(f"effects name unknown levels {sorted(map(str, unknown))}")
+        return replace(self, values=tuple(float(given.get(level, 0.0)) for level in levels))
+
+    def apply(self, x: np.ndarray) -> np.ndarray:
+        return np.append(self.values, 0.0)[x.astype(np.int64)]
 
 
 @dataclass(frozen=True)
@@ -388,16 +406,19 @@ class Foreign:
 @dataclass(frozen=True)
 class Summary:
     """Tail of an edge aggregating, per row, the rows of `table` that point at it through
-    `key`; `fill` is read where no row does, needed for mean, max and min."""
+    `key`: how many, or the `how` of their `node`. `fill` is read where no row does, needed for
+    mean, max and min."""
 
     table: str
     key: str
-    node: str
-    how: str
+    node: str | None = None
+    how: str = "count"
     fill: float | None = None
 
     def __post_init__(self) -> None:
         if self.how not in AGGREGATES:
             raise ValueError(f"how must be one of {tuple(AGGREGATES)}")
+        if self.node is None and self.how != "count":
+            raise ValueError(f"a {self.how} needs a node to read")
         if self.fill is not None and (self.how in COMPLETE or not np.isfinite(self.fill)):
             raise ValueError("fill is a finite value for mean, max or min only")
