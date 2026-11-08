@@ -419,11 +419,15 @@ def test_real_rows_take_table_metadata_and_a_task_target():
 def test_derived_columns_bind_parameters_to_any_column_name():
     real = pd.DataFrame({"Unit Price": [10.0, 20.0, None], "Quantity": [2.0, 3.0, 4.0]})
     total = Derived(
-        lambda price, quantity: price * quantity, {"price": "Unit Price", "quantity": "Quantity"}
+        lambda price, quantity: price * quantity,
+        columns={"price": "Unit Price", "quantity": "Quantity"},
     )
     table = Table.from_frame(
         real,
-        extra={"Total": total, "With tax": Derived(lambda total: total * 1.1, {"total": "Total"})},
+        extra={
+            "Total": total,
+            "With tax": Derived(lambda total: total * 1.1, columns={"total": "Total"}),
+        },
     )
     frame = table.sample(seed=0)
     assert list(frame) == ["Unit Price", "Quantity", "Total", "With tax"]
@@ -431,8 +435,16 @@ def test_derived_columns_bind_parameters_to_any_column_name():
     np.testing.assert_allclose(frame["With tax"], [22.0, 66.0, np.nan])
     assert table.describe()["columns"]["Total"]["inputs"] == ["Unit Price", "Quantity"]
     with pytest.raises(ValueError, match=r"binds \['cost'\]"):
-        Derived(lambda price: price, {"cost": "Unit Price"})
+        Derived(lambda price: price, columns={"cost": "Unit Price"})
     with pytest.raises(ValueError, match=r"reads Price \(as price\)"):
-        Table.from_frame(real, extra={"T": Derived(lambda price: price, {"price": "Price"})})
+        Table.from_frame(
+            real, extra={"T": Derived(lambda price: price, columns={"price": "Price"})}
+        )
+    assert Derived(lambda a: a, "what it is").doc == "what it is"
     with pytest.raises(ValueError, match="cycle"):
-        Table({"a": Derived(lambda x: x, {"x": "b"}), "b": Derived(lambda y: y, {"y": "a"})})
+        Table(
+            {
+                "a": Derived(lambda x: x, columns={"x": "b"}),
+                "b": Derived(lambda y: y, columns={"y": "a"}),
+            }
+        )

@@ -533,12 +533,12 @@ class Hidden(Declaration):
 @dataclass(frozen=True, eq=False)
 class Derived:
     """A column computed from the recorded values of numeric or derived columns of its table, each
-    named by a parameter of the function, or bound to one by `columns`, which maps a parameter to
-    a column such as `{"price": "Unit Price"}`; a blank input leaves a blank."""
+    named by a parameter of the function, or bound to one by `columns=`, which maps a parameter
+    to a column such as `{"price": "Unit Price"}`; a blank input leaves a blank."""
 
     function: Callable[..., np.ndarray]
-    columns: Mapping[str, str] = field(default_factory=dict)
     doc: str | None = None
+    columns: Mapping[str, str] = field(default_factory=dict, kw_only=True)
 
     def __post_init__(self) -> None:
         parameters = tuple(inspect.signature(self.function).parameters)

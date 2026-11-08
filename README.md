@@ -376,7 +376,7 @@ a real column or an `extra` one. Real child tables work the same way: `foreign_k
 "people"}` keeps their key values and `time_column` names their events. Real levels have no order,
 so read them by level. Real headers that are no Python names, such as `"Unit Price"`, bind to a
 `Derived` function's parameters with `columns`:
-`Derived(lambda price, quantity: price * quantity, {"price": "Unit Price", "quantity": "Quantity"})`.
+`Derived(lambda price, quantity: price * quantity, columns={"price": "Unit Price", "quantity": "Quantity"})`.
 
 This is augmentation, not learned synthesis. The real table keeps its own row count and keys in every
 draw, `extra` and the generated tables are authored mechanisms that read it, and those tables take

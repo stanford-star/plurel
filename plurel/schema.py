@@ -383,7 +383,7 @@ class Table:
         primary_key: str | None = None,
         foreign_keys: Mapping[str, str] | None = None,
         time_column: str | None = None,
-        extra: Mapping[str, object] | None = None,
+        extra: Mapping[str, Entry] | None = None,
         name: str | None = None,
         doc: str | None = None,
         target: str | None = None,

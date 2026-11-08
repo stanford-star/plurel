@@ -54,7 +54,9 @@ customers = Table(
         ),
         "taste": Hidden(),
         "ratio": Derived(lambda spend, age: spend / age),
-        "per_year": Derived(lambda money, years: money / years, {"money": "spend", "years": "age"}),
+        "per_year": Derived(
+            lambda money, years: money / years, columns={"money": "spend", "years": "age"}
+        ),
         "joined": Timestamp("2020-01-01", "2024-01-01", causes={"age": -0.5}),
         "score": Numeric(Scaled("score", 0, 100), causes={Recorded("age", fill=40.0): 0.1}),
     },
@@ -116,3 +118,4 @@ def rejected() -> None:
     Numeric(causes={"x": "strong"})  # pyright: ignore[reportArgumentType]
     Numeric(causes={3: 1.0})  # pyright: ignore[reportArgumentType]
     ForeignKey("p", match={"region": 1})  # pyright: ignore[reportArgumentType]
+    Table.from_frame(pd.DataFrame(), extra={"x": "strong"})  # pyright: ignore[reportArgumentType]
