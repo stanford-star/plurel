@@ -39,7 +39,7 @@ from plurel.distributions import (
     Trend,
     Uniform,
 )
-from plurel.graph import Summary
+from plurel.graph import Recorded, Summary
 from plurel.links import HSBMLink, Link, RandomLink, TreeLink
 from plurel.prior import (
     Choices,
@@ -96,6 +96,7 @@ __all__ = [
     "SchemaPrior",
     "Shares",
     "StudentT",
+    "Recorded",
     "Summary",
     "Table",
     "TablePrior",

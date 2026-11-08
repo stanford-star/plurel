@@ -36,13 +36,14 @@ from plurel.graph import (
     MatrixEdge,
     Node,
     ReadEdge,
+    Recorded,
     Summary,
 )
 from plurel.links import Link, RandomLink
 from plurel.random import Range
 
 Effect = float | Range | tuple | Mapping[object, float]
-Causes = Mapping[str | Summary | tuple[str, str], Effect]
+Causes = Mapping[str | Recorded | Summary | tuple[str, str], Effect]
 
 CODE = ".code"  # a categorical column's hidden node holding its level's index
 NOISE = 0.5  # the default standard deviation of the noise on a column's causes
@@ -164,11 +165,16 @@ class Noise:
         raise ValueError(f"unknown noise {self.kind!r}")
 
 
-def _tail(cause: str | Summary, keys: Collection[str]) -> str | Foreign | Summary:
-    if not isinstance(cause, str):
+def _tail(
+    cause: str | Recorded | Summary, keys: Collection[str]
+) -> str | Recorded | Foreign | Summary:
+    """The tail a cause reads: a local name, or `key.column` of the row the key points at."""
+    if not isinstance(cause, str | Recorded):
         return cause
-    head, dot, rest = cause.partition(".")
-    return Foreign(head, rest) if dot and head in keys else cause
+    head, dot, rest = (cause.column if isinstance(cause, Recorded) else cause).partition(".")
+    if not (dot and head in keys):
+        return cause
+    return Foreign(head, replace(cause, column=rest) if isinstance(cause, Recorded) else rest)
 
 
 def _finite(value: object) -> float:
@@ -178,8 +184,11 @@ def _finite(value: object) -> float:
 
 
 def _levels(tail: str | Foreign | Summary, effects: Mapping[object, float]) -> Edge:
-    if isinstance(tail, Summary):
-        raise ValueError("a summary is a number: give it a weight, not an effect per level")
+    if isinstance(tail, Summary | Recorded) or isinstance(getattr(tail, "node", ""), Recorded):
+        raise ValueError(
+            f"a summary is a number, as is a recorded value: give {tail!r} a weight, not an"
+            " effect per level"
+        )
     code = replace(tail, node=tail.node + CODE) if isinstance(tail, Foreign) else tail + CODE
     return LevelEdge(code, tuple((level, _finite(e)) for level, e in effects.items()))
 
@@ -209,13 +218,16 @@ def _cause(cause: str | Summary, effect: Effect, keys: Collection[str]) -> Edge:
 
 
 def _pair(
-    term: str, pair: tuple[str, str], effect: Effect, how: str, keys: Collection[str]
-) -> tuple[Node, Edge]:
+    name: str, pair: tuple[str, str], effect: Effect, how: str, keys: Collection[str]
+) -> tuple[str, Node, Edge]:
     """The hidden product of two local causes and the edge reading it: a weight, optionally with a
     transform of both, or an effect per level of the first, which sets the slope of the second."""
     first, second = pair
-    if any(_tail(cause, keys) != cause for cause in pair):
-        raise ValueError(f"{pair} crosses a key: a product reads this table's own columns")
+    if any(not isinstance(cause, str) or _tail(cause, keys) != cause for cause in pair):
+        raise ValueError(
+            f"{pair} crosses a key or reads a record: a product reads latents of this table"
+        )
+    term = f"{name}.{'*'.join(pair)}"
     effect = _scaled_levels(effect)
     if isinstance(effect, Mapping):
         edges, weight = (_levels(first, effect), LinearEdge(second)), 1.0
@@ -223,7 +235,7 @@ def _pair(
         default = "step" if how == "rules" else "identity"
         weight, transform = effect if isinstance(effect, tuple) else (effect, default)
         edges = tuple(LinearEdge(cause, 1.0, _checked(transform)) for cause in pair)
-    return Node(edges, op="product", noise=None), LinearEdge(term, _finite(weight))
+    return term, Node(edges, op="product", noise=None), LinearEdge(term, _finite(weight))
 
 
 def _noise(noise: float | Distribution | None) -> Distribution | None:
@@ -254,12 +266,14 @@ def _node(
         or not isinstance(cause, tuple | str)
         for cause in causes
     ):
-        raise ValueError(f"how={how!r} reads this table's own columns: a cause across a key adds")
+        raise ValueError(
+            f"how={how!r} reads the latents of this table's own columns: a cause across a key or"
+            " a recorded value adds"
+        )
     edges, helpers = [], {}
     for cause, effect in causes.items():
         if isinstance(cause, tuple):
-            term = f"{name}.{'*'.join(cause)}"
-            helpers[term], edge = _pair(term, cause, effect, how, keys)
+            term, helpers[term], edge = _pair(name, cause, effect, how, keys)
         else:
             edge = _cause(cause, effect, keys)
         edges.append(edge)
@@ -313,8 +327,9 @@ class ByLevel:
 @dataclass(frozen=True)
 class Numeric(Declaration):
     """A number following `marginal`: the causes' weighted sum plus `noise`, its latent, orders the
-    rows, and they take the marginal's values in that order; causes read latents, not recorded
-    values. Without a marginal the column is that sum. A
+    rows, and they take the marginal's values in that order. A cause is read as its latent, or as
+    a `Recorded` cause as what its column records, in its units. Without a marginal the column is
+    that sum, so `{Recorded("x"): 2.0}` with `noise=5.0` records `2 * x` plus noise in x's units. A
     share `zeros` of the rows record the marginal's floor, or 0, and `clip` (either side may be
     None) and `round` (a step) apply last. `how` combines the causes: their sum, largest, smallest,
     compounding product, or `rules`, a sum whose pairs are thresholds. A pair in `causes` is the
@@ -452,17 +467,28 @@ class Categorical(Declaration):
 
 @dataclass(frozen=True)
 class Timestamp(Declaration):
-    """A time in `[start, end)` on a calendar of business hours; causes move a row later."""
+    """A time in `[start, end)` on a calendar of business hours; causes move a row later. Without
+    `start` and `end` the time is its causes' sum plus `noise` in epoch seconds: reading another
+    time `Recorded` with weight 1 and a positive noise, such as `Exponential(7 * 86400)`, places
+    each row a week or so after it, never before."""
 
-    start: str | pd.Timestamp
-    end: str | pd.Timestamp
+    start: str | pd.Timestamp | None = None
+    end: str | pd.Timestamp | None = None
     causes: Causes = field(default_factory=dict)
     noise: float | Range | Noise | Distribution | None = None
     missing: float = 0.0
     doc: str | None = None
 
+    def __post_init__(self) -> None:
+        if (self.start is None) != (self.end is None):
+            raise ValueError("a timestamp takes both a start and an end, or neither")
+        if self.start is None and not self.causes:
+            raise ValueError("a timestamp without a start and an end is its causes: give some")
+
     def entries(self, name: str, keys: Collection[str]) -> dict[str, Node | Column]:
-        calendar = Calendar(pd.Timestamp(self.start), pd.Timestamp(self.end))
+        calendar = None
+        if self.start is not None:
+            calendar = Calendar(pd.Timestamp(self.start), pd.Timestamp(self.end))
         node, helpers = _node(name, self.causes, self.noise, keys)
         return {**helpers, name: Column(node, "timestamp", marginal=calendar, missing=self.missing)}
 
@@ -561,12 +587,15 @@ class PrimaryKey:
     ) -> pd.Series:
         return pd.Series(np.arange(n)) if self.values is None else self.values
 
+    def framed(self, recorded: pd.Series) -> pd.Series:
+        return recorded
+
 
 @dataclass(frozen=True, eq=False)
 class ForeignKey:
     """A key pointing at rows of `parent`, drawn by `link` or given as the parent's key `values`;
-    a share `nullable` of the rows point at nothing, and causes read across it take `fill` there,
-    a latent value."""
+    a share `nullable` of the rows point at nothing, and latents read across it take `fill` there.
+    A `Recorded` cause across it takes the `Recorded` fill instead."""
 
     parent: str
     link: Link = RandomLink()
