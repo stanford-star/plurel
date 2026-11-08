@@ -190,17 +190,19 @@ class Run:
             if fk.unique:
                 group = self.unique_groups(table, fk)
                 try:
-                    drawn = distinct(child, parent, log_weights, group, stream, bool(fk.nullable))
+                    leave = fk.unmatched == "null"
+                    drawn = distinct(child, parent, log_weights, group, stream, leave)
                 except ValueError as error:
                     raise ValueError(
                         f"{column!r} of {table!r} must not repeat a parent{per(fk)}: {error}"
                     ) from error
             else:
                 drawn = matched(child, parent, log_weights, stream)
-            if not fk.nullable and (unmatched := int((drawn < 0).sum())):
+            if fk.unmatched == "raise" and (unmatched := int((drawn < 0).sum())):
                 raise ValueError(
                     f"{unmatched} rows of {table!r} match no row of {fk.parent!r} on"
-                    f" {dict(fk.match)}: make {column!r} nullable to leave them pointing at nothing"
+                    f' {dict(fk.match)}: pass unmatched="null" to {column!r} to leave them'
+                    " pointing at nothing"
                 )
         else:
             drawn = np.asarray(fk.link.sample(rows[table], rows[fk.parent], stream))

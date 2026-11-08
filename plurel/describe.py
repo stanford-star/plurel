@@ -116,6 +116,7 @@ def column(name: str, entry: object, helpers: Mapping[str, Node]) -> dict[str, o
             "given": entry.values is not None,
             "link": plain(entry.link),
             "nullable": entry.nullable,
+            "unmatched": entry.unmatched,
             "fill": entry.fill,
             "match": dict(entry.match),
             "prefer": plain(dict(entry.prefer)),

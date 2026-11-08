@@ -152,6 +152,7 @@ def mixed(real, ranged):
                 match={"region": "region"},
                 prefer={"size": 1.0},
                 unique="customer_id",
+                unmatched="null",
                 nullable=0.01,
                 fill=0.0,
             ),

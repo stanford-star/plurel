@@ -59,16 +59,24 @@ def test_a_matched_key_points_at_eligible_parents_by_preference():
     assert all(frames[t].equals(again[t]) for t in frames)
 
 
-def test_rows_no_parent_matches_point_at_nothing_only_on_a_nullable_key():
+def test_unmatched_rows_raise_or_point_at_nothing_apart_from_random_nulls():
     rows = {"clinics": 2, "patients": 300}
-    with pytest.raises(ValueError, match="match no row"):
+    with pytest.raises(ValueError, match='pass unmatched="null"'):
         clinics(match={"region": "region"}).sample(rows, seed=0)
-    frames = clinics(match={"region": "region"}, nullable=0.01).sample(rows, seed=0)
+    for seed in range(5):
+        frames = clinics(match={"region": "region"}, unmatched="null").sample(rows, seed=seed)
+        linked = joined(frames, "patients", "clinic_id", "clinics")
+        eligible = linked.region.isin(set(frames["clinics"].region))
+        assert linked.clinic_id[eligible].notna().all() and linked.clinic_id[~eligible].isna().all()
+        assert (linked.region[eligible] == linked.region_parent[eligible]).all()
+    both = clinics(match={"region": "region"}, unmatched="null", nullable=0.3, fill=0.0)
+    frames = both.sample(rows, seed=0)
     linked = joined(frames, "patients", "clinic_id", "clinics")
-    unlinked = linked.clinic_id.isna()
-    absent = set(REGIONS) - set(frames["clinics"].region)
-    assert absent and unlinked[linked.region.isin(absent)].all()
-    assert (linked.region[~unlinked] == linked.region_parent[~unlinked]).all()
+    eligible = linked.region.isin(set(frames["clinics"].region))
+    assert linked.clinic_id[~eligible].isna().all()
+    assert 0.2 < linked.clinic_id[eligible].isna().mean() < 0.4
+    with pytest.raises(ValueError, match="for keys that match or are unique"):
+        ForeignKey("clinics", unmatched="null")
 
 
 def test_keys_weigh_by_what_the_parent_reads_and_match_within_a_table():
@@ -359,8 +367,8 @@ def test_distinct_draws_without_repeats_in_each_group():
     assert len(free) == 6 and (free >= 0).all()
 
 
-def test_unique_matched_keys_leave_rows_without_a_parent_blank_when_nullable():
-    schema = clinics(match={"region": "region"}, unique=("region",), nullable=0.01, fill=0.0)
+def test_unique_matched_keys_leave_rows_without_a_parent_blank_when_asked():
+    schema = clinics(match={"region": "region"}, unique=("region",), unmatched="null", fill=0.0)
     frames = schema.sample({"clinics": 12, "patients": 40}, seed=0)
     rows = joined(frames, "patients", "clinic_id", "clinics")
     linked = rows.dropna(subset=["clinic_id"])

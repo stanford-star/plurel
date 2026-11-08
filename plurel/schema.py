@@ -224,9 +224,11 @@ class Table:
                 raise ValueError(f"{name!r} is blank by {by[0]!r}, which is no numeric column")
         for name, derived in self.derived.items():
             readable = {*self.derived, *(c for c, kind in kinds.items() if kind == "numeric")}
-            if unknown := [c for c in derived.inputs if c not in readable]:
+            if unknown := [(arg, c) for arg, c in derived.bindings if c not in readable]:
+                read = ", ".join(c if arg == c else f"{c} (as {arg})" for arg, c in unknown)
                 raise ValueError(
-                    f"{name!r} reads {unknown}, which are no numeric or derived columns"
+                    f"{name!r} reads {read}, which are no numeric or derived columns; bind a"
+                    " parameter to a column with Derived(function, columns={parameter: column})"
                 )
         for name, node in self.nodes.items():
             self.check_reads(node, f"{name!r}")
@@ -381,10 +383,16 @@ class Table:
         primary_key: str | None = None,
         foreign_keys: Mapping[str, str] | None = None,
         time_column: str | None = None,
-        extra: Mapping[str, object] | None = None,
+        extra: Mapping[str, Entry] | None = None,
+        name: str | None = None,
+        doc: str | None = None,
+        target: str | None = None,
+        sources: str | None = None,
+        docs: Mapping[str, str] | None = None,
     ) -> "Table":
         """A table of real rows, kept as they are; `foreign_keys` maps a column to the table it
-        points at, and `extra` adds generated columns that may read the real ones."""
+        points at, and `extra` adds generated columns that may read the real ones. `name`, `doc`,
+        `target`, `sources` and `docs` describe it as they do any `Table`."""
         foreign_keys, extra = dict(foreign_keys or {}), dict(extra or {})
         if primary_key in foreign_keys:
             raise ValueError(f"{primary_key!r} cannot be both the primary and a foreign key")
@@ -393,14 +401,22 @@ class Table:
         if unknown := (({primary_key} - {None}) | set(foreign_keys)) - set(frame):
             raise ValueError(f"frame has no columns {sorted(unknown)}")
         entries: dict[str, object] = {}
-        for name in frame:
-            if name == primary_key:
-                entries[name] = PrimaryKey(frame[name])
-            elif name in foreign_keys:
-                entries[name] = ForeignKey(foreign_keys[name], values=frame[name], fill=0.0)
+        for column in frame:
+            if column == primary_key:
+                entries[column] = PrimaryKey(frame[column])
+            elif column in foreign_keys:
+                entries[column] = ForeignKey(foreign_keys[column], values=frame[column], fill=0.0)
             else:
-                entries[name] = Real(frame[name])
-        return cls({**entries, **extra}, time_column=time_column)
+                entries[column] = Real(frame[column])
+        return cls(
+            {**entries, **extra},
+            time_column=time_column,
+            name=name,
+            doc=doc,
+            target=target,
+            sources=sources,
+            docs=docs,
+        )
 
     def bind_local(self) -> None:
         """Line the edges up with the columns of this table they read."""
