@@ -4,6 +4,9 @@ Row counts participate in rank mapping and relational allocation. Independent dr
 independent datasets, not streaming chunks of one stable population.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 from plurel import Numeric, PrimaryKey, Table, Uniform
 
 generator = Table(

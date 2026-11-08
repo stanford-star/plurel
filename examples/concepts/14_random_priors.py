@@ -4,6 +4,9 @@ These small priors produce anonymous synthetic tables. They offer structural div
 while authored schemas express domain choices. A row-count seed is separate from a data seed.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 from plurel import IntegersRange, SchemaPrior, TablePrior
 
 table_prior = TablePrior(node_count=IntegersRange(4, 6), column_count=IntegersRange(3, 4))

@@ -4,6 +4,9 @@ A bare cause reads a latent. Recorded reads the emitted value; Derived computes 
 over emitted numbers. A marginal places its own sampled values in the latent's rank order.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 import numpy as np
 
 from plurel import Derived, Numeric, Recorded, Table, Uniform

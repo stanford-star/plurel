@@ -73,16 +73,15 @@ semi-synthetic authoring, and the edge cases that change how these operations be
 Generating takes two steps, each with its own seed:
 
 - `realize(seed)` makes a generator. It draws every weight, noise and marginal given as a range,
-  fits level cuts to a calibration draw, and returns a `Table` or `Schema` with nothing left to draw.
-  Its seed, the mechanism seed, decides what kind of dataset you get.
+  fits level cuts and categorical score biases to a calibration draw, and returns a `Table` or
+  `Schema` ready to sample. Its seed, the mechanism seed, decides what kind of dataset you get.
 - `sample(rows, seed=...)` draws rows from a generator and returns frames. Its seed, the data seed,
   decides which dataset of that kind you get; the generator's weights stay as they were.
 
 Vary the mechanism seed for different kinds of datasets and the data seed for more data of one
-kind. Fixed declarations without scored categoricals sample directly. Realizing them can still
-fit categorical cut points, so later draws fluctuate around the calibrated shares. Categoricals
-on retained rows or dependent on keys keep cutting each draw. Scored categoricals require
-realization to fit their class biases even when every coefficient is fixed; the
+kind. Declarations with neither parameter ranges nor categorical scores sample directly.
+Realizing them can still fit categorical cut points, so later draws fluctuate around the calibrated
+shares. Categoricals on retained rows or dependent on keys keep cutting each draw; the
 [calibration examples](examples/concepts/README.md#reading-order) demonstrate these cases.
 
 #### One table

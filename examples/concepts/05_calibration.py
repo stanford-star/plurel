@@ -5,6 +5,9 @@ With pinned cuts, future draws fluctuate around the calibrated shares. Numeric m
 still rank-map within each draw. Calibration is not learning a distribution from real data.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 import numpy as np
 
 from plurel import Categorical, Numeric, Table

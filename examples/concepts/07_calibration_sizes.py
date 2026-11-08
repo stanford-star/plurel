@@ -4,6 +4,9 @@ Default calibration sizes cannot infer every per-group capacity. Give feasible c
 rows when needed; subsequent sampling still gets its own row counts and constraints.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 import pandas as pd
 
 from plurel import Categorical, ForeignKey, Schema, Table

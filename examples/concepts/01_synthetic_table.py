@@ -4,6 +4,9 @@ No source rows are supplied. Fixed declarations can sample directly; a target is
 identifying a prediction column, not a request to fit a predictive model.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 from plurel import Categorical, Numeric, PrimaryKey, Table, Uniform
 
 customers = Table(

@@ -4,6 +4,9 @@ A bounded timestamp uses a calendar marginal. A spanless timestamp reads recorde
 seconds plus noise; a positive delay ensures ordering. A positive latent weight alone does not.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 import tempfile
 from pathlib import Path
 

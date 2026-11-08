@@ -5,6 +5,9 @@ output, not the original external identifiers. describe() is inspectable metadat
 that reconstructs executable generators or arbitrary callables.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 import json
 import tempfile
 from pathlib import Path

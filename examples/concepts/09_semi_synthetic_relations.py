@@ -4,6 +4,9 @@ Sampling preserves external identifiers. A generated dependent has its own row c
 retained parents and children keep theirs. Only export converts keys to row positions.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 import numpy as np
 import pandas as pd
 

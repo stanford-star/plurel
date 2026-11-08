@@ -4,6 +4,9 @@ A counting key can infer its table's size. A supplied size is instead an exact t
 within the bounds. A key-dependent categorical keeps per-draw cuts even after realization.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 import numpy as np
 
 from plurel import (

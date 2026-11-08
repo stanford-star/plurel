@@ -1,18 +1,20 @@
 """Scored categoricals fit class biases, including over retained real rows.
 
-Scores always need realization, even with fixed coefficients. They choose a class by noisy
-scores; calibration adjusts biases toward authored shares. This does not synthesize more
-source rows. Large retained tables use a bounded calibration subset in current v2.
+Scores choose a class under noise; realize fits class biases toward authored shares.
+This does not synthesize more source rows. Calibration-size details are documented in
+README.md#author-many-tables-from-one-description at the repository root.
 """
+
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
 
 import numpy as np
 import pandas as pd
 
 from plurel import Categorical, Table
 
-# A synthetic fixture standing in for an imported table, larger than the current
-# 4096-row calibration cap. The cap is an implementation detail, not a sampling limit.
-real = pd.DataFrame({"id": [f"C{i}" for i in range(6000)], "age": np.linspace(18, 80, 6000)})
+# An embedded fixture standing in for an imported table.
+real = pd.DataFrame({"id": [f"C{i}" for i in range(1000)], "age": np.linspace(18, 80, 1000)})
 family = Table.from_frame(
     real,
     primary_key="id",
@@ -24,8 +26,8 @@ family = Table.from_frame(
 try:
     family.sample(seed=10)
 except ValueError as error:
-    assert "realize" in str(error)
-    print("Scored categoricals need realization even with fixed score coefficients")
+    assert "fits categorical scores" in str(error)
+    print("Expected:", error)
 else:
     raise AssertionError("unfitted scores should require realization")
 generator = family.realize(seed=0)
@@ -38,4 +40,4 @@ assert abs(share - 0.25) < 0.06
 assert generator.describe() == description
 # The age coefficient is an effect on the real column's standardized rank, not per year.
 print(f"Premium share: {share:.3f}; retained rows: {len(frame)}")
-print("score_calibration: calibrated a label mechanism and preserved all 6000 source rows")
+print(f"score_calibration: calibrated a label mechanism and preserved all {len(real)} source rows")

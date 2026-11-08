@@ -4,6 +4,9 @@ Tiny samples, tied causes, fixed real-row counts and impossible relationship cou
 different semantics. Empty retained parent tables are valid when unmatched keys may be null.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 from collections.abc import Callable
 
 import pandas as pd
@@ -47,13 +50,17 @@ real = Table.from_frame(pd.DataFrame({"x": [1.0, 1.0, 1.0, 1.0]}))
 expect_error(lambda: real.sample(8, seed=0), "given rows")
 assert len(real.sample(seed=0)) == 4
 
-# Equal zero-noise causes stay deterministic: a 50/50 request cannot split equal latents.
+# Current limitation: categorical cuts can put tied, zero-noise inputs in one class.
+# Inspect the shares without requiring this limitation to persist if tie handling improves.
 tied = Table.from_frame(
     pd.DataFrame({"x": [1.0] * 20}),
     extra={"label": Categorical({"a": 0.5, "b": 0.5}, causes={"x": 1}, noise=0)},
 )
-assert tied.sample(seed=0).label.nunique() == 1
-print("Tied inputs produce one class; add noise when splitting their labels is intended")
+print(
+    "Requested 50/50 with tied inputs; observed:",
+    tied.sample(seed=0).label.value_counts(normalize=True).to_dict(),
+)
+print("Add noise when random variation in the labels is intended")
 
 counted = Schema(
     {

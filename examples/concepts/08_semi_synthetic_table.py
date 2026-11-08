@@ -4,6 +4,9 @@ from_frame retains the source's values and row count. It does not fit a generato
 produces more source-like rows. Here an embedded fixture stands in for a user DataFrame.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 import numpy as np
 import pandas as pd
 

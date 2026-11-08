@@ -5,6 +5,9 @@ output. Derived propagates blanks. unmatched='null' preserves unmatchable rows; 
 independently drops an additional random share of keys.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 import numpy as np
 import pandas as pd
 
@@ -37,6 +40,9 @@ for rate in (0.0, 0.25):
     child = Schema({"parents": parents, "children": children}).sample(seed=0)["children"]
     assert child.loc[child.region == "south", "parent_id"].isna().all()
     north_nulls = child.loc[child.region == "north", "parent_id"].isna().sum()
-    assert north_nulls == 0 if rate == 0 else 0 < north_nulls < 200
+    if rate == 0:
+        assert north_nulls == 0
+    else:
+        assert abs(north_nulls / 200 - rate) < 0.1
     print(f"Random missingness {rate}: {north_nulls} eligible north keys missing")
 print("missing_and_unmatched: output blanks, read fills, unmatched rows and random nulls differ")

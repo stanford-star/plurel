@@ -14,8 +14,8 @@ pixi run recipes  # all concept examples and domain recipes, each in a fresh pro
 ```
 
 With v2 installed in another environment, use that environment's `python` in place of
-`pixi run python`. Run without `-O`, which disables the assertions. All file-writing examples
-use temporary directories; no output needs to be cleaned up.
+`pixi run python`. Each script refuses `-O`, which disables its assertions. All file-writing
+examples use temporary directories; no output needs to be cleaned up.
 
 ## The lifecycle
 
@@ -49,7 +49,7 @@ behind exact repeatability. No example promises stable row prefixes across datas
 | [03_realization.py](03_realization.py) | What changes with a mechanism seed, and what stays fixed when I sample? |
 | [04_sampling.py](04_sampling.py) | What repeats, why does row count matter, and why are independent draws not streaming chunks? |
 | [05_calibration.py](05_calibration.py) | Why do categorical shares behave differently before and after calibration? |
-| [06_score_calibration.py](06_score_calibration.py) | How are score biases fit, and why does calibrating on retained rows preserve all source rows? |
+| [06_score_calibration.py](06_score_calibration.py) | How are score biases fit while preserving supplied rows? |
 | [07_calibration_sizes.py](07_calibration_sizes.py) | What if default calibration sizes cannot satisfy a relationship constraint? |
 | [08_semi_synthetic_table.py](08_semi_synthetic_table.py) | How do I preserve source columns while adding an exact formula and a noisy target? |
 | [09_semi_synthetic_relations.py](09_semi_synthetic_relations.py) | How do retained foreign keys and newly generated child rows compose? |
@@ -68,10 +68,10 @@ behind exact repeatability. No example promises stable row prefixes across datas
 | Random prior | All rows are generated. | A prior also chooses structural features such as tables, columns and dependencies. Anonymous structures do not establish domain realism. |
 | Semi-synthetic | Supplied rows and values remain; extra columns and related tables are generated. | You author the extra mechanisms. `from_frame` does not learn how to create additional source-like rows. |
 
-Calibration uses a temporary draw. Current v2 uses up to a bounded subset of a large retained
-table during calibration, while subsequent sampling retains the full input. Ordinary
-categoricals on retained rows and categoricals that depend on keys continue to cut each draw;
-score-based categoricals fit biases. The examples show these differences without importing
+Calibration uses a temporary draw; see the README's
+[calibration sizes](../../README.md#author-many-tables-from-one-description).
+Ordinary categoricals on retained rows and categoricals that depend on keys continue to cut each
+draw; score-based categoricals fit biases. The examples show these differences without importing
 internal implementation classes. `describe()` is useful for observing the fitted values, but
 its detailed layout is not a stable serialization format for reconstructing a generator.
 

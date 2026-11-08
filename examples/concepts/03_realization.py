@@ -4,6 +4,9 @@ Realization draws unresolved parameters and calibrates applicable categorical me
 It returns a Table or Schema, not a DataFrame. This numeric example needs no calibration.
 """
 
+if not __debug__:
+    raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
+
 from plurel import Numeric, Range, Table
 
 family = Table(

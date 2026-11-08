@@ -7,8 +7,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-if not __debug__:
-    sys.exit("examples use assertions: run without -O")
 examples = Path(__file__).resolve().parents[1] / "examples"
 recipes = []
 for directory in ("concepts", "generation"):
