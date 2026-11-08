@@ -12,7 +12,17 @@ from relbench.base.table import is_time_sorted
 from relbench.manifest import DatasetManifest
 
 import plurel.io as plurel_io
-from plurel import Exponential, ForeignKey, Normal, PrimaryKey, Schema, Table, Uniform
+from plurel import (
+    Categorical,
+    Exponential,
+    ForeignKey,
+    Normal,
+    Numeric,
+    PrimaryKey,
+    Schema,
+    Table,
+    Uniform,
+)
 from plurel.columns import DEFAULT_CALENDAR, Column
 from plurel.distributions import Gumbel
 from plurel.graph import Foreign, LinearEdge, Node
@@ -362,3 +372,33 @@ def test_importing_plurel_leaves_relbench_unloaded_until_a_database_function_is_
         "assert callable(plurel.create_database) and 'relbench' in sys.modules\n"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_a_static_database_saves_and_loads_without_a_split(tmp_path):
+    schema = Schema(
+        {
+            "people": Table(
+                {
+                    "id": PrimaryKey(),
+                    "age": Numeric(Uniform(18, 80)),
+                    "tier": Categorical(("a", "b")),
+                }
+            ),
+            "visits": Table({"person_id": ForeignKey("people"), "value": Numeric()}),
+        }
+    )
+    db = create_database(schema, schema.sample({"people": 10, "visits": 50}, seed=0))
+    path = write_database(db, tmp_path / "static", name="static")
+    manifest = DatasetManifest.load(path / "manifest.yaml")
+    assert (manifest.val_timestamp, manifest.test_timestamp) == ("NaT", "NaT")
+    loaded = read_database(path)
+    assert set(loaded.table_dict) == {"people", "visits"}
+    for name, table in db.table_dict.items():
+        back = loaded.table_dict[name]
+        pd.testing.assert_frame_equal(back.df, table.df)
+        assert (back.pkey_col, back.time_col) == (table.pkey_col, table.time_col)
+        assert back.fkey_col_to_pkey_table == table.fkey_col_to_pkey_table
+    with pytest.raises(FileExistsError, match="overwrite=True"):
+        write_database(db, path, name="static")
+    with pytest.raises(ValueError, match="both val_timestamp and test_timestamp, or neither"):
+        write_database(db, tmp_path / "half", name="half", val_timestamp=pd.Timestamp("2020"))
