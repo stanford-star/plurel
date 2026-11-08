@@ -96,8 +96,9 @@ def write_database(
 ) -> Path:
     """Write every file into a hidden sibling of `path`, check it, then rename it into place.
 
-    `val_timestamp` and `test_timestamp` give a temporal split, both or neither: a dataset saved
-    without one, such as a static one, records them as `NaT`, no split, and loads all its rows.
+    `val_timestamp` and `test_timestamp` give a temporal split. A static database, one with no
+    time column, may leave both out: its manifest then records `NaT`, no split, and it loads all
+    its rows.
 
     A symlinked `path` is written where it points. `path` holds a complete dataset or none. A
     failed or interrupted write keeps the previous dataset. A killed one leaves a hidden
@@ -107,6 +108,12 @@ def write_database(
     """
     if (val_timestamp is None) != (test_timestamp is None):
         raise ValueError("give both val_timestamp and test_timestamp, or neither for no split")
+    timed = sorted(name for name, table in db.table_dict.items() if table.time_col)
+    if val_timestamp is None and timed:
+        raise ValueError(
+            f"tables {timed} hold events, which relbench cuts at the split when it loads them: give"
+            " val_timestamp and test_timestamp, e.g. from split_timestamps(db)"
+        )
     if val_timestamp is not None and val_timestamp > test_timestamp:
         raise ValueError("val_timestamp must not be after test_timestamp")
     for table_name, table in db.table_dict.items():

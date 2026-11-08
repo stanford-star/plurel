@@ -402,3 +402,24 @@ def test_a_static_database_saves_and_loads_without_a_split(tmp_path):
         write_database(db, path, name="static")
     with pytest.raises(ValueError, match="both val_timestamp and test_timestamp, or neither"):
         write_database(db, tmp_path / "half", name="half", val_timestamp=pd.Timestamp("2020"))
+    events = create_database(
+        schema_with_events(), schema_with_events().sample({"c": 5, "o": 40}, seed=0)
+    )
+    with pytest.raises(ValueError, match=r"tables \['o'\] hold events"):
+        write_database(events, tmp_path / "events", name="events")
+    assert not (tmp_path / "events").exists()
+
+
+def schema_with_events():
+    return Schema(
+        {
+            "c": Table({"id": PrimaryKey()}),
+            "o": Table(
+                {
+                    "c_id": ForeignKey("c"),
+                    "t": Column(Node(), "timestamp", marginal=DEFAULT_CALENDAR),
+                },
+                time_column="t",
+            ),
+        }
+    )

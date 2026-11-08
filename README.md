@@ -397,7 +397,8 @@ write_database(
 )
 ```
 
-The split is optional. A static database, one whose tables hold no events, saves without one: the
+The split is optional for a static database, one whose tables hold no events: it saves without one,
+and a database with events raises without one, since relbench cuts events at the split. The
 manifest then records both timestamps as `NaT`, which means no split, and `read_database` loads
 every row with its keys. relbench's tasks need a split, so save one with timestamps when you will
 evaluate over time; saving never makes one up.
