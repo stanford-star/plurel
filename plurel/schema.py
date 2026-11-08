@@ -357,7 +357,9 @@ class Table:
         table = table or self.name or "table"
         return {
             name: entry.draw(lane(root, "realize", table, name))
-            if isinstance(entry, Declaration | ForeignKey)
+            if isinstance(entry, Declaration)
+            or isinstance(entry, ForeignKey)
+            and (entry.counts is not None or bool(entry.prefer))
             else entry
             for name, entry in self.declared.items()
         }

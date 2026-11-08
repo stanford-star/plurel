@@ -66,21 +66,23 @@ def cut(table, latents: Mapping[str, np.ndarray]):
 
 
 def fits(table) -> bool:
-    """Whether realizing fits anything of a table to a draw: a scored column or a level cut."""
-    return table.size is None and any(
-        getattr(column, "fit_shares", None)
-        or column.kind == "categorical"
-        and column.values is None
-        and column.node.dim == 1
-        for column in table.columns.values()
-        if isinstance(column, Column)
-    )
+    """Whether realizing fits anything of a table to a draw: a scored column, or a level cut of a
+    generated table's categorical that depends on no key, as `cut` pins."""
+    for name, column in table.columns.items():
+        if not isinstance(column, Column) or column.values is not None:
+            continue
+        cuttable = column.kind == "categorical" and column.node.dim == 1
+        if column.fit_shares or table.size is None and cuttable and name not in table.crossing:
+            return True
+    return False
 
 
 def calibration_rows(schema, given: Mapping[str, int] | None) -> dict[str, int]:
     """Row counts of the calibration draw: those given, else each table's given rows, else
     `CALIBRATION_ROWS`; a table whose rows a key counts takes what the counts give, and one with a
-    key unique on its own takes at most its parent's rows."""
+    key unique on its own takes at most its parent's rows, a counted parent then taking the total
+    its counts give on average."""
+    given = dict(given or {})
     rows = {
         t: CALIBRATION_ROWS if scm.size is None else scm.size
         for t, scm in schema.tables.items()
@@ -89,10 +91,18 @@ def calibration_rows(schema, given: Mapping[str, int] | None) -> dict[str, int]:
     for fk in schema.keys.values():
         if fk.values is not None and schema.parent_keys(fk) is None and fk.values.notna().any():
             rows[fk.parent] = max(rows[fk.parent], int(fk.values.max()) + 1)
-    rows |= dict(given or {})
+    rows |= given
     for (table, _), fk in schema.keys.items():
-        unique_alone = fk.unique is True and not fk.nullable
-        if unique_alone and table in rows and fk.parent in rows and table not in (given or {}):
+        if fk.unique is not True or fk.nullable or table in given or table not in rows:
+            continue
+        if fk.parent not in rows and fk.parent in schema.sized:
+            counts = schema.keys[fk.parent, schema.sized[fk.parent]]
+            if counts.parent in rows:
+                total = round(counts.counts.mean * rows[counts.parent])
+                if counts.counts.most is not None:
+                    total = min(total, counts.counts.most * rows[counts.parent])
+                rows[fk.parent] = max(1, min(total, CALIBRATION_ROWS))
+        if fk.parent in rows:
             rows[table] = min(rows[table], rows[fk.parent])
     return rows
 
@@ -112,8 +122,8 @@ def fitted(schema, seed: int, given: Mapping[str, int] | None = None):
             return rebuilt(tables).sample_with_latents(rows, seed=stream)[1]
         except ValueError as error:
             raise ValueError(
-                f"realizing fits to one draw of {rows} rows, which failed: {error}. Pass the rows"
-                " of a feasible draw to realize(seed, rows)"
+                f"realizing fits to one draw of {rows} rows, which failed: {error}. If those"
+                " sizes cannot be drawn, pass feasible ones to realize(seed, rows)"
             ) from error
 
     for table, scm in schema.tables.items():

@@ -185,3 +185,46 @@ def test_mixed_schemas_keep_their_invariants(real, ranged, total):
     assert schema.tables["customers"].doc == "who buys"
     again = schema.sample(rows, seed=0)
     assert all(frames[t].equals(again[t]) for t in frames)
+
+
+def test_real_rows_still_fit_their_scores_and_key_categoricals_need_no_draw():
+    frame = pd.DataFrame({"x": np.arange(2000.0)})
+    scored = Table.from_frame(
+        frame, extra={"c": Categorical({"a": 0.2, "b": 0.8}, scores={"a": {"x": 1.0}})}
+    ).realize(0)
+    assert abs((scored.sample(seed=1).c == "a").mean() - 0.2) < 0.03
+    two = Table.from_frame(pd.DataFrame({"id": [1, 2]}), primary_key="id", extra={"v": Numeric()})
+    three = Table.from_frame(pd.DataFrame({"id": [1, 2, 3]}), primary_key="id")
+    reads_key = Table(
+        {
+            "p_id": ForeignKey("p"),
+            "q_id": ForeignKey("q", unique="p_id"),
+            "g": Categorical(Shares(("a", "b")), causes={"p_id.v": 1.0}),
+        }
+    )
+    realized = Schema({"p": two, "q": three, "c": reads_key}).realize(0)
+    assert len(realized.sample({"c": 4}, seed=0)["c"]) == 4
+
+
+def test_a_unique_key_over_a_counted_parent_realizes():
+    regions = Table.from_frame(pd.DataFrame({"id": ["n", "s", "e"]}), primary_key="id")
+    schema = Schema(
+        {
+            "regions": regions,
+            "customers": Table(
+                {
+                    "id": PrimaryKey(),
+                    "region_id": ForeignKey("regions", counts=Counts(2.0)),
+                    "segment": Categorical(Shares(("a", "b"))),
+                }
+            ),
+            "profiles": Table(
+                {
+                    "customer_id": ForeignKey("customers", unique=True),
+                    "tier": Categorical(Shares(("x", "y"))),
+                }
+            ),
+        }
+    )
+    frames = schema.realize(0).sample({"profiles": 2}, seed=0)
+    assert frames["profiles"].customer_id.is_unique
