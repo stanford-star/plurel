@@ -257,7 +257,8 @@ level by an effect per level, so generated columns follow the real values' order
 `read_database` loads back; it writes a `db` directory and a `manifest.yaml` under the given path.
 It refuses a path that already holds a dataset unless given `overwrite=True`, and a path holding
 anything else. It writes into a hidden sibling directory and renames it into place, so the path
-holds a complete dataset or none, and a failed write keeps the previous one. Of writers racing for
+holds a complete dataset or none, and a failed or interrupted write keeps the previous one. A
+symlinked path is written where it points. Of writers racing for
 one path, each publishes a complete dataset or raises `FileExistsError`.
 
 ```python
