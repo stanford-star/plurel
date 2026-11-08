@@ -54,6 +54,7 @@ customers = Table(
         ),
         "taste": Hidden(),
         "ratio": Derived(lambda spend, age: spend / age),
+        "per_year": Derived(lambda money, years: money / years, {"money": "spend", "years": "age"}),
         "joined": Timestamp("2020-01-01", "2024-01-01", causes={"age": -0.5}),
         "score": Numeric(Scaled("score", 0, 100), causes={Recorded("age", fill=40.0): 0.1}),
     },
@@ -73,7 +74,13 @@ orders = Table(
     time_column="when",
 )
 
-clerks = Table({"store_id": ForeignKey("stores"), "pay": Numeric(Uniform(10, 40))})
+clerks = Table(
+    {
+        "region": Categorical(("n", "s", "w")),
+        "store_id": ForeignKey("stores", match={"region": "region"}, unmatched="null", fill=0.0),
+        "pay": Numeric(Uniform(10, 40)),
+    }
+)
 stores = Table(
     {
         "id": PrimaryKey(),
@@ -85,7 +92,11 @@ stores = Table(
 people = Table.from_frame(
     pd.DataFrame({"id": ["a", "b"], "city": ["Lima", "Oslo"]}),
     primary_key="id",
-    extra={"churned": Categorical(("no", "yes"), causes={"city": {"Lima": 1.0}})},
+    extra={
+        "churned": Categorical(("no", "yes"), causes={"city": {"Lima": 1.0}}),
+    },
+    target="churned",
+    docs={"city": "where they live"},
 )
 given = Table({"x": Real([1.0, 2.0, 3.0]), "y": Numeric(causes={"x": 1.0})})
 

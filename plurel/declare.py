@@ -6,6 +6,7 @@ seed of `Table.realize` draws one."""
 import inspect
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -531,19 +532,32 @@ class Hidden(Declaration):
 
 @dataclass(frozen=True, eq=False)
 class Derived:
-    """A column computed from the recorded values of numeric columns of its table, named by the
-    function's parameters; a blank input leaves a blank."""
+    """A column computed from the recorded values of numeric or derived columns of its table, each
+    named by a parameter of the function, or bound to one by `columns`, which maps a parameter to
+    a column such as `{"price": "Unit Price"}`; a blank input leaves a blank."""
 
     function: Callable[..., np.ndarray]
+    columns: Mapping[str, str] = field(default_factory=dict)
     doc: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.inputs:
+        parameters = tuple(inspect.signature(self.function).parameters)
+        if not parameters:
             raise ValueError("a derived column needs at least one input")
+        if unknown := sorted(set(self.columns) - set(parameters)):
+            raise ValueError(f"columns binds {unknown}, which the function takes no parameter of")
+        object.__setattr__(self, "columns", dict(self.columns))
+
+    @property
+    def bindings(self) -> tuple[tuple[str, str], ...]:
+        """Each parameter of the function and the column it reads."""
+        parameters = inspect.signature(self.function).parameters
+        return tuple((name, self.columns.get(name, name)) for name in parameters)
 
     @property
     def inputs(self) -> tuple[str, ...]:
-        return tuple(inspect.signature(self.function).parameters)
+        """The columns the function reads, in the order of its parameters."""
+        return tuple(column for _, column in self.bindings)
 
     def compute(self, frame: Mapping[str, pd.Series]) -> np.ndarray:
         args = [frame[name].to_numpy(dtype=float) for name in self.inputs]
@@ -637,13 +651,14 @@ class Counts(Drawable):
 @dataclass(frozen=True, eq=False)
 class ForeignKey(Drawable):
     """A key pointing at rows of `parent`, drawn by `link` or given as the parent's key `values`;
-    a share `nullable` of the rows point at nothing, and latents read across it take `fill` there.
-    A `Recorded` cause across it takes the `Recorded` fill instead.
+    a share `nullable` of the rows, drawn at random, point at nothing, and latents read across it
+    take `fill` there. A `Recorded` cause across it takes the `Recorded` fill instead.
 
     A key may read its parent's columns instead of a structural link. `match` maps a column of
     this table to one of the parent that must hold the same level, or point at the same row when
-    both are keys; a row no parent matches points at nothing if the key is `nullable`, and raises
-    otherwise. `prefer` weighs the eligible parents by the exponential of causes read from the
+    both are keys. A row no parent is left for, unmatched or past what a unique key allows,
+    raises, or with `unmatched="null"` points at nothing; `nullable` drops matched rows at random
+    on top of that. `prefer` weighs the eligible parents by the exponential of causes read from the
     parent's columns. `counts` sets how many rows point at each parent, and so the table's size.
 
     `unique=True` points no two rows at the same parent; `unique="student_id"`, or a tuple of
@@ -661,6 +676,7 @@ class ForeignKey(Drawable):
     prefer: Causes = field(default_factory=dict)
     counts: Counts | None = None
     unique: bool | str | tuple[str, ...] = False
+    unmatched: Literal["raise", "null"] = "raise"
 
     @property
     def together(self) -> tuple[str, ...]:
@@ -681,6 +697,10 @@ class ForeignKey(Drawable):
             raise ValueError(
                 "counts give every child its parent: no match, prefer, nullable or unique"
             )
+        if self.unmatched not in ("raise", "null"):
+            raise ValueError('unmatched is "raise" or "null"')
+        if self.unmatched == "null" and not (self.match or self.unique) or self.unmatched == "null" and self.values is not None:  # fmt: skip
+            raise ValueError('unmatched="null" is for keys that match or are unique and drawn')
         if self.fill is not None and not np.isfinite(self.fill):
             raise ValueError("fill must be finite")
         if self.values is not None:

@@ -235,7 +235,7 @@ A key can instead choose parents by their columns. `match` maps a column of the 
 parent that must agree: a categorical holding the same level, or a key pointing at the same row.
 `prefer` weighs the eligible parents by the exponential of causes read from the parent's columns,
 with no noise, so a weight of 1 on a `Recorded` number sends nearly every row to the largest.
-A row that no parent matches points at nothing if the key is `nullable`, and raises otherwise:
+A row that no parent matches raises, or with `unmatched="null"` points at nothing:
 
 ```python
 from plurel import Counts
@@ -259,8 +259,8 @@ on, or count from, a column that reads across it.
 `unique="student_id"` among the rows sharing a student, so each (student, course) pair of an
 enrollments table appears once. Parents are drawn without repeats, by `prefer` if given; a row
 blank in a grouping column is free, as SQL treats nulls, and given key values are checked. A
-student with more enrollments than there are courses raises, or, on a `nullable` key, leaves the
-extra rows pointing at nothing; `Counts(most=...)` caps how many rows each parent gets:
+student with more enrollments than there are courses raises, or, with `unmatched="null"`, leaves
+the extra rows pointing at nothing; `Counts(most=...)` caps how many rows each parent gets:
 
 ```python
 enrollments = Table({
@@ -277,12 +277,13 @@ A position within a group, such as an order's line number, is no key: compute it
 | Option | Says | Combines with | Raises with |
 |---|---|---|---|
 | `link` | how rows pick parents by structure: `RandomLink()`, `HSBMLink`, `TreeLink` | `nullable` | any other option, unless left as `RandomLink()` |
-| `values` | the parent keys of real rows | `unique` (the given pairs are checked) | `match`, `prefer`, `counts`, `nullable` |
-| `match` | columns the parent must agree on | `prefer`, `unique`, `nullable` | `link`, `values`, `counts` |
-| `prefer` | weights read from the parent's columns | `match`, `unique`, `nullable` | `link`, `values`, `counts` |
+| `values` | the parent keys of real rows | `unique` (the given pairs are checked) | `match`, `prefer`, `counts`, `nullable`, `unmatched` |
+| `match` | columns the parent must agree on | `prefer`, `unique`, `nullable`, `unmatched` | `link`, `values`, `counts` |
+| `prefer` | weights read from the parent's columns | `match`, `unique`, `nullable`, `unmatched` | `link`, `values`, `counts` |
 | `counts` | how many rows point at each parent, and so the table's size | none on the same key | everything else |
-| `unique` | no repeated parent, alone or per group | `match`, `prefer`, `nullable`, `values` | `link`, `counts` |
-| `nullable` | a share of rows that point at nothing | `link`, `match`, `prefer`, `unique` | `values`, `counts` |
+| `unique` | no repeated parent, alone or per group | `match`, `prefer`, `nullable`, `unmatched`, `values` | `link`, `counts` |
+| `unmatched` | `"raise"` (the default) or `"null"` for rows no parent is left for | `match`, `unique`, `nullable` | `values`, `counts`, a key with neither `match` nor `unique` |
+| `nullable` | a share of rows, drawn at random, that point at nothing | `link`, `match`, `prefer`, `unique`, `unmatched` | `values`, `counts` |
 
 `counts` and `unique` go on different keys: one key counts each student's enrollments, another is
 unique per student, and `most` keeps a student from taking more enrollments than there are
@@ -299,7 +300,7 @@ school = Schema({
         "level": Categorical(("intro", "advanced"), causes={"student_id.year": 1.0}),
         "course_id": ForeignKey(
             "courses", match={"level": "level"}, prefer={"size": 1.0}, unique="student_id",
-            nullable=0.01, fill=0.0,
+            unmatched="null", fill=0.0,
         ),
     }),
 })
@@ -311,9 +312,10 @@ its share and the counts are the table's size, each capped at `most`. Given one,
 split among the parents by the same shares, rows over `most` are dealt again to parents with room,
 and a total above `most` times the parents raises.
 
-`nullable` does two things. A share of the rows point at nothing, drawn at random, and on a key
-that matches or is unique, rows no parent is left for point at nothing instead of raising. A
-`fill` gives what latents read across such a row.
+Two options leave rows pointing at nothing, and they compose. `unmatched="null"` does so for rows
+no parent is left for, on a key that matches or is unique, and keeps every row that has one;
+`nullable` drops a share of the rows at random, matched or not. A `fill` gives what latents read
+across such a row.
 
 `Summary` reads the rows pointing back. It takes the table and its key, and counts them unless told
 to aggregate a column of theirs, as its sum (`Summary("staff", "boss_id", "pay", "mean",
@@ -357,6 +359,9 @@ people = Table.from_frame(
     real,
     primary_key="customer_id",
     extra={"churned": Categorical({"no": 0.8, "yes": 0.2}, causes={"age": -1.0})},
+    target="churned",
+    doc="one customer per row",
+    docs={"age": "age in years", "churned": "left within a year"},
 )
 purchases = Table({
     "id": PrimaryKey(),
@@ -366,8 +371,12 @@ purchases = Table({
 frames = Schema({"people": people, "purchases": purchases}).sample({"purchases": 200}, seed=0)
 ```
 
-Real child tables work the same way: `foreign_keys={"customer_id": "people"}` keeps their key values
-and `time_column` names their events. Real levels have no order, so read them by level.
+`from_frame` takes `name`, `doc`, `target`, `sources` and `docs` as `Table` does; the target may be
+a real column or an `extra` one. Real child tables work the same way: `foreign_keys={"customer_id":
+"people"}` keeps their key values and `time_column` names their events. Real levels have no order,
+so read them by level. Real headers that are no Python names, such as `"Unit Price"`, bind to a
+`Derived` function's parameters with `columns`:
+`Derived(lambda price, quantity: price * quantity, {"price": "Unit Price", "quantity": "Quantity"})`.
 
 This is augmentation, not learned synthesis. The real table keeps its own row count and keys in every
 draw, `extra` and the generated tables are authored mechanisms that read it, and those tables take
