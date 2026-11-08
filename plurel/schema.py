@@ -29,7 +29,7 @@ from plurel.graph import (
     Recorded,
     Summary,
 )
-from plurel.links import TreeLink, counted, matched
+from plurel.links import TreeLink, counted, distinct, joint_codes, matched, repeats
 from plurel.random import Seed, generator, lane
 
 Links = dict[tuple[str, str], np.ndarray]
@@ -217,11 +217,15 @@ class Table:
             raise ValueError(f"{counted[0]!r} counts rows of a table whose rows are given")
         self.counted = counted[0] if counted else None
         for name, fk in self.fkeys.items():
-            for column in fk.match:
-                if column not in self.fkeys and kinds.get(column) != "categorical":
+            for column in (*fk.match, *fk.together):
+                if (
+                    column == name
+                    or column not in self.fkeys
+                    and kinds.get(column) != "categorical"
+                ):
                     raise ValueError(
-                        f"{name!r} matches on {column!r}: a key matches on a categorical or a key"
-                        " of its table"
+                        f"{name!r} reads {column!r}: a key matches, and is unique, on a categorical"
+                        " or another key of its table"
                     )
         self.readable = {
             *self.derived,
@@ -530,6 +534,7 @@ class Schema:
         reads += self.size(fk.parent)
         for mine, theirs in fk.match.items():
             reads += [self.matched_vertex(table, mine), self.matched_vertex(fk.parent, theirs)]
+        reads += [self.matched_vertex(table, column) for column in fk.together]
         if (table, column) in self.choosers:
             node, edges = self.choosers[table, column]
             reads += [(fk.parent, parent) for parent in node.parents]
@@ -624,7 +629,12 @@ class Schema:
         parent, matched among eligible parents by preference, or drawn by its link."""
         fk = self.keys[table, column]
         if fk.values is not None:
-            return self.real_link(table, column, fk, rows[fk.parent])
+            indices = self.real_link(table, column, fk, rows[fk.parent])
+            if fk.unique and repeats(self.together(table, fk, rows, state), indices).any():
+                raise ValueError(
+                    f"given values of {column!r} in {table!r} repeat a parent{self.per(fk)}"
+                )
+            return indices
         stream = lane(root, "link", self.identity[table], column)
         log_weights = np.zeros(rows[fk.parent])
         if (table, column) in self.choosers:
@@ -636,9 +646,18 @@ class Schema:
             weights = np.exp(log_weights - log_weights.max()) if len(log_weights) else log_weights
             drawn = counted(weights, fk.counts.mean, rows.get(table), stream)
             rows[table] = len(drawn)
-        elif fk.match or fk.prefer:
+        elif fk.match or fk.prefer or fk.unique:
             child, parent = self.groups(table, fk, rows, state)
-            drawn = matched(child, parent, log_weights, stream)
+            if fk.unique:
+                group = self.together(table, fk, rows, state)
+                try:
+                    drawn = distinct(child, parent, log_weights, group, stream)
+                except ValueError as error:
+                    raise ValueError(
+                        f"{column!r} of {table!r} must not repeat a parent{self.per(fk)}: {error}"
+                    ) from error
+            else:
+                drawn = matched(child, parent, log_weights, stream)
             if not fk.nullable and (unmatched := int((drawn < 0).sum())):
                 raise ValueError(
                     f"{unmatched} rows of {table!r} match no row of {fk.parent!r} on"
@@ -661,15 +680,25 @@ class Schema:
         """One integer per child row and per parent row, equal where every matched column agrees,
         -1 where one is blank."""
         n = rows[table]
-        joint = np.zeros(n + rows[fk.parent], dtype=np.int64)
-        for mine, theirs in fk.match.items():
-            values = np.concatenate(
+        columns = [
+            np.concatenate(
                 [self.match_values(table, mine, state), self.match_values(fk.parent, theirs, state)]
             )
-            codes = pd.factorize(values)[0]
-            joint = np.where((joint < 0) | (codes < 0), -1, joint * (codes.max() + 1) + codes)
-            joint = np.where(joint < 0, -1, pd.factorize(joint)[0])
+            for mine, theirs in fk.match.items()
+        ]
+        joint = joint_codes(columns, n + rows[fk.parent])
         return joint[:n], joint[n:]
+
+    def together(
+        self, table: str, fk: ForeignKey, rows: Mapping[str, int], state: "Draw"
+    ) -> np.ndarray:
+        """The groups whose rows a unique key must not point at one parent twice."""
+        columns = [self.match_values(table, column, state) for column in fk.together]
+        return joint_codes(columns, rows[table])
+
+    @staticmethod
+    def per(fk: ForeignKey) -> str:
+        return f" per {', '.join(fk.together)}" if fk.together else ""
 
     def match_values(self, table: str, column: str, state: "Draw") -> np.ndarray:
         """A matched column's values, NaN where blank: a key's parent rows or a categorical's levels."""

@@ -249,6 +249,22 @@ counts beyond Poisson; `noise=0` keeps them Poisson given the causes. Each custo
 among the customers by the same shares. A table takes at most one such key, and a key cannot match
 on, or count from, a column that reads across it.
 
+`unique` keeps a key from repeating a parent: `unique=True` across the table, or
+`unique="student_id"` among the rows sharing a student, so each (student, course) pair of an
+enrollments table appears once. Parents are drawn without repeats, by `prefer` if given; a row
+blank in a grouping column is free, as SQL treats nulls, and given key values are checked. A
+student with more enrollments than there are courses raises:
+
+```python
+enrollments = Table({
+    "student_id": ForeignKey("students", counts=Counts(4.0)),
+    "course_id": ForeignKey("courses", unique="student_id"),
+})
+```
+
+A position within a group, such as an order's line number, is no key: compute it afterwards with
+`frame.groupby("order_id").cumcount() + 1`.
+
 `Summary` reads the rows pointing back. It takes the table and its key, and counts them unless told
 to aggregate a column of theirs, as its sum (`Summary("staff", "boss_id", "pay", "mean",
 fill=0.0)`; also `sum`, `max` and `min`; all but `sum` need a `fill` for rows that nothing points

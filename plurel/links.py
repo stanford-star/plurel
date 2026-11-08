@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 import numpy as np
+import pandas as pd
 
 from plurel.distributions import Distribution, Uniform
 
@@ -192,3 +193,78 @@ def counted(
         rng.poisson(mean * len(weights) * share) if total is None else rng.multinomial(total, share)
     )
     return rng.permutation(np.repeat(np.arange(len(weights)), counts))
+
+
+DISTINCT_ROUNDS = 8  # redraws of repeated rows before a group is drawn whole, without replacement
+
+
+def joint_codes(columns: list[np.ndarray], n: int) -> np.ndarray:
+    """One integer per row, equal where every column agrees: -1 where any is blank (NaN or -1)."""
+    joint = np.zeros(n, dtype=np.int64)
+    for values in columns:
+        codes = pd.factorize(values)[0]
+        joint = np.where((joint < 0) | (codes < 0), -1, joint * (codes.max(initial=0) + 1) + codes)
+        joint = np.where(joint < 0, -1, pd.factorize(joint)[0])
+    return joint
+
+
+def repeats(group: np.ndarray, picks: np.ndarray) -> np.ndarray:
+    """The rows whose pick an earlier row of their group already holds; group -1 is no group."""
+    rows = np.flatnonzero((group >= 0) & (picks >= 0))
+    rows = rows[np.lexsort((picks[rows], group[rows]))]
+    same = (group[rows][1:] == group[rows][:-1]) & (picks[rows][1:] == picks[rows][:-1])
+    out = np.zeros(len(group), dtype=bool)
+    out[rows[1:][same]] = True
+    return out
+
+
+def distinct(
+    child: np.ndarray,
+    parent: np.ndarray,
+    log_weights: np.ndarray,
+    together: np.ndarray,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """`matched`, with no two rows of one `together` group (-1: none) on the same parent. Repeats
+    are redrawn a few rounds; a group still repeating is then drawn whole, without replacement, by
+    Gumbel keys, so a full group costs its pool once. A group with more rows than parents to give
+    them raises."""
+    blank = [np.where(codes < 0, np.nan, codes) for codes in (child, together)]
+    group = joint_codes(blank, len(child))
+    eligible = np.flatnonzero((parent >= 0) & np.isfinite(log_weights))
+    pool = eligible[np.argsort(parent[eligible], kind="stable")]
+    size = np.bincount(
+        parent[pool], minlength=max(child.max(initial=-1), parent.max(initial=-1)) + 1
+    )
+    demand = np.bincount(group[group >= 0], minlength=group.max(initial=-1) + 1)
+    first = np.full(len(demand), -1)
+    first[group[group >= 0][::-1]] = np.flatnonzero(group >= 0)[::-1]
+    if len(demand) and (short := demand > size[child[first]]).any():
+        worst = int(np.flatnonzero(short)[0])
+        raise ValueError(
+            f"{demand[worst]} rows that must not repeat a parent share only"
+            f" {size[child[first[worst]]]} parents to point at"
+        )
+    picks = matched(child, parent, log_weights, rng)
+    for _ in range(DISTINCT_ROUNDS):
+        clash = repeats(group, picks)
+        if not clash.any():
+            return picks
+        picks[clash] = matched(child[clash], parent, log_weights, rng)
+    hard = np.unique(group[repeats(group, picks)])
+    if not len(hard):
+        return picks
+    starts = np.searchsorted(parent[pool], child[first[hard]], side="left")
+    lengths = size[child[first[hard]]]
+    owner = np.repeat(hard, lengths)
+    offset = np.arange(lengths.sum()) - np.repeat(np.cumsum(lengths) - lengths, lengths)
+    candidates = pool[np.repeat(starts, lengths) + offset]
+    keys = log_weights[candidates] + rng.gumbel(size=len(candidates))
+    order = np.lexsort((-keys, owner))
+    owner, candidates = owner[order], candidates[order]
+    rank = np.arange(len(owner)) - np.repeat(np.cumsum(lengths) - lengths, lengths)
+    taken = rank < demand[owner]
+    rows = np.flatnonzero(np.isin(group, hard))
+    rows = rows[np.argsort(group[rows], kind="stable")]
+    picks[rows] = candidates[taken]
+    return picks
