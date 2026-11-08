@@ -630,7 +630,7 @@ class Schema:
         fk = self.keys[table, column]
         if fk.values is not None:
             indices = self.real_link(table, column, fk, rows[fk.parent])
-            if fk.unique and repeats(self.together(table, fk, rows, state), indices).any():
+            if fk.unique and repeats(self.unique_groups(table, fk, rows, state), indices).any():
                 raise ValueError(
                     f"given values of {column!r} in {table!r} repeat a parent{self.per(fk)}"
                 )
@@ -644,14 +644,16 @@ class Schema:
             log_weights = checked(f"{column} weights", node, value, rows[fk.parent])[:, 0]
         if fk.counts is not None:
             weights = np.exp(log_weights - log_weights.max()) if len(log_weights) else log_weights
-            drawn = counted(weights, fk.counts.mean, rows.get(table), stream)
+            drawn = counted(weights, fk.counts.mean, rows.get(table), stream, fk.counts.most)
             rows[table] = len(drawn)
         elif fk.match or fk.prefer or fk.unique:
             child, parent = self.groups(table, fk, rows, state)
             if fk.unique:
-                group = self.together(table, fk, rows, state)
+                group = self.unique_groups(table, fk, rows, state)
                 try:
-                    drawn = distinct(child, parent, log_weights, group, stream)
+                    drawn = distinct(
+                        child, parent, log_weights, group, stream, nullable=bool(fk.nullable)
+                    )
                 except ValueError as error:
                     raise ValueError(
                         f"{column!r} of {table!r} must not repeat a parent{self.per(fk)}: {error}"
@@ -689,7 +691,7 @@ class Schema:
         joint = joint_codes(columns, n + rows[fk.parent])
         return joint[:n], joint[n:]
 
-    def together(
+    def unique_groups(
         self, table: str, fk: ForeignKey, rows: Mapping[str, int], state: "Draw"
     ) -> np.ndarray:
         """The groups whose rows a unique key must not point at one parent twice."""

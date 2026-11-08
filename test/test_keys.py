@@ -357,3 +357,44 @@ def test_distinct_draws_without_repeats_in_each_group():
     assert first_two[2] > first_two[1] > first_two[0]
     free = distinct(np.zeros(6, dtype=np.int64), parent, log_weights, np.full(6, -1), rng)
     assert len(free) == 6 and (free >= 0).all()
+
+
+def test_unique_matched_keys_leave_rows_without_a_parent_blank_when_nullable():
+    schema = clinics(match={"region": "region"}, unique=("region",), nullable=0.01, fill=0.0)
+    frames = schema.sample({"clinics": 12, "patients": 40}, seed=0)
+    rows = joined(frames, "patients", "clinic_id", "clinics")
+    linked = rows.dropna(subset=["clinic_id"])
+    assert (linked.region == linked.region_parent).all() and linked.clinic_id.is_unique
+    per_region = frames["clinics"].region.value_counts()
+    taken = linked.region.value_counts()
+    assert (taken <= per_region.reindex(taken.index, fill_value=0)).all()
+    with pytest.raises(ValueError, match="must not repeat a parent per region"):
+        clinics(match={"region": "region"}, unique="region").sample(
+            {"clinics": 12, "patients": 40}, seed=0
+        )
+
+
+def test_capped_counts_fit_a_unique_key():
+    def schema(most):
+        return school(
+            {
+                "student_id": ForeignKey("students", counts=Counts(4.0, most=most)),
+                "course_id": ForeignKey("courses", unique="student_id"),
+            }
+        )
+
+    with pytest.raises(ValueError, match="share only 6"):
+        schema(None).sample({"students": 2000, "courses": 6}, seed=0)
+    for rows in (
+        {"students": 2000, "courses": 6},
+        {"students": 2000, "courses": 6, "enrollments": 9000},
+    ):
+        enrollments = schema(6).sample(rows, seed=0)["enrollments"]
+        assert (
+            enrollments.student_id.value_counts().max() <= 6 and not enrollments.duplicated().any()
+        )
+        assert rows.get("enrollments", len(enrollments)) == len(enrollments)
+    with pytest.raises(ValueError, match="at most 6 each"):
+        schema(6).sample({"students": 10, "courses": 6, "enrollments": 61}, seed=0)
+    with pytest.raises(ValueError, match="whole number"):
+        Counts(4.0, most=0)

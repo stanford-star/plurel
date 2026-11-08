@@ -253,11 +253,12 @@ on, or count from, a column that reads across it.
 `unique="student_id"` among the rows sharing a student, so each (student, course) pair of an
 enrollments table appears once. Parents are drawn without repeats, by `prefer` if given; a row
 blank in a grouping column is free, as SQL treats nulls, and given key values are checked. A
-student with more enrollments than there are courses raises:
+student with more enrollments than there are courses raises, or, on a `nullable` key, leaves the
+extra rows pointing at nothing; `Counts(most=...)` caps how many rows each parent gets:
 
 ```python
 enrollments = Table({
-    "student_id": ForeignKey("students", counts=Counts(4.0)),
+    "student_id": ForeignKey("students", counts=Counts(4.0, most=6)),  # with 6 or more courses
     "course_id": ForeignKey("courses", unique="student_id"),
 })
 ```
