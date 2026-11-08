@@ -67,7 +67,7 @@ customers = Table(
 orders = Table(
     {
         "id": PrimaryKey(),
-        "customer_id": ForeignKey("customers", counts=Counts(3.0, {"age": 0.5}, most=10)),
+        "customer_id": ForeignKey("customers", counts=Counts(3.0, {"age": 0.5}, least=1, most=10)),
         "store_id": ForeignKey("stores", HSBMLink(popularity=Pareto(2.5)), nullable=0.1, fill=0.0),
         "when": Timestamp("2020-01-01", "2025-01-01", causes={"customer_id.joined": 1.0}),
         "shipped": Timestamp(causes={Recorded("when"): 1.0}, noise=Exponential(2 * 86400)),

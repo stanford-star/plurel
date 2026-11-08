@@ -183,7 +183,10 @@ class Run:
             log_weights = checked(f"{column} weights", node, value, rows[fk.parent])[:, 0]
         if fk.counts is not None:
             weights = np.exp(log_weights - log_weights.max()) if len(log_weights) else log_weights
-            drawn = counted(weights, fk.counts.mean, rows.get(table), stream, fk.counts.most)
+            counts = fk.counts
+            drawn = counted(
+                weights, counts.mean, rows.get(table), stream, counts.most, counts.least
+            )
             rows[table] = len(drawn)
         elif fk.match or fk.prefer or fk.unique:
             child, parent = self.groups(table, fk)
@@ -265,7 +268,8 @@ class Run:
                     frame[column] = pd.Series(indices, dtype="Int64").mask(indices < 0)
                 else:
                     keys = given.astype("Int64") if pd.api.types.is_integer_dtype(given) else given
-                    frame[column] = keys.take(indices).reset_index(drop=True).mask(indices < 0)
+                    # by label, so a row pointing at nothing reads a blank, even of no parent rows
+                    frame[column] = keys.reindex(indices).reset_index(drop=True)
             for name in scm.derived:
                 frame[name] = records[name]
             frames[table] = frame[[name for name in scm.table if name in frame]]

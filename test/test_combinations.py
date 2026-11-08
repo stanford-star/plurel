@@ -232,3 +232,79 @@ def test_a_unique_key_over_a_counted_parent_realizes():
     )
     frames = schema.realize(0).sample({"profiles": 2}, seed=0)
     assert frames["profiles"].customer_id.is_unique
+
+
+@pytest.mark.parametrize("dtype", ["string", "Int64", object])
+def test_an_empty_real_parent_leaves_children_with_null_keys(dtype):
+    parents = Table.from_frame(
+        pd.DataFrame({"id": pd.Series([], dtype=dtype), "region": pd.Series([], dtype="string")}),
+        primary_key="id",
+    )
+    matched = Table.from_frame(
+        pd.DataFrame({"region": ["north", "south"]}),
+        extra={"parent_id": ForeignKey("parents", match={"region": "region"}, unmatched="null")},
+    )
+    given = Table.from_frame(
+        pd.DataFrame({"parent_id": pd.Series([pd.NA, pd.NA], dtype=dtype)}),
+        foreign_keys={"parent_id": "parents"},
+    )
+    for children in (matched, given):
+        frames = Schema({"parents": parents, "children": children}).sample(seed=0)
+        assert len(frames["parents"]) == 0 and len(frames["children"]) == 2
+        assert frames["children"].parent_id.isna().all()
+    strict = Table.from_frame(
+        pd.DataFrame({"region": ["north"]}),
+        extra={"parent_id": ForeignKey("parents", match={"region": "region"})},
+    )
+    with pytest.raises(ValueError, match="match no row"):
+        Schema({"parents": parents, "children": strict}).sample(seed=0)
+    absent = Table.from_frame(
+        pd.DataFrame({"parent_id": pd.Series(["x"], dtype="string")}),
+        foreign_keys={"parent_id": "parents"},
+    )
+    with pytest.raises(ValueError, match="holds values its parent lacks"):
+        Schema({"parents": parents, "children": absent}).sample(seed=0)
+
+
+def orders_with_lines(least, most=8, mean=3.0):
+    return Schema(
+        {
+            "orders": Table({"id": PrimaryKey(), "size": Numeric()}),
+            "lines": Table(
+                {
+                    "order_id": ForeignKey(
+                        "orders", counts=Counts(mean, {"size": 1.0}, least=least, most=most)
+                    ),
+                    "amount": Numeric(Uniform(1, 50)),
+                }
+            ),
+        }
+    )
+
+
+@pytest.mark.parametrize("total", [None, 3000])
+def test_counts_keep_every_parent_between_least_and_most(total):
+    schema = orders_with_lines(least=1)
+    for seed in range(4):
+        rows = {"orders": 1000} | ({} if total is None else {"lines": total})
+        frames = schema.sample(rows, seed=seed)
+        per = frames["lines"].order_id.value_counts().reindex(frames["orders"].id, fill_value=0)
+        assert per.min() >= 1 and per.max() <= 8
+        assert total is None or len(frames["lines"]) == total
+        assert frames["lines"].equals(schema.sample(rows, seed=seed)["lines"])
+    realized = orders_with_lines(least=2, mean=Range(3.0, 5.0)).realize(0)
+    per = realized.sample({"orders": 300}, seed=0)["lines"].order_id.value_counts()
+    assert per.reindex(range(300), fill_value=0).min() >= 2
+
+
+def test_counts_bounds_are_checked():
+    with pytest.raises(ValueError, match="at least 10 each"):
+        orders_with_lines(least=10, most=20).sample({"orders": 100, "lines": 999}, seed=0)
+    with pytest.raises(ValueError, match="least 9 is above most 8"):
+        Counts(3.0, least=9, most=8)
+    with pytest.raises(ValueError, match="least is a whole number"):
+        Counts(3.0, least=-1)
+    empty = orders_with_lines(least=1).sample({"orders": 0}, seed=0)
+    assert len(empty["lines"]) == 0
+    with pytest.raises(ValueError, match="no parent rows"):
+        orders_with_lines(least=1).sample({"orders": 0, "lines": 5}, seed=0)

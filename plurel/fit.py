@@ -99,6 +99,7 @@ def calibration_rows(schema, given: Mapping[str, int] | None) -> dict[str, int]:
             counts = schema.keys[fk.parent, schema.sized[fk.parent]]
             if counts.parent in rows:
                 total = round(counts.counts.mean * rows[counts.parent])
+                total = max(total, counts.counts.least * rows[counts.parent])
                 if counts.counts.most is not None:
                     total = min(total, counts.counts.most * rows[counts.parent])
                 rows[fk.parent] = max(1, min(total, CALIBRATION_ROWS))

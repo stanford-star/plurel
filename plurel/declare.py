@@ -632,16 +632,24 @@ class Counts(Drawable):
     when there are causes; `noise=0` leaves Poisson counts given the causes. A row count
     given for the child table is split among the parents by those shares; without one each parent
     draws its own Poisson count, and the counts are the child table's size. `most` caps each
-    parent's count, as a key unique per parent needs when the parents it points at are few."""
+    parent's count, as a key unique per parent needs when the parents it points at are few, and
+    `least` floors it, as every order having a line does: drawn counts are clipped to them, so
+    `mean` is the Poisson mean before clipping, and a given total first gives every parent
+    `least`."""
 
     mean: float | Range
     causes: Causes = field(default_factory=dict)
     noise: float | Range | Noise | Distribution | None = None
     most: int | None = None
+    least: int = 0
 
     def __post_init__(self) -> None:
         if not ranged(self.mean) and not (np.isfinite(self.mean) and self.mean > 0.0):
             raise ValueError("mean is a positive count of children per parent")
+        if isinstance(self.least, bool) or not isinstance(self.least, int) or self.least < 0:
+            raise ValueError("least is a whole number of children per parent, at least 0")
+        if self.most is not None and isinstance(self.most, int) and self.least > self.most:
+            raise ValueError(f"least {self.least} is above most {self.most}")
         if self.most is not None and (
             isinstance(self.most, bool) or not isinstance(self.most, int) or self.most < 1
         ):

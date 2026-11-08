@@ -184,25 +184,30 @@ def counted(
     total: int | None,
     rng: np.random.Generator,
     most: int | None = None,
+    least: int = 0,
 ) -> np.ndarray:
     """The parent row of each child row, the rows in random order: a given `total` split among the
     parents in proportion to their weights, or else each parent's Poisson count around `mean`
-    times its weight over the average weight. No parent takes more than `most`: a capped Poisson
-    count, or a split whose excess is dealt again among the parents with room."""
+    times its weight over the average weight. Every parent takes from `least` to `most`: a
+    Poisson count clipped to them, or `least` each and the rest split, its excess over `most`
+    dealt again among the parents with room."""
     if not len(weights):
         if total:
             raise ValueError("no parent rows to give children to")
         return np.empty(0, dtype=np.int64)
     share = weights / weights.sum()
     if total is None:
-        counts = rng.poisson(mean * len(weights) * share)
-        counts = counts if most is None else np.minimum(counts, most)
+        counts = np.clip(rng.poisson(mean * len(weights) * share), least, most)
     else:
+        if total < least * len(weights):
+            raise ValueError(
+                f"{total} rows cannot give {len(weights)} parents at least {least} each"
+            )
         if most is not None and total > most * int((share > 0).sum()):
             raise ValueError(
                 f"{total} rows cannot go to {int((share > 0).sum())} parents at most {most} each"
             )
-        counts = rng.multinomial(total, share)
+        counts = least + rng.multinomial(total - least * len(weights), share)
         while most is not None and (excess := int(np.maximum(counts - most, 0).sum())):
             counts = np.minimum(counts, most)
             room = share * (counts < most)
