@@ -109,7 +109,10 @@ def test_ranged_noise_in_counts_needs_realizing():
         ({"prefer": {Recorded("typo"): 1.0}}, "'typo' as recorded, which is no column"),
         ({"prefer": {Recorded("region"): 1.0}}, "'region' as recorded, which is a categorical"),
         ({"counts": Counts(2.0, {Recorded("region"): 1.0})}, "counts its rows in 'people'"),
-        ({"prefer": {"typo": 1.0}}, r"by \['typo'\], no columns of 'people'"),
+        (
+            {"prefer": {"typo": 1.0}},
+            r"weighs its parents in 'people': the key refers to unknown parents \['typo'\]",
+        ),
         ({"prefer": {Recorded("id"): 1.0}}, "'id' as recorded, which is a key column"),
     ],
 )
