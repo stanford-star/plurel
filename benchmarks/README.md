@@ -58,29 +58,27 @@ files.
 ## First results: Apple M4, 8 November 2026
 
 [`REPORT.md`](REPORT.md) holds the measurements, from
-[`results/2026-11-08-apple-m4.json`](results/2026-11-08-apple-m4.json): commit `febaa82`, 108 runs,
-9 workloads × 4 sizes × 3 repeats. That file marks the commit as having local changes; those were
-this harness's own untracked files, before `run.py` learned to look only at `plurel/` and
-`examples/`, and the library code was `febaa82` as committed. What follows reads those numbers; it
-is interpretation, labeled as such, and holds for this machine only.
+[`results/2026-11-08-apple-m4.json`](results/2026-11-08-apple-m4.json): commit `e0c49b7` with no
+local changes to `plurel/` or `examples/`, 108 runs, 9 workloads × 4 sizes × 3 repeats. What follows
+reads those numbers; it is interpretation, labeled as such, and holds for this machine only.
 
 - **Every run finished.** No failure, timeout or running out of memory up to the largest run:
-  `prior-2` at its 1M size draws 6.0M rows and 65M cells in 36 s, at a peak of 3.1 GiB of this
+  `prior-2` at its 1M size draws 6.0M rows and 65M cells in 35 s, at a peak of 2.9 GiB of this
   machine's 16 GiB. Larger sizes were not tried, so the supported range measured here ends there.
-- **Sampling dominates at scale.** At the 1M size, sampling is 79 to 95% of the time for the
-  single tables, the prior databases and the keyed schema. For retail and enrollments it is 44 to
-  47%, because realizing fits their cuts to a draw as large as their retained tables, which grow
-  with the size here. Sampling runs at 1.5 to 13M cells a second, slowest for the prior databases,
-  likely because their nodes carry many nonlinear edges each; time grows about linearly in rows
-  beyond 100k.
-- **Memory grows about 30 to 130 bytes per cell** over the interpreter's 195 MiB: least for the
-  wide table, most for small multi-table schemas with many keys.
+- **Sampling dominates at scale.** At the 1M size, sampling is 80 to 95% of the time for the
+  single tables, the prior databases and the keyed schema. For retail and enrollments it is 43 to
+  46%, because realizing fits their cuts to a draw as large as their retained tables, which grow
+  with the size here. At that size sampling makes 1.6 to 10M generated cells a second, slowest for
+  the prior databases, likely because their nodes carry many nonlinear edges each; time grows about
+  linearly in rows beyond 100k.
+- **Memory grows about 40 to 130 bytes per cell** over the interpreter's 195 MiB: least for the
+  wide table and the largest prior database, most for smaller multi-table schemas with many keys.
 - **Small draws are bound by fixed costs.** At 1k rows a run takes about 0.06 s, two thirds of it
-  reading the saved database back through relbench. A prior database adds about 0.5 s to realize
+  reading the saved database back through relbench. A prior database adds 0.4 to 0.6 s to realize
   at any size, since calibration always draws 4096 rows per table.
 - **Bottlenecks to look at, each a separate change:** calibrating over every retained row (a probe
   with 1M real customers spent 7 s realizing); the per-cell cost of the prior's edges; and the
   fixed 4096-row calibration for small draws.
 
-Saving is cheap throughout: about 1 s at most, and 395 MiB on disk for the 51M-cell wide
+Saving is cheap throughout: under 1 s for every run, and 395 MiB on disk for the 51M-cell wide
 table.
