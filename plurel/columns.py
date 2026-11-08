@@ -17,7 +17,12 @@ def rank_map(latent: np.ndarray, marginal: Distribution, rng: np.random.Generato
     exactly its draw of the marginal."""
     out = np.empty(len(latent))
     reference = np.sort(marginal.sample(len(latent), rng))
-    out[np.lexsort((rng.random(len(latent)), latent))] = reference
+    tiebreak = rng.random(len(latent))
+    order = np.argsort(latent, kind="stable")
+    ordered = latent[order]
+    if (ordered[1:] == ordered[:-1]).any():
+        order = np.lexsort((tiebreak, latent))
+    out[order] = reference
     return out
 
 
