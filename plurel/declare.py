@@ -613,15 +613,21 @@ class Counts(Drawable):
     by the exponential of its causes, read from the parent's columns, plus `noise`, 0.5 by default
     when there are causes; `noise=0` leaves Poisson counts given the causes. A row count
     given for the child table is split among the parents by those shares; without one each parent
-    draws its own Poisson count, and the counts are the child table's size."""
+    draws its own Poisson count, and the counts are the child table's size. `most` caps each
+    parent's count, as a key unique per parent needs when the parents it points at are few."""
 
     mean: float | Range
     causes: Causes = field(default_factory=dict)
     noise: float | Range | Noise | Distribution | None = None
+    most: int | None = None
 
     def __post_init__(self) -> None:
         if not ranged(self.mean) and not (np.isfinite(self.mean) and self.mean > 0.0):
             raise ValueError("mean is a positive count of children per parent")
+        if self.most is not None and (
+            isinstance(self.most, bool) or not isinstance(self.most, int) or self.most < 1
+        ):
+            raise ValueError("most is a whole number of children per parent, at least 1")
 
 
 @dataclass(frozen=True, eq=False)
@@ -634,7 +640,12 @@ class ForeignKey(Drawable):
     this table to one of the parent that must hold the same level, or point at the same row when
     both are keys; a row no parent matches points at nothing if the key is `nullable`, and raises
     otherwise. `prefer` weighs the eligible parents by the exponential of causes read from the
-    parent's columns. `counts` sets how many rows point at each parent, and so the table's size."""
+    parent's columns. `counts` sets how many rows point at each parent, and so the table's size.
+
+    `unique=True` points no two rows at the same parent; `unique="student_id"`, or a tuple of
+    columns, points no two rows that agree on those keys or categoricals at the same parent, so
+    the pair is unique, as in a table of enrollments. A row blank in one of them is free, as SQL
+    treats nulls; a group with more rows than parents to give them raises."""
 
     parent: str
     link: Link = RandomLink()
@@ -644,6 +655,14 @@ class ForeignKey(Drawable):
     match: Mapping[str, str] = field(default_factory=dict)
     prefer: Causes = field(default_factory=dict)
     counts: Counts | None = None
+    unique: bool | str | tuple[str, ...] = False
+
+    @property
+    def together(self) -> tuple[str, ...]:
+        """The columns a unique key is unique together with."""
+        if isinstance(self.unique, bool):
+            return ()
+        return (self.unique,) if isinstance(self.unique, str) else tuple(self.unique)
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.nullable < 1.0:
@@ -651,8 +670,12 @@ class ForeignKey(Drawable):
         reads = bool(self.match or self.prefer or self.counts)
         if reads and (self.link != RandomLink() or self.values is not None):
             raise ValueError("match, prefer and counts choose the parents: no link or values")
-        if self.counts is not None and (self.match or self.prefer or self.nullable):
-            raise ValueError("counts give every child its parent: no match, prefer or nullable")
+        if self.unique and self.link != RandomLink():
+            raise ValueError("a unique key draws its parents without repeats: no link")
+        if self.counts is not None and (self.match or self.prefer or self.nullable or self.unique):
+            raise ValueError(
+                "counts give every child its parent: no match, prefer, nullable or unique"
+            )
         if self.fill is not None and not np.isfinite(self.fill):
             raise ValueError("fill must be finite")
         if self.values is not None:
