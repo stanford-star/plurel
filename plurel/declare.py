@@ -468,9 +468,9 @@ class Categorical(Declaration):
 @dataclass(frozen=True)
 class Timestamp(Declaration):
     """A time in `[start, end)` on a calendar of business hours; causes move a row later. Without
-    `start` and `end` the time is its causes' sum plus `noise` in epoch seconds: reading another
-    time `Recorded` with weight 1 and a positive noise, such as `Exponential(7 * 86400)`, places
-    each row a week or so after it, never before."""
+    `start` and `end` the time is its causes' sum plus `noise` in epoch seconds, so it must read a
+    time `Recorded` and say its noise: weight 1 and a positive noise, such as
+    `Exponential(7 * 86400)`, place each row a week or so after that time, never before."""
 
     start: str | pd.Timestamp | None = None
     end: str | pd.Timestamp | None = None
@@ -482,8 +482,13 @@ class Timestamp(Declaration):
     def __post_init__(self) -> None:
         if (self.start is None) != (self.end is None):
             raise ValueError("a timestamp takes both a start and an end, or neither")
-        if self.start is None and not self.causes:
-            raise ValueError("a timestamp without a start and an end is its causes: give some")
+        if self.start is None and (
+            not any(isinstance(cause, Recorded) for cause in self.causes) or self.noise is None
+        ):
+            raise ValueError(
+                "a timestamp without a start and an end is its causes plus its noise in seconds:"
+                " read a time Recorded and give the noise, a delay such as Exponential(86400), or 0"
+            )
 
     def entries(self, name: str, keys: Collection[str]) -> dict[str, Node | Column]:
         calendar = None
@@ -586,9 +591,6 @@ class PrimaryKey:
         self, name: str, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
     ) -> pd.Series:
         return pd.Series(np.arange(n)) if self.values is None else self.values
-
-    def framed(self, recorded: pd.Series) -> pd.Series:
-        return recorded
 
 
 @dataclass(frozen=True, eq=False)

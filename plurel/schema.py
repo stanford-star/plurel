@@ -32,6 +32,7 @@ from plurel.links import TreeLink
 from plurel.random import Seed, generator, lane
 
 Links = dict[tuple[str, str], np.ndarray]
+SPAN = (pd.Timestamp.min.value // 10**9 + 1, pd.Timestamp.max.value // 10**9)  # epoch seconds
 
 
 def checked(name: str, node: Node, latent: np.ndarray, n: int) -> np.ndarray:
@@ -64,8 +65,13 @@ def topological[T: Hashable](parents: Mapping[T, tuple[T, ...]]) -> tuple[T, ...
         ) from error
 
 
-def numbers(recorded: pd.Series) -> np.ndarray:
+def numbers(recorded: pd.Series, where: str) -> np.ndarray:
     """A record as floats, a time as epoch seconds and a blank as NaN."""
+    if getattr(recorded.dtype, "tz", None) is not None:
+        raise ValueError(
+            f"{where} holds times in a time zone, which a time read from it would lose: give it"
+            " naive times, e.g. converted with .dt.tz_convert(None)"
+        )
     if pd.api.types.is_datetime64_any_dtype(recorded):
         seconds = recorded.to_numpy("datetime64[ns]").astype(np.int64) / 1e9
         return np.where(recorded.isna().to_numpy(), np.nan, seconds)
@@ -318,6 +324,13 @@ class Table:
         if n == 1 and column.marginal is not None and (column.node.parents or column.node.across):
             raise ValueError("a marginal follows its causes in a draw's order: draw at least two")
         recorded = column.record(name, latents, rng, n)
+        if column.kind == "timestamp" and column.values is None:
+            seconds = recorded.to_numpy(dtype=float)
+            if ((seconds < SPAN[0]) | (seconds > SPAN[1])).any():
+                raise ValueError(
+                    f"{name!r} records times outside {pd.Timestamp.min} to {pd.Timestamp.max}:"
+                    " lower the weights or noise on the times it reads"
+                )
         if column.by_level is None:
             return recorded
         parent = column.by_level[0]
@@ -431,9 +444,11 @@ class Schema:
         for table, scm in self.tables.items():
             for vertex, reads in scm.graph.items():
                 parents[table, vertex] = tuple((table, read) for read in reads)
+        self.read: set[tuple[str, str]] = set()
         for (table, name), edges in self.crossings.items():
-            sources = (self.source(table, edge.parent) for edge in edges)
+            sources = tuple(self.source(table, edge.parent) for edge in edges)
             parents[table, name] += tuple(source for source in sources if source[1] is not None)
+            self.read |= {(t, read.column) for t, read in sources if isinstance(read, Recorded)}
         self.order = topological(parents)
 
     def bound(self, table: str, edge: Edge) -> Edge:
@@ -513,20 +528,19 @@ class Schema:
         tail: Foreign | Summary | Recorded,
         rows: Mapping[str, int],
         latents: dict[str, dict[str, np.ndarray]],
-        records: dict[str, dict[str, pd.Series]],
+        recorded: dict[str, dict[str, np.ndarray]],
         links: Links,
     ) -> np.ndarray:
         """The array a tail the schema resolves contributes to `table`, one row per row of it."""
         n = rows[table]
         if isinstance(tail, Recorded):
-            values = numbers(records[table][tail.column])
-            return filled(values, tail, f"{table}.{tail.column}")[:, None]
+            return filled(recorded[table][tail.column], tail, f"{table}.{tail.column}")[:, None]
         if isinstance(tail, Foreign):
             fk = self.keys[table, tail.key]
             indices = links[table, tail.key]
             if isinstance(tail.node, Recorded):
                 values, linked = np.full(n, np.nan), indices >= 0
-                values[linked] = numbers(records[fk.parent][tail.node.column])[indices[linked]]
+                values[linked] = recorded[fk.parent][tail.node.column][indices[linked]]
                 where = f"{tail.key}.{tail.node.column} of {table!r}"
                 return filled(values, tail.node, where)[:, None]
             source = latents[fk.parent][tail.node]
@@ -542,9 +556,9 @@ class Schema:
         indices = links[tail.table, tail.key]
         linked = indices >= 0
         if isinstance(tail.node, Recorded):
-            recorded = numbers(records[tail.table][tail.node.column])
-            linked &= ~np.isnan(recorded)
-            values = recorded[linked][:, None]
+            read = recorded[tail.table][tail.node.column]
+            linked &= ~np.isnan(read)
+            values = read[linked][:, None]
         elif tail.node is None:
             values = np.empty((int(linked.sum()), 1))
         else:
@@ -571,13 +585,17 @@ class Schema:
         each with its own stream: a held node takes its values, any other its edges plus noise."""
         latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
         records: dict[str, dict[str, pd.Series]] = {table: {} for table in self.tables}
+        recorded: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
         for table, name in self.order:
             scm, n = self.tables[table], rows[table]
             if isinstance(name, Recorded):
-                stream = lane(root, "column", self.identity[table], name.column)
-                records[table][name.column] = scm.record(
-                    name.column, latents[table], records[table], stream, n
+                column = name.column
+                stream = lane(root, "column", self.identity[table], column)
+                records[table][column] = scm.record(
+                    column, latents[table], records[table], stream, n
                 )
+                if (table, column) in self.read:
+                    recorded[table][column] = numbers(records[table][column], f"{table}.{column}")
                 continue
             node = scm.nodes[name]
             if name in held.get(table, {}):
@@ -588,7 +606,7 @@ class Schema:
                 None,
             )
             for edge in self.crossings.get((table, name), ()):
-                term = edge.apply(self.resolve(table, edge.parent, rows, latents, records, links))
+                term = edge.apply(self.resolve(table, edge.parent, rows, latents, recorded, links))
                 across = term if across is None else across + term
             parents = {parent: latents[table][parent] for parent in node.parents}
             value = node.evaluate(parents, exogenous, across)
@@ -606,7 +624,12 @@ class Schema:
         frames = {}
         for table, scm in self.tables.items():
             n = rows[table]
-            framed = {name: c.framed(records[table][name]) for name, c in scm.columns.items()}
+            framed = {
+                name: c.framed(records[table][name])
+                if isinstance(c, Column)
+                else records[table][name]
+                for name, c in scm.columns.items()
+            }
             frame = pd.DataFrame(framed, index=range(n))
             for column, fk in scm.fkeys.items():
                 indices, given = links[table, column], self.parent_keys(fk)

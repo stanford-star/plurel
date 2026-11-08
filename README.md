@@ -178,8 +178,10 @@ table = Table({
 A `Summary` of a `Recorded` column aggregates the recorded values of the rows pointing back,
 skipping blanks as pandas does, so `Summary("staff", "team_id", Recorded("pay"), "sum")` with
 `noise=0` is the payroll `groupby("team_id").pay.sum()` gives; a count counts the recorded rows. A
-`Timestamp` without a span is its causes' sum plus `noise`, so with weight 1 on another time and a
-positive noise it always comes after that time:
+`Timestamp` without a span is its causes' sum plus `noise` in epoch seconds, so it must read a
+time `Recorded` and give its `noise`; with weight 1 on that time and a positive noise it always
+comes after it. Times must stay within pandas' range, 1677 to 2262, and a time read `Recorded`
+must have no time zone:
 
 ```python
 orders = Table({
@@ -226,7 +228,7 @@ the key takes `fill`, which such a key must then set: `ForeignKey("customers", n
 `Summary` reads the rows pointing back. It takes the table and its key, and counts them unless told
 to aggregate a column of theirs, as its sum (`Summary("staff", "boss_id", "pay", "mean",
 fill=0.0)`; also `sum`, `max` and `min`; all but `sum` need a `fill` for rows that nothing points
-at). With `noise=0` and no marginal a count is exact, and a `Hidden` count lets rows with more
+at, or, for a `Recorded` column, whose rows pointing back are all blank). With `noise=0` and no marginal a count is exact, and a `Hidden` count lets rows with more
 reports rank higher:
 
 ```python

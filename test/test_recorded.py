@@ -7,8 +7,10 @@ from plurel import (
     Derived,
     Exponential,
     ForeignKey,
+    Normal,
     Numeric,
     PrimaryKey,
+    Range,
     Recorded,
     Schema,
     Summary,
@@ -154,7 +156,9 @@ def test_a_table_rejects_recorded_reads_it_cannot_mean(table, match):
     [
         (lambda: Summary("staff", "team_id", Recorded("pay", fill=0.0), "sum"), "skips blanks"),
         (lambda: Timestamp("2020-01-01"), "both a start and an end"),
-        (lambda: Timestamp(), "give some"),
+        (lambda: Timestamp(), "read a time Recorded"),
+        (lambda: Timestamp(causes={"t": 1.0}, noise=0), "read a time Recorded"),
+        (lambda: Timestamp(causes={Recorded("t"): 1.0}), "give the noise"),
         (lambda: Recorded("x", fill=float("inf")), "finite"),
     ],
 )
@@ -193,3 +197,41 @@ def test_a_schema_checks_what_its_recorded_reads_cross():
     }
     with pytest.raises(ValueError, match="acyclic"):
         Schema(ring)
+
+
+def test_times_a_frame_cannot_hold_raise():
+    def later(weight, times=None):
+        start = {"t": Timestamp("2020-01-01", "2021-01-01")}
+        later = {"u": Timestamp(causes={Recorded("t"): weight}, noise=0)}
+        if times is None:
+            return Table(start | later)
+        return Table.from_frame(pd.DataFrame({"t": times}), extra=later)
+
+    with pytest.raises(ValueError, match="records times outside"):
+        later(6.0).sample(10, seed=0)
+    with pytest.raises(ValueError, match="time zone"):
+        later(1.0, pd.date_range("2020-01-01", periods=5, tz="US/Eastern")).sample(seed=0)
+    naive = later(1.0, pd.date_range("2020-01-01", periods=5)).sample(seed=0)
+    assert naive.u.equals(naive.t.dt.as_unit("ns").rename("u"))
+
+
+def test_a_realized_family_fits_columns_that_read_records():
+    parents = Table(
+        {
+            "id": PrimaryKey(),
+            "x": Numeric(Uniform(0, 10)),
+            "c": Categorical({"a": 0.3, "b": 0.7}, causes={Recorded("x"): Range(0.5, 1.0)}),
+            "busy": Categorical(
+                {"no": 0.6, "yes": 0.4},
+                causes={Summary("k", "p_id", Recorded("y"), "max", fill=0.0): 1.0},
+                noise=Normal(std=1.0),
+            ),
+        }
+    )
+    kids = Table({"p_id": ForeignKey("p"), "y": Numeric(Uniform(0, 1))})
+    schema = Schema({"p": parents, "k": kids}).realize(0)
+    table = schema.tables["p"]
+    assert table.columns["c"].binning is not None and table.columns["busy"].binning is None
+    frames = schema.sample({"p": 4000, "k": 8000}, seed=1)
+    assert abs((frames["p"].c == "a").mean() - 0.3) < 0.03
+    assert abs((frames["p"].busy == "yes").mean() - 0.4) < 1e-3
