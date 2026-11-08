@@ -133,6 +133,8 @@ def main(mechanism_seed: int, data_seed: int, scale: int, out: Path | None) -> N
 
 
 if __name__ == "__main__":
+    if not __debug__:
+        raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--mechanism-seed", type=int, default=0)
     parser.add_argument("--data-seed", type=int, default=0)

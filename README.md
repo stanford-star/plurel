@@ -115,17 +115,15 @@ mechanism_seed, data_seed = 1, 10
 generator = family.realize(mechanism_seed)           # one mechanism: weights drawn, cuts fit
 first = generator.sample(1000, seed=data_seed)       # two datasets of it
 second = generator.sample(1000, seed=data_seed + 1)
+assert generator.describe() == family.realize(mechanism_seed).describe()  # same mechanism
+assert not first.equals(second)                                           # other rows
 
-
-def weight(table):
-    return table.describe()["columns"]["cost"]["causes"][0]["weight"]
-
-
-assert weight(generator) == weight(family.realize(mechanism_seed)) and not first.equals(second)
 mechanisms = [family.realize(seed) for seed in range(3)]           # three mechanisms
 datasets = [each.sample(1000, seed=data_seed) for each in mechanisms]  # one dataset each
-assert len({weight(each) for each in mechanisms}) == 3
+assert len({str(each.describe()) for each in mechanisms}) == 3
 ```
+
+`describe()` shows what a mechanism seed chose: every drawn weight and cut.
 
 Every mechanism seed gives another generator of the same description, and the same seed gives the
 same one; sampling never changes it: see
@@ -710,7 +708,7 @@ pixi run test        # the suite
 pixi run lint        # ruff check and format check, at the version pre-commit pins
 pixi run typecheck   # pyright over test/typing_examples.py, the public API as users write it
 pixi run examples    # every README block in order in one namespace, then each quickstart alone
-pixi run recipes     # each domain recipe in examples/generation, small, in its own process
+pixi run recipes     # every domain recipe in examples/generation, small, each in its own process
 pixi run wheel       # a wheel in dist/
 ```
 

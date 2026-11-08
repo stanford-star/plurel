@@ -74,8 +74,9 @@ class Table:
     """A table: a dict of its keys, its columns (`Numeric`, `Categorical`, `Timestamp`, `Real`,
     `Derived`) and the `Hidden` causes they read, as latents or, `Recorded`, as recorded values.
     The lower-level `Node` and `Column` are accepted too. A table holding ranges is a family:
-    `realize(seed)` draws one table of it. `doc`, `target` and `sources` say what the table
-    records, what it is read for and where its numbers come from; `docs` holds each entry's description, from its `doc` or given, and survives realizing."""
+    `realize(seed)` makes a generator of it, which `sample` draws rows from. `doc`, `target` and
+    `sources` say what the table records, what it is read for and where its numbers come from;
+    `docs` holds each entry's description, from its `doc` or given, and survives realizing."""
 
     def __init__(
         self,
@@ -641,7 +642,9 @@ class Schema:
         """One frame and the latents per table; a table of given values has their row count, and
         `held` nodes take the given `(n, dim)` values."""
         if family := [table for table, scm in self.tables.items() if scm.family]:
-            raise ValueError(f"{family} hold ranges: draw one table with realize(seed)")
+            raise ValueError(
+                f"{family} hold ranges: make a generator with realize(seed), then sample it"
+            )
         rows = dict(rows or {})
         for table, scm in self.tables.items():
             if scm.size is not None and rows.setdefault(table, scm.size) != scm.size:
