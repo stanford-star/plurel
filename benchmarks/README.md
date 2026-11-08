@@ -67,32 +67,39 @@ A result holds for the machine, packages and commit its environment block names;
 on the same machine. To compare a change, run the same workloads before and after it and keep both
 files.
 
-## First results: Apple M4, 8 November 2026
+## Results, 8 November 2026
 
-[`REPORT.md`](REPORT.md) holds the measurements, from
-[`results/2026-11-08-apple-m4.json`](results/2026-11-08-apple-m4.json): commit `e0c49b7` with no
-local changes to `plurel/` or `examples/`, 108 runs, 9 workloads × 4 sizes × 3 repeats. What follows
-reads those numbers; it is interpretation, labeled as such, and holds for this machine only.
+Two machines at commit `7241cbc`, with no local changes to `plurel/` or `examples/`: an Apple M4
+with 16 GiB ([REPORT.md](REPORT.md), with plots, from
+[`results/2026-11-08-apple-m4-7241cbc.json`](results/2026-11-08-apple-m4-7241cbc.json)) and
+GitHub's `ubuntu-latest` runner, 4 cores of an AMD EPYC 9V74 with 16 GiB
+([REPORT-linux.md](REPORT-linux.md), from
+[`results/2026-11-08-github-ubuntu-7241cbc.json`](results/2026-11-08-github-ubuntu-7241cbc.json),
+made by the `measure` workflow). Each ran 402 runs, 17 workloads at 4 sizes, 3 seeds, twice each,
+and skipped `columns-200` at 1M. The main README's
+[latency and memory](../README.md#latency-and-memory) table reads the 1M sizes. What follows
+interprets the numbers, as such, for these machines only.
 
-- **Every run finished.** No failure, timeout or running out of memory up to the largest run:
-  `prior-2` at its 1M size draws 6.0M rows and 65M cells in 35 s, at a peak of 2.9 GiB of this
-  machine's 16 GiB. Larger sizes were not tried, so the supported range measured here ends there.
-- **Sampling dominates at scale.** At the 1M size, sampling is 80 to 95% of the time for the
-  single tables, the prior databases and the keyed schema. For retail and enrollments it is 43 to
-  46%, because realizing fits their cuts to a draw as large as their retained tables, which grow
-  with the size here. At that size sampling makes 1.6 to 10M generated cells a second, slowest for
-  the prior databases, likely because their nodes carry many nonlinear edges each; time grows about
-  linearly in rows beyond 100k.
-- **Memory grows about 40 to 130 bytes per cell** over the interpreter's 195 MiB: least for the
-  wide table and the largest prior database, most for smaller multi-table schemas with many keys.
-- **Small draws are bound by fixed costs.** At 1k rows a run takes about 0.06 s, two thirds of it
-  reading the saved database back through relbench. A prior database adds 0.4 to 0.6 s to realize
-  at any size, since calibration always draws 4096 rows per table.
-- **Bottlenecks to look at, each a separate change:** calibrating over every retained row (a probe
-  with 1M real customers spent 7 s realizing), since fixed by calibrating on a random 4096 of a real
-  table's rows: retail's realize at the 1M size fell from 1.7 s to 0.05 s and its total from 3.9 s
-  to 1.9 s; the per-cell cost of the prior's edges; and the fixed 4096-row calibration for small
-  draws.
+- **Every run finished** on both: no failure, timeout or running out of memory. The largest,
+  `prior-2` at 1M, draws 6.0M rows and 65M cells in 35 s on either machine, at a peak of 2.6 GiB
+  on the M4 and 3.3 GiB on the runner. Larger sizes were not tried, so the measured range ends there.
+- **Sampling dominates at scale**, and grows about linearly in rows beyond 100k. At 1M the M4
+  samples hand-authored tables at 7 to 16M generated cells a second, keyed schemas with counts,
+  matching or uniqueness at 3 to 4M, and random priors at 1.6 to 4.9M. Profiling `prior-2` puts
+  the priors' time in their edges' arithmetic: Fourier cosines about 20%, quadratic products 13%,
+  Gumbel noise for categorical scores 9%, MLPs 8%, with little Python overhead. The runner takes
+  1.0 to 1.7 times as long, least for the prior databases and keyed schemas.
+- **Variability is small:** a seed's reruns differ by a few percent, and seeds of one workload by
+  up to about a third, the most for retail, the narrow table and the largest prior, where the
+  draw's own sizes and fixed costs move the total.
+- **Memory grows about 35 to 130 bytes per cell** over the interpreter's 195 MiB, least for wide
+  tables and long chains of tables. The runner peaks lower for most workloads, likely its
+  allocator, and higher for the largest prior.
+- **Small draws are bound by fixed costs.** At 1k rows a run takes about 0.05 s, most of it
+  reading the database back through relbench. A random prior adds about 0.45 s to realize at any
+  size, since calibration draws 4,096 rows per table; fewer would make its fitted cuts noisier.
 
-Saving is cheap throughout: under 1 s for every run, and 395 MiB on disk for the 51M-cell wide
-table.
+The earlier run at commit `e0c49b7`, three repeats of one seed each, stays in
+[`results/2026-11-08-apple-m4.json`](results/2026-11-08-apple-m4.json) as a baseline. Since then
+realizing calibrates on at most 4,096 rows of a large real table (retail's realize at 1M fell
+from 1.7 s to 0.04 s), and the rank map sorts a latent without ties once instead of by two keys.

@@ -701,6 +701,45 @@ of cutting a rank. Realizing fits these scores and the level cuts to one draw of
 realized table's shares follow its rows and it can be sampled at any size. A column that depends on a
 key keeps its shares exactly in every draw instead, since rows sharing a parent are not independent.
 
+## Latency and memory
+
+End to end, from declaring the schema to reading the saved database back, on two machines at
+commit `7241cbc`: an Apple M4 with 16 GiB, and a GitHub `ubuntu-latest` runner, 4 cores of an AMD
+EPYC 9V74 with 16 GiB. Each is the median of three seeds, each run twice in a fresh process, with
+library thread defaults; peak memory includes the interpreter and imports, about 195 MiB.
+
+| Source | Workload | Tables | Rows | Cells | M4 | Linux runner |
+|---|---|---:|---:|---:|---:|---:|
+| Purely synthetic | `TablePrior` table, 20 columns | 1 | 1.0M | 21M | 4.7 s, 1.7 GiB | 6.1 s, 1.2 GiB |
+| | `SchemaPrior` database | 3 | 1.1M | 8.2M | 2.6 s, 1.2 GiB | 3.1 s, 731 MiB |
+| | `SchemaPrior` database | 15 | 2.0M | 24M | 16 s, 1.8 GiB | 17 s, 1.6 GiB |
+| | `SchemaPrior` database | 20 | 6.0M | 65M | 35 s, 2.6 GiB | 35 s, 3.3 GiB |
+| Hand-authored | five columns, a short chain of causes | 1 | 1.0M | 5.0M | 0.45 s, 593 MiB | 0.75 s, 409 MiB |
+| | 50 numbers, three causes each, and a categorical | 1 | 1.0M | 51M | 7.9 s, 1.9 GiB | 13 s, 1.5 GiB |
+| | 40 numbers, each caused by every one before | 1 | 1.0M | 40M | 6.3 s, 1.9 GiB | 11 s, 1.4 GiB |
+| | a chain of keyed tables | 8 | 1.0M | 5.9M | 0.65 s, 409 MiB | 1.1 s, 437 MiB |
+| | a chain of keyed tables | 32 | 1.0M | 6.0M | 0.65 s, 380 MiB | 1.0 s, 431 MiB |
+| | counted, matched, preferred and unique keys | 3 | 1.3M | 4.7M | 1.8 s, 599 MiB | 2.0 s, 444 MiB |
+| Hand-authored and synthetic | customers and orders around a `TablePrior` product table | 3 | 1.0M | 5.1M | 0.99 s, 696 MiB | 1.3 s, 516 MiB |
+| Hand-authored around real rows | [retail](examples/generation/retail.py), 105k real rows kept | 4 | 1.2M | 5.7M | 1.7 s, 586 MiB | 1.9 s, 504 MiB |
+| | [visits](examples/generation/visits.py) | 4 | 0.97M | 4.9M | 0.73 s, 495 MiB | 1.1 s, 453 MiB |
+| | [enrollments](examples/generation/enrollments.py), 349k real rows kept | 3 | 1.3M | 6.0M | 1.9 s, 684 MiB | 2.4 s, 478 MiB |
+
+Sampling takes most of that time at this size, and grows about linearly in rows from 100k up. On
+the M4, hand-authored tables sample 7 to 16M cells a second, and 3 to 4M where keys are counted,
+matched or unique; random priors sample 1.6 to 4.9M, likely because their nodes carry nonlinear
+edges (Fourier, quadratic, MLP and tree) where authored causes are linear. Memory grows by about
+35 to 130 bytes per cell over the interpreter, the least for wide tables and long chains. Small
+draws are bound by fixed costs: 1,000 rows take about 0.05 s on either machine, most of it reading
+the saved database back, and a random prior adds about 0.45 s to realize, which calibrates on
+4,096 rows per table. Saving takes at most 1.4 s on the M4 and 4.2 s on the runner, 395 MiB on
+disk for the 51M-cell table. No run failed or ran out of memory on either machine.
+
+These numbers hold for those machines. [benchmarks/](benchmarks/) has the harness and every
+workload at 1k, 10k, 100k and 1M rows with each phase timed apart: the reports for the
+[M4](benchmarks/REPORT.md), with scaling plots, and for the [Linux runner](benchmarks/REPORT-linux.md),
+and their raw results.
+
 ## Compatibility
 
 [COMPATIBILITY.md](COMPATIBILITY.md) says what the API and its seeded draws promise, exactly and

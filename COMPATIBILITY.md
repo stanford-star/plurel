@@ -51,9 +51,30 @@ for the breaking changes the changelog lists, each with its migration.
 The same pixi lock on macOS (osx-arm64) and Linux (linux-64) drew the same bytes for one of the
 seven fingerprinted workloads, the school schema, whose numbers pass through marginals and linear
 causes; the other six, which use log-normal marginals, `exp`/`log` transforms or the prior's
-matrix and tree edges, differed. The size of the differences has not been measured; the likely
-cause is floating point in those functions differing between the platforms' math libraries. So
-exact repeatability is a within-platform promise, and the digests are stored per platform.
+matrix and tree edges, differed. So exact repeatability is a within-platform promise, and the
+digests are stored per platform.
+
+How far they differ was measured at commit `7241cbc`: every fingerprinted draw saved on the Apple
+M4 and on a GitHub `ubuntu-latest` runner (AMD EPYC 9V74), with `test/fingerprints.py --save`, then
+set side by side with `scripts/compare_draws.py`:
+
+| Draws | Cells that differ | Largest difference | Categorical cells changed | Marginal and correlation shift |
+|---|---:|---:|---:|---:|
+| the four prior databases, two seeds each | 1.7 to 5.0% | under 3e-14 standard deviations | none | under 1e-15 |
+| shop and teams, two seeds each | 0.1 to 0.6% | under 6e-14 standard deviations | none | none |
+| school, two seeds | none | none | none | none |
+
+Every table drew as many rows on both, every categorical and every key took the same value, and
+the rank order of every number held: the differences are in the last bits of numbers and change
+nothing a model could see. Within this measurement the distributional promise holds and is close
+to exact. It is one pair of machines; another processor may differ more.
+
+One CI run on Linux has failed the fingerprints for six prior draws and passed on rerun without a
+change ([#155](https://github.com/stanford-star/plurel/pull/155)): GitHub's Linux runners are not
+all one processor, and the run above matched the stored `linux-x86_64` digests for every draw it
+could check (12 of 14; the teams draws change in the parquet round trip), so exact bytes may
+depend on the processor and not only on the platform name. CI now logs the processor beside the
+suite, so the next such failure names it.
 
 ## Tested environments
 
