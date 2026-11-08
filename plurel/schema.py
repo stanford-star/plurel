@@ -1,3 +1,4 @@
+from collections import Counter
 from collections.abc import Hashable, Mapping
 from dataclasses import replace
 from graphlib import CycleError, TopologicalSorter
@@ -157,7 +158,9 @@ class Table:
         for name, derived in self.derived.items():
             readable = {*self.derived, *(c for c, kind in kinds.items() if kind == "numeric")}
             if unknown := [c for c in derived.inputs if c not in readable]:
-                raise ValueError(f"{name!r} reads {unknown}, which are no numeric columns")
+                raise ValueError(
+                    f"{name!r} reads {unknown}, which are no numeric or derived columns"
+                )
         inputs = {name: tuple(c for c in d.inputs if c in self.derived) for name, d in self.derived.items()}  # fmt: skip
         try:
             self.derived_order = tuple(TopologicalSorter(inputs).static_order())
@@ -191,7 +194,7 @@ class Table:
                 raise ValueError(f"target {self.target!r} is {why}: it must be a recorded column")
 
     @property
-    def metadata(self) -> dict[str, str | None]:
+    def metadata(self) -> dict[str, object]:
         return {
             "time_column": self.time_column,
             "name": self.name,
@@ -328,9 +331,11 @@ class Schema:
     def __init__(self, tables: Mapping[str, Table]) -> None:
         self.tables = dict(tables)
         self.identity = {table: scm.name or table for table, scm in self.tables.items()}
-        if len(set(self.identity.values())) < len(self.identity):
+        named = Counter(self.identity.values())
+        if shared := sorted(t for t, name in self.identity.items() if named[name] > 1):
             raise ValueError(
-                f"tables share a name, so they would share their draws: {self.identity}"
+                f"tables {shared} share a name, so they would share their draws: give each table"
+                " its own name, e.g. a copy as Table(entries, name=...)"
             )
         keys = {
             (table, column): fk
