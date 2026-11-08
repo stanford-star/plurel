@@ -1,13 +1,18 @@
 """Realizing fits a database to one draw of its rows: each scored column's bias to its shares, then
-every level cut pinned where that draw puts it."""
+every level cut pinned where that draw puts it. A table of more given rows than `CALIBRATION_ROWS`
+takes part with a random `CALIBRATION_ROWS` of them, so the draw stays small however large the
+real tables are."""
 
 from collections.abc import Mapping
 from dataclasses import replace
+from graphlib import CycleError, TopologicalSorter
 
 import numpy as np
+import pandas as pd
 from scipy.stats import poisson
 
 from plurel.columns import Column
+from plurel.declare import ForeignKey, PrimaryKey
 from plurel.graph import LookupEdge, Node, level_edges
 from plurel.random import lane
 
@@ -16,12 +21,13 @@ CALIBRATION_PASSES = 100
 CALIBRATION_TOLERANCE = 0.01  # the largest bias step, in noise units, at which a fit stops
 
 
-def fit_score(table, name: str, latents: Mapping[str, np.ndarray], rng: np.random.Generator):
-    """The table with a bias under which its scored column `name` meets its shares: a fixed point
-    on one draw and fresh Gumbel noise, each pass shifting a level by the noise scale times the log
-    of its wanted over its seen share."""
-    column = table.columns[name]
-    node, n = column.node, len(latents[name])
+def fit_bias(
+    column: Column, latents: Mapping[str, np.ndarray], rng: np.random.Generator
+) -> tuple[float, ...]:
+    """The bias under which a scored column meets its shares: a fixed point on one draw and fresh
+    Gumbel noise, each pass shifting a level by the noise scale times the log of its wanted over
+    its seen share."""
+    node, n = column.node, len(next(iter(latents.values())))
     scores = sum(edge.apply(latents[edge.parent]) for edge in node.edges)
     noise = rng.gumbel(0.0, node.noise.scale, size=(n, node.dim))
     wanted, biases = np.asarray(column.fit_shares), np.zeros(node.dim)
@@ -32,8 +38,13 @@ def fit_score(table, name: str, latents: Mapping[str, np.ndarray], rng: np.rando
         if np.abs(step).max() < CALIBRATION_TOLERANCE * node.noise.scale:
             break
         biases += step
-    bias = tuple(float(b) for b in biases - biases.mean())
-    return table.like({**table.table, name: replace(column, node=replace(node, bias=bias))})
+    return tuple(float(b) for b in biases - biases.mean())
+
+
+def biased(table, name: str, bias: tuple[float, ...]):
+    """The table with its scored column `name` under `bias`."""
+    column = table.columns[name]
+    return table.like({**table.table, name: replace(column, node=replace(column.node, bias=bias))})
 
 
 def cut(table, latents: Mapping[str, np.ndarray]):
@@ -115,6 +126,80 @@ def calibration_rows(schema, given: Mapping[str, int] | None) -> dict[str, int]:
     return rows
 
 
+def kept_rows(schema, seed: int) -> dict[str, np.ndarray]:
+    """The rows each table of given rows keeps in the calibration draw, by position, for the tables
+    that change: a random `CALIBRATION_ROWS` of a larger one, and of a table whose given keys point
+    into a table that changed, the rows pointing at kept parent rows or nowhere. Parents go first."""
+    real = {t: scm for t, scm in schema.tables.items() if scm.size is not None}
+    parents = {
+        t: {
+            fk.parent
+            for fk in scm.fkeys.values()
+            if fk.values is not None and fk.parent in real and fk.parent != t
+        }
+        for t, scm in real.items()
+    }
+    try:
+        order = tuple(TopologicalSorter(parents).static_order())
+    except CycleError:
+        order = tuple(real)  # keys in a cycle: a key into a later table is remapped, not filtered
+    keep: dict[str, np.ndarray] = {}
+    for table in order:
+        scm, rows = real[table], np.arange(real[table].size)
+        reads_changed = False
+        for fk in scm.fkeys.values():
+            if fk.values is None or fk.parent not in keep or fk.parent == table:
+                continue
+            reads_changed = True
+            positions = parent_positions(schema, fk)
+            rows = rows[
+                fk.values.isna().to_numpy()[rows] | np.isin(positions[rows], keep[fk.parent])
+            ]
+        if len(rows) > CALIBRATION_ROWS:
+            chosen = lane(seed, "fit rows", schema.identity[table]).choice(
+                rows, CALIBRATION_ROWS, replace=False
+            )
+            rows = np.sort(chosen)
+        if reads_changed or len(rows) < scm.size:
+            keep[table] = rows
+    for table, scm in real.items():  # given keys into a table that changed are remapped
+        if table not in keep and any(
+            fk.values is not None and fk.parent in keep for fk in scm.fkeys.values()
+        ):
+            keep[table] = np.arange(scm.size)
+    return keep
+
+
+def parent_positions(schema, fk: ForeignKey) -> np.ndarray:
+    """The parent row each given key value names, -1 where blank."""
+    keys = schema.parent_keys(fk)
+    index = pd.RangeIndex(schema.tables[fk.parent].size) if keys is None else pd.Index(keys)
+    return index.get_indexer(fk.values)
+
+
+def sliced(schema, table: str, keep: Mapping[str, np.ndarray]):
+    """`table` with only its kept rows, its given keys pointing at its parents' kept rows: a key
+    whose parent row was left out is blank."""
+    scm, rows = schema.tables[table], keep[table]
+    entries: dict[str, object] = {}
+    for name, entry in scm.table.items():
+        if isinstance(entry, ForeignKey) and entry.values is not None:
+            values = entry.values.iloc[rows].reset_index(drop=True)
+            if entry.parent in keep:
+                old = parent_positions(schema, entry)[rows]
+                new = pd.Series(np.arange(len(keep[entry.parent])), index=keep[entry.parent])
+                kept = pd.Series(old).map(new)
+                if schema.parent_keys(entry) is None:
+                    values = kept.astype("Int64")
+                else:
+                    values = values.where(kept.notna().to_numpy())
+            entry = replace(entry, values=values)
+        elif isinstance(entry, Column | PrimaryKey) and entry.values is not None:
+            entry = replace(entry, values=entry.values.iloc[rows].reset_index(drop=True))
+        entries[name] = entry
+    return scm.like(entries)
+
+
 def fitted(schema, seed: int, given: Mapping[str, int] | None = None):
     """The schema with its scores and level cuts fit to one draw, each scored column after those
     it reads; a schema with nothing to fit is itself. The draw takes `calibration_rows`. Every fit
@@ -123,11 +208,16 @@ def fitted(schema, seed: int, given: Mapping[str, int] | None = None):
     if not any(fits(scm) for scm in schema.tables.values()):
         return schema
     tables, rebuilt = dict(schema.tables), type(schema)
-    rows = calibration_rows(schema, given)
+    keep = kept_rows(schema, seed)
+    # the calibration draw's tables: the same, those of many given rows cut once to their kept rows
+    small = {t: sliced(schema, t, keep) if t in keep else scm for t, scm in tables.items()}
+    rows = calibration_rows(
+        rebuilt(small), {t: n for t, n in (given or {}).items() if t not in keep}
+    )
 
     def draw(stream):
         try:
-            return rebuilt(tables).sample_with_latents(rows, seed=stream)[1]
+            return rebuilt(small).sample_with_latents(rows, seed=stream)[1]
         except ValueError as error:
             raise ValueError(
                 f"realizing fits to one draw of {rows} rows, which failed: {error}. If those"
@@ -140,7 +230,9 @@ def fitted(schema, seed: int, given: Mapping[str, int] | None = None):
                 identity = schema.identity[table]
                 latents = draw(lane(seed, "fit", identity, name))
                 noise = lane(seed, "fit noise", identity, name)
-                tables[table] = fit_score(tables[table], name, latents[table], noise)
+                bias = fit_bias(small[table].columns[name], latents[table], noise)
+                tables[table] = biased(tables[table], name, bias)
+                small[table] = biased(small[table], name, bias) if table in keep else tables[table]
     latents = draw(lane(seed, "fit cuts"))
     return rebuilt(
         {t: scm if scm.size is not None else cut(scm, latents[t]) for t, scm in tables.items()}

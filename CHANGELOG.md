@@ -7,6 +7,10 @@ here.
 
 ## v2, unreleased (the `v2` branch)
 
+- **Moves draws** of realized schemas with a real table of more than 4096 rows: realizing
+  calibrates on a random 4096 of them, its real children keeping the rows that point at kept
+  parents, instead of drawing the whole database. Realizing 1M real customers falls from about 7 s
+  to 0.04 s. Other schemas draw as before; the fingerprints do not move.
 - **#150** The two steps are named in docs, docstrings and errors: `realize` makes a generator, its
   seed the mechanism seed; `sample` draws a dataset of it, its seed the data seed. Three domain
   recipes in `examples/generation`.

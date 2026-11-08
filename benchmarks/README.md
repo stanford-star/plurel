@@ -77,8 +77,10 @@ reads those numbers; it is interpretation, labeled as such, and holds for this m
   reading the saved database back through relbench. A prior database adds 0.4 to 0.6 s to realize
   at any size, since calibration always draws 4096 rows per table.
 - **Bottlenecks to look at, each a separate change:** calibrating over every retained row (a probe
-  with 1M real customers spent 7 s realizing); the per-cell cost of the prior's edges; and the
-  fixed 4096-row calibration for small draws.
+  with 1M real customers spent 7 s realizing), since fixed by calibrating on a random 4096 of a real
+  table's rows: retail's realize at the 1M size fell from 1.7 s to 0.05 s and its total from 3.9 s
+  to 1.9 s; the per-cell cost of the prior's edges; and the fixed 4096-row calibration for small
+  draws.
 
 Saving is cheap throughout: under 1 s for every run, and 395 MiB on disk for the 51M-cell wide
 table.

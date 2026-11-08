@@ -359,3 +359,98 @@ def test_a_unique_key_over_a_counted_parent_calibrates_at_the_clipped_mean():
     rows = calibration_rows(schema, None)
     assert 1300 < rows["shops"] < 1450 and rows["owners"] == rows["shops"]
     assert len(schema.realize(0).sample({"owners": 1000}, seed=0)["owners"]) == 1000
+
+
+def test_calibration_keeps_a_bounded_sample_of_large_real_tables():
+    from plurel.fit import CALIBRATION_ROWS, kept_rows
+
+    n = 3 * CALIBRATION_ROWS
+    customers = Table.from_frame(
+        pd.DataFrame({"id": [f"C{i}" for i in range(n)], "age": np.arange(n) % 90.0}),
+        primary_key="id",
+        extra={
+            "tier": Categorical({"a": 0.2, "b": 0.8}, causes={"age": 1.0}),
+            "pick": Categorical({"x": 0.3, "y": 0.7}, scores={"x": {"age": 1.0}}),
+        },
+    )
+    visits = Table.from_frame(
+        pd.DataFrame({"customer_id": [f"C{i % n}" for i in range(2 * n)], "spent": np.ones(2 * n)}),
+        foreign_keys={"customer_id": "customers"},
+    )
+    positional = Table.from_frame(
+        pd.DataFrame({"customer": np.arange(n)[::-1]}), foreign_keys={"customer": "plain"}
+    )
+    plain = Table.from_frame(pd.DataFrame({"size": np.arange(n, dtype=float)}))
+    orders = Table(
+        {
+            "customer_id": ForeignKey("customers", counts=Counts(2.0)),
+            "kind": Categorical(Shares(("p", "q"))),
+        }
+    )
+    schema = Schema(
+        {
+            "customers": customers,
+            "visits": visits,
+            "plain": plain,
+            "positional": positional,
+            "orders": orders,
+        }
+    )
+    keep = kept_rows(schema, 0)
+    assert all(len(rows) <= CALIBRATION_ROWS for rows in keep.values())
+    assert set(keep) == {"customers", "visits", "plain", "positional"}
+    assert np.array_equal(keep["customers"], kept_rows(schema, 0)["customers"])
+    realized = schema.realize(0)
+    frames = realized.sample(seed=1)
+    assert len(frames["customers"]) == n and len(frames["visits"]) == 2 * n
+    assert abs((frames["customers"].tier == "a").mean() - 0.2) < 0.03
+    assert abs((frames["customers"].pick == "x").mean() - 0.3) < 0.03
+    assert abs(len(frames["orders"]) / (2 * n) - 1) < 0.05
+    small = Schema({"customers": Table.from_frame(pd.DataFrame({"age": np.arange(50.0)}))})
+    assert kept_rows(small, 0) == {}
+
+
+@pytest.mark.parametrize("positional", [False, True])
+def test_calibration_slices_real_tables_that_point_at_each_other_or_themselves(positional):
+    from plurel.fit import CALIBRATION_ROWS, kept_rows, sliced
+
+    n, depts = 2 * CALIBRATION_ROWS, 3 * CALIBRATION_ROWS
+    ids = np.arange(n) if positional else np.array([f"E{i}" for i in range(n)])
+    dept_ids = np.arange(depts) if positional else np.array([f"D{i}" for i in range(depts)])
+    employees = Table.from_frame(
+        pd.DataFrame(
+            {
+                **({} if positional else {"id": ids}),
+                "dept": dept_ids[np.arange(n) % depts],
+                "boss": pd.Series(ids[np.arange(n) // 2]).where(np.arange(n) > 0),
+                "age": np.arange(n) % 60.0,
+            }
+        ),
+        primary_key=None if positional else "id",
+        foreign_keys={"dept": "departments", "boss": "employees"},
+        extra={"level": Categorical({"a": 0.3, "b": 0.7}, scores={"a": {"age": 1.0}})},
+    )
+    departments = Table.from_frame(
+        pd.DataFrame(
+            {**({} if positional else {"id": dept_ids}), "head": ids[np.arange(depts) % n]}
+        ),
+        primary_key=None if positional else "id",
+        foreign_keys={"head": "employees"},
+    )
+    schema = Schema({"employees": employees, "departments": departments})
+    keep = kept_rows(schema, 0)
+    assert set(keep) == {"employees", "departments"}
+    calibration = Schema({t: sliced(schema, t, keep) for t in schema.tables})
+    frames = calibration.sample(seed=0)
+    for table, column, parent in (
+        ("employees", "boss", "employees"),
+        ("employees", "dept", "departments"),
+        ("departments", "head", "employees"),
+    ):
+        keys = frames[table][column].dropna()
+        parent_ids = frames[parent].index if positional else frames[parent]["id"]
+        assert keys.isin(parent_ids).all() and len(keys) > 0
+    realized = schema.realize(0)
+    sampled = realized.sample(seed=1)
+    assert len(sampled["employees"]) == n
+    assert abs((sampled["employees"].level == "a").mean() - 0.3) < 0.03
