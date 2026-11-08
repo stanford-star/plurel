@@ -124,16 +124,25 @@ class Column:
     def observe(
         self, name: str, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
     ) -> pd.Series:
+        return self.framed(self.record(name, latents, rng, n))
+
+    def framed(self, recorded: pd.Series) -> pd.Series:
+        """Recorded values as a frame holds them: a drawn timestamp's epoch seconds as times."""
+        if self.kind == "timestamp" and self.values is None:
+            return pd.to_datetime(recorded, unit="s").dt.as_unit("ns")
+        return recorded
+
+    def record(
+        self, name: str, latents: dict[str, np.ndarray], rng: np.random.Generator, n: int
+    ) -> pd.Series:
+        """The column's values and blanks, a drawn timestamp in epoch seconds."""
         if self.values is not None:
             return self.values
         latent = latents[name]
         if self.kind == "categorical":
             observed = pd.Categorical.from_codes(self.codes(latent), list(self.categories))
         else:
-            flat = latent[:, 0]
-            observed = self.shaped(flat, rng)
-            if self.kind == "timestamp":
-                observed = pd.to_datetime(observed, unit="s").as_unit("ns")
+            observed = self.shaped(latent[:, 0], rng)
         series = pd.Series(observed)
         if isinstance(self.missing, str):
             return series.mask(latents[self.missing][:, 1] == 1.0)

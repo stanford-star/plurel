@@ -78,7 +78,7 @@ frame.to_csv("customers.csv", index=False)
 | `PrimaryKey()` | Row positions, or the given `values` |
 | `Numeric(marginal, causes, noise, missing, clip, round, zeros, missing_by, how)` | Numbers following `marginal`, any distribution such as `Normal(50, 10)`, `Uniform(18, 80)`, `LogNormal(3, 0.5)`, `Poisson(4)` or `Exponential()` |
 | `Categorical(levels, causes, noise, missing, ordered, scores, missing_by, how)` | Levels, as a sequence of equally common levels or a dict of level to share |
-| `Timestamp(start, end, causes, noise, missing)` | Times in the span |
+| `Timestamp(start, end, causes, noise, missing)` | Times in the span; without one, the causes' sum in epoch seconds |
 | `Hidden(causes, noise)` | A cause that other columns read but no column records |
 | `Derived(function)` | A number computed from recorded numbers, named by the function's parameters |
 | `Real(values)` | Given values, kept as they are |
@@ -93,6 +93,7 @@ frame.to_csv("customers.csv", index=False)
 | `"segment": 0.8` | A weight on a categorical cause, which needs `ordered=True` on it: its levels are then a scale |
 | `("age", "tenure"): 0.8` | A weight on the product of two causes |
 | `("segment", "age"): {"gold": 1.5}` | A slope of the second cause per level of the first |
+| `Recorded("price"): 2.0` | A weight on what `price` records, in its units, instead of on its latent |
 
 A column is its causes' effects added up plus `noise`, a standard deviation of 0.5 by default, and
 a root is a unit normal. So `y = 2 * x + noise` is what `causes={"x": 2.0}` says: a larger weight or
@@ -100,8 +101,9 @@ a smaller `noise` follows the causes more closely. `how` combines the effects an
 `min`, or `product`, their compounding. The rows then take the `marginal`'s values in that order,
 which means a column holds its marginal whatever its causes. A categorical column cuts the same
 order at its shares, so a positive weight pushes rows toward its later levels. Causes are read as
-those sums, not in the units of their marginals, so a `Numeric` without a marginal is the sum itself,
-as floats; [Latent and recorded values](#latent-and-recorded-values) works through an example.
+those sums, not in the units of their marginals, unless read `Recorded`; a `Numeric` without a
+marginal is the sum itself, as floats. [Latent and recorded values](#latent-and-recorded-values)
+works through both.
 
 A weight's size is how closely a column follows a cause. With one unit-normal cause and the default
 noise, the rank correlation is:
@@ -126,7 +128,7 @@ Sampling is deterministic in the seed.
 
 Every column has a latent value, the sum of its causes' effects plus noise, and a recorded value,
 what its frame holds. A marginal maps the one to the other by rank: the row with the highest latent
-takes the highest of the marginal's values. Causes read latents, never recorded values:
+takes the highest of the marginal's values. A cause named bare reads the latent:
 
 ```python
 import numpy as np
@@ -154,9 +156,42 @@ held, _ = table.sample_with_latents(1000, seed=0, held={"x": latents["x"] + 1.0}
 assert np.allclose(held.y - frame.y, 2.0) and held.x.equals(frame.x) and held.z.equals(frame.z)
 ```
 
-A key's `fill` and every `Summary` are in latent units too: `fill=0.0` reads as the latent mean,
-and `Summary("staff", "team_id", "pay", "sum")` sums the latent `pay`, not the recorded pay. Only a
-count is in rows.
+A key's `fill` and a `Summary` of a bare name are in latent units too: `fill=0.0` reads as the
+latent mean, and `Summary("staff", "team_id", "pay", "sum")` sums the latent `pay`. Only a count is
+in rows.
+
+`Recorded` reads what a column records instead, in its units: a number, a `Derived` value, or a
+time in epoch seconds. It sees the record after everything the column does to it: its marginal,
+`zeros`, `round`, `clip`, ranges by level and blanks. A blank, or a key pointing at nothing, reads
+the `fill` given to `Recorded`, and raises without one. Weights and `noise` are then in those units,
+so this `y` is twice the recorded `x` plus noise of five:
+
+```python
+from plurel import Exponential, Recorded, Timestamp
+
+table = Table({
+    "x": Numeric(Uniform(100, 200), round=1, missing=0.1),
+    "y": Numeric(causes={Recorded("x", fill=0.0): 2.0}, noise=5.0),  # about 200 to 400, about 0 where x is blank
+})
+```
+
+A `Summary` of a `Recorded` column aggregates the recorded values of the rows pointing back,
+skipping blanks as pandas does, so `Summary("staff", "team_id", Recorded("pay"), "sum")` with
+`noise=0` is the payroll `groupby("team_id").pay.sum()` gives; a count counts the recorded rows. A
+`Timestamp` without a span is its causes' sum plus `noise` in epoch seconds, so it must read a
+time `Recorded` and give its `noise`; with weight 1 on that time and a positive noise it always
+comes after it. Times must stay within pandas' range, 1677 to 2262, and a time read `Recorded`
+must have no time zone:
+
+```python
+orders = Table({
+    "placed": Timestamp("2020-01-01", "2024-01-01"),
+    "shipped": Timestamp(causes={Recorded("placed"): 1.0}, noise=Exponential(2 * 86400)),  # two days later on average
+}, time_column="placed")
+```
+
+A column with `Recorded` causes has its latent in their units too, so a column naming it bare
+reads that unscaled latent. Records and latents form one graph, so a cycle through either raises.
 
 When latents tie, as with `noise=0` over a discrete or repeated cause, the tied rows take the same
 level, so a categorical column can miss its shares rather than split equal rows at random. Give it
@@ -193,7 +228,7 @@ the key takes `fill`, which such a key must then set: `ForeignKey("customers", n
 `Summary` reads the rows pointing back. It takes the table and its key, and counts them unless told
 to aggregate a column of theirs, as its sum (`Summary("staff", "boss_id", "pay", "mean",
 fill=0.0)`; also `sum`, `max` and `min`; all but `sum` need a `fill` for rows that nothing points
-at). With `noise=0` and no marginal a count is exact, and a `Hidden` count lets rows with more
+at, or, for a `Recorded` column, whose rows pointing back are all blank). With `noise=0` and no marginal a count is exact, and a `Hidden` count lets rows with more
 reports rank higher:
 
 ```python

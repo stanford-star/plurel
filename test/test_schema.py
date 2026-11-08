@@ -25,6 +25,7 @@ from plurel.graph import (
     NearestEdge,
     Node,
     ReadEdge,
+    Recorded,
     Summary,
     standardize,
 )
@@ -393,22 +394,24 @@ def test_aggregates_handle_empty_groups():
     rows, latents = {"a": 3, "b": 3}, {"a": {"x": values[:, :1]}, "b": {"x": values}}
     links = {("b", "a_id"): index}
     with pytest.raises(ValueError, match="fill"):
-        schema.resolve("a", Summary("b", "a_id", "x", "mean"), rows, latents, links)
+        schema.resolve("a", Summary("b", "a_id", "x", "mean"), rows, latents, {}, links)
     np.testing.assert_array_equal(
-        schema.resolve("a", Summary("b", "a_id", "x", "mean", fill=-1.0), rows, latents, links)[1],
+        schema.resolve("a", Summary("b", "a_id", "x", "mean", fill=-1.0), rows, latents, {}, links)[
+            1
+        ],
         [-1.0, -1.0],
     )
     np.testing.assert_array_equal(
-        schema.resolve("a", Summary("b", "a_id", "x", "sum"), rows, latents, links),
+        schema.resolve("a", Summary("b", "a_id", "x", "sum"), rows, latents, {}, links),
         expected["sum"],
     )
     with pytest.raises(ValueError, match="fill"):
         schema.resolve(
-            "b", Foreign("a_id", "x"), rows, latents, {("b", "a_id"): np.array([0, -1, 2])}
+            "b", Foreign("a_id", "x"), rows, latents, {}, {("b", "a_id"): np.array([0, -1, 2])}
         )
     np.testing.assert_array_equal(
         schema.resolve(
-            "b", Foreign("a_id", "x"), rows, latents, {("b", "a_id"): np.array([2, 0, 1])}
+            "b", Foreign("a_id", "x"), rows, latents, {}, {("b", "a_id"): np.array([2, 0, 1])}
         ),
         [[5.0], [1.0], [3.0]],
     )
@@ -458,10 +461,14 @@ def test_schema_validation():
 
 def test_order_puts_every_node_after_its_parents(schema):
     position = {node: k for k, node in enumerate(schema.order)}
-    assert set(position) == {(t, n) for t, scm in schema.tables.items() for n in scm.nodes}
+    assert set(position) == {
+        (t, v)
+        for t, scm in schema.tables.items()
+        for v in (*scm.nodes, *map(Recorded, (*scm.columns, *scm.derived)))
+    }
     for table, scm in schema.tables.items():
-        for name, node in scm.nodes.items():
-            for parent in node.parents:
+        for name, reads in scm.graph.items():
+            for parent in reads:
                 assert position[table, parent] < position[table, name]
     for (table, name), edges in schema.crossings.items():
         for edge in edges:

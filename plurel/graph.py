@@ -283,8 +283,8 @@ class QuadraticEdge(Edge):
 class Node:
     """The one node type: a reduction over per-parent edges, plus bias and noise.
 
-    An edge whose tail is a `Foreign` or a `Summary` reads across a key; such terms add to the
-    signal whatever the reduction. Without edges the node is a root whose value is its noise,
+    An edge whose tail is a `Foreign`, a `Summary` or a `Recorded` is resolved by the schema; such
+    terms add to the signal whatever the reduction. Without edges the node is a root whose value is its noise,
     `dim` wide. With `onehot`
     the node emits the one-hot argmax of its scores; with Gumbel noise that samples the
     class from the softmax of the scores. With `standardize` the signal, the reduction plus
@@ -396,22 +396,42 @@ AGGREGATES: dict[str, Callable[..., np.ndarray]] = {
 
 
 @dataclass(frozen=True)
+class Recorded:
+    """Tail of an edge reading what a column's frame holds, in its units, instead of its latent: a
+    number, a derived value, or a timestamp in epoch seconds. `fill` is read where there is none, a
+    blank or a key pointing at nothing; without one such a row raises."""
+
+    column: str
+    fill: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.fill is not None and not np.isfinite(self.fill):
+            raise ValueError("fill must be finite")
+
+    @property
+    def vertex(self) -> "Recorded":
+        """The recorded column, whatever is read where it has none."""
+        return Recorded(self.column)
+
+
+@dataclass(frozen=True)
 class Foreign:
-    """Tail of an edge crossing a key: `node` of the row that `key` points at."""
+    """Tail of an edge crossing a key: `node` of the row that `key` points at, or what it records."""
 
     key: str
-    node: str
+    node: str | Recorded
 
 
 @dataclass(frozen=True)
 class Summary:
-    """Tail of an edge aggregating, per row, the rows of `table` that point at it through
-    `key`: how many, or the `how` of their `node`'s latents, not its recorded values. `fill` is
-    read where no row does, needed for mean, max and min."""
+    """Tail of an edge aggregating, per row, the rows of `table` that point at it through `key`:
+    how many, or the `how` of their `node`'s latents. A `Recorded` node aggregates what the rows
+    record, skipping blanks as pandas does, so a count is of the recorded rows. `fill` is read where
+    nothing is aggregated, needed for mean, max and min."""
 
     table: str
     key: str
-    node: str | None = None
+    node: str | Recorded | None = None
     how: str = "count"
     fill: float | None = None
 
@@ -422,3 +442,5 @@ class Summary:
             raise ValueError(f"a {self.how} needs a node to read")
         if self.fill is not None and (self.how in COMPLETE or not np.isfinite(self.fill)):
             raise ValueError("fill is a finite value for mean, max or min only")
+        if isinstance(self.node, Recorded) and self.node.fill is not None:
+            raise ValueError("a summary skips blanks: give the summary its fill, not the column")
