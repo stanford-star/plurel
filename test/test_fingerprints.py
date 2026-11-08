@@ -1,4 +1,7 @@
 import json
+import os
+
+import pytest
 
 import fingerprints
 
@@ -6,17 +9,23 @@ import fingerprints
 def test_seeded_draws_keep_their_stored_bytes_on_this_platform():
     drawn = fingerprints.draw()
     stored = fingerprints.stored()
-    assert fingerprints.PLATFORM in stored, (
-        f"no fingerprints stored for {fingerprints.PLATFORM}; to add them, put this under that key"
-        f" in test/fingerprints.json: {json.dumps(drawn, sort_keys=True)}"
-    )
+    digests = json.dumps(drawn, sort_keys=True)
+    if fingerprints.PLATFORM not in stored:
+        reason = (
+            f"no fingerprints stored for {fingerprints.PLATFORM}; to add them, put this under that"
+            f" key in test/fingerprints.json: {digests}"
+        )
+        if os.environ.get("CI"):
+            pytest.fail(reason)  # CI's platforms are the ones the contract promises
+        pytest.skip(reason)
     mine = stored[fingerprints.PLATFORM]
     assert set(drawn) == set(mine), "workloads and stored fingerprints differ: run --update"
     moved = sorted(name for name in drawn if drawn[name] != mine[name])
     assert not moved, (
         f"draws moved on {fingerprints.PLATFORM} for {moved}. If the change means to move them,"
-        " run `pixi run fingerprints` on each tested platform and say so in the PR;"
-        " COMPATIBILITY.md says what that breaks"
+        " run `pixi run fingerprints` on each tested platform, or put this under"
+        f" {fingerprints.PLATFORM!r} in test/fingerprints.json, and say so in the PR; COMPATIBILITY.md"
+        f" says what that breaks. This platform's digests: {digests}"
     )
 
 
