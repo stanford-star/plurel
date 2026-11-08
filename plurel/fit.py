@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 
 import numpy as np
+from scipy.stats import poisson
 
 from plurel.columns import Column
 from plurel.graph import LookupEdge, Node, level_edges
@@ -77,6 +78,14 @@ def fits(table) -> bool:
     return False
 
 
+def clipped_mean(mean: float, least: int, most: int | None) -> float:
+    """The mean of a Poisson count around `mean` clipped to `least` and `most`."""
+    top = most if most is not None else int(mean + 12 * np.sqrt(mean) + 12)
+    k = np.arange(top + 1)
+    pmf = poisson.pmf(k, mean)
+    return float((pmf * np.clip(k, least, most)).sum() + (1.0 - pmf.sum()) * top)
+
+
 def calibration_rows(schema, given: Mapping[str, int] | None) -> dict[str, int]:
     """Row counts of the calibration draw: those given, else each table's given rows, else
     `CALIBRATION_ROWS`; a table whose rows a key counts takes what the counts give, and one with a
@@ -98,10 +107,8 @@ def calibration_rows(schema, given: Mapping[str, int] | None) -> dict[str, int]:
         if fk.parent not in rows and fk.parent in schema.sized:
             counts = schema.keys[fk.parent, schema.sized[fk.parent]]
             if counts.parent in rows:
-                total = round(counts.counts.mean * rows[counts.parent])
-                total = max(total, counts.counts.least * rows[counts.parent])
-                if counts.counts.most is not None:
-                    total = min(total, counts.counts.most * rows[counts.parent])
+                spec = counts.counts
+                total = round(clipped_mean(spec.mean, spec.least, spec.most) * rows[counts.parent])
                 rows[fk.parent] = max(1, min(total, CALIBRATION_ROWS))
         if fk.parent in rows:
             rows[table] = min(rows[table], rows[fk.parent])

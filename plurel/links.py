@@ -203,9 +203,13 @@ def counted(
             raise ValueError(
                 f"{total} rows cannot give {len(weights)} parents at least {least} each"
             )
-        if most is not None and total > most * int((share > 0).sum()):
+        weighed = int((share > 0).sum())  # a parent of no weight takes `least` rows and no more
+        if most is not None and total > least * len(weights) + (most - least) * weighed:
             raise ValueError(
-                f"{total} rows cannot go to {int((share > 0).sum())} parents at most {most} each"
+                f"{total} rows cannot go to {len(weights)} parents at most {most} each, of which"
+                f" {len(weights) - weighed} have no weight and take only {least}"
+                if weighed < len(weights)
+                else f"{total} rows cannot go to {weighed} parents at most {most} each"
             )
         counts = least + rng.multinomial(total - least * len(weights), share)
         while most is not None and (excess := int(np.maximum(counts - most, 0).sum())):

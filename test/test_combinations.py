@@ -20,6 +20,8 @@ from plurel import (
     Table,
     Uniform,
 )
+from plurel.fit import calibration_rows
+from plurel.links import counted
 
 
 def people(real):
@@ -308,3 +310,52 @@ def test_counts_bounds_are_checked():
     assert len(empty["lines"]) == 0
     with pytest.raises(ValueError, match="no parent rows"):
         orders_with_lines(least=1).sample({"orders": 0, "lines": 5}, seed=0)
+
+
+def test_least_and_most_feed_a_unique_key_and_weightless_parents_take_least():
+    enrollments = Schema(
+        {
+            "students": Table({"id": PrimaryKey()}),
+            "courses": Table({"id": PrimaryKey()}),
+            "enrollments": Table(
+                {
+                    "student_id": ForeignKey("students", counts=Counts(2.0, least=1, most=5)),
+                    "course_id": ForeignKey("courses", unique="student_id"),
+                }
+            ),
+        }
+    )
+    for seed in range(4):
+        frames = enrollments.sample({"students": 300, "courses": 5}, seed=seed)
+        taken = frames["enrollments"]
+        per = taken.student_id.value_counts().reindex(range(300), fill_value=0)
+        assert per.between(1, 5).all() and not taken.duplicated().any()
+    rng = np.random.default_rng(0)
+    owners = counted(np.array([1.0, 0.0, 0.0, 0.0]), 2.0, 6, rng, most=3, least=1)
+    assert np.bincount(owners, minlength=4).tolist() == [3, 1, 1, 1]
+    with pytest.raises(ValueError, match="3 have no weight and take only 1"):
+        counted(np.array([1.0, 0.0, 0.0, 0.0]), 2.0, 7, rng, most=3, least=1)
+
+
+def test_a_unique_key_over_a_counted_parent_calibrates_at_the_clipped_mean():
+    regions = Table.from_frame(pd.DataFrame({"id": range(1000)}), primary_key="id")
+    schema = Schema(
+        {
+            "regions": regions,
+            "shops": Table(
+                {
+                    "id": PrimaryKey(),
+                    "region_id": ForeignKey("regions", counts=Counts(1.0, least=1)),
+                }
+            ),
+            "owners": Table(
+                {
+                    "shop_id": ForeignKey("shops", unique=True),
+                    "tier": Categorical(Shares(("a", "b"))),
+                }
+            ),
+        }
+    )
+    rows = calibration_rows(schema, None)
+    assert 1300 < rows["shops"] < 1450 and rows["owners"] == rows["shops"]
+    assert len(schema.realize(0).sample({"owners": 1000}, seed=0)["owners"]) == 1000
