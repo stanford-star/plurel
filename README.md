@@ -122,7 +122,13 @@ of a `Scaled` marginal. `missing=0.1, missing_by=("age", "high")` puts the blank
 a number. Blanks are only in the record: columns that read a blanked column still see its value.
 `Timestamp`'s `end` is exclusive.
 
-Sampling is deterministic in the seed.
+Sampling is deterministic: the same seed and row counts give the same frames, byte for byte. A
+draw is one dataset, not rows streamed from a population. Each draw holds its marginals exactly, by
+rank, and a categorical that depends on a key cuts its shares in each draw, so a row's values depend
+on the rows drawn with it: `sample(200, seed=0).head(100)` is not `sample(100, seed=0)`. Links,
+counts and summaries depend on the sizes of the tables they join too. To build a larger dataset from
+parts, draw each part as its own database under its own seed, and add the row counts of the parts
+before it to each part's key columns, primary and foreign, before joining them.
 
 ### Latent and recorded values
 
