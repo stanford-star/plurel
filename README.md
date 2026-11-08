@@ -225,6 +225,28 @@ for a few very popular parents, or `TreeLink(roots=0.05)` on a key to the same t
 have no parent. With `nullable=0.02` a share of the rows point at nothing, and a number read across
 the key takes `fill`, which such a key must then set: `ForeignKey("customers", nullable=0.02, fill=0.0)`.
 
+A key can instead choose parents by their columns. `match` maps a column of the child to one of the
+parent that must agree: a categorical holding the same level, or a key pointing at the same row.
+`prefer` weighs the eligible parents by the exponential of causes read from the parent's columns.
+A row that no parent matches points at nothing if the key is `nullable`, and raises otherwise:
+
+```python
+from plurel import Counts
+
+clinics = Table({"id": PrimaryKey(), "region": Categorical(("north", "south")), "beds": Numeric(Uniform(10, 100))})
+patients = Table({
+    "region": Categorical(("north", "south")),
+    "clinic_id": ForeignKey("clinics", match={"region": "region"}, prefer={Recorded("beds"): 0.05}),
+})
+```
+
+`counts` sets how many rows point at each parent instead, and so the child table's size:
+`ForeignKey("customers", counts=Counts(5.0, causes={"tenure": 0.8}))` gives each customer about 5
+orders, more with longer tenure, and some none. Each customer then draws its own count, so
+`sample` may leave the orders table out of its rows. A row count given for it is instead split
+among the customers by the same shares. A table takes at most one such key, and a key cannot match
+on, or count from, a column that reads across it.
+
 `Summary` reads the rows pointing back. It takes the table and its key, and counts them unless told
 to aggregate a column of theirs, as its sum (`Summary("staff", "boss_id", "pay", "mean",
 fill=0.0)`; also `sum`, `max` and `min`; all but `sum` need a `fill` for rows that nothing points

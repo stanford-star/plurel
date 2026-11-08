@@ -1,6 +1,6 @@
 from collections import Counter
-from collections.abc import Hashable, Mapping
-from dataclasses import replace
+from collections.abc import Collection, Hashable, Mapping
+from dataclasses import dataclass, replace
 from graphlib import CycleError, TopologicalSorter
 from operator import index as as_int
 
@@ -15,6 +15,7 @@ from plurel.declare import (
     ForeignKey,
     PrimaryKey,
     Real,
+    key_node,
 )
 from plurel.fit import fitted
 from plurel.graph import (
@@ -28,11 +29,34 @@ from plurel.graph import (
     Recorded,
     Summary,
 )
-from plurel.links import TreeLink
+from plurel.links import TreeLink, counted, matched
 from plurel.random import Seed, generator, lane
 
 Links = dict[tuple[str, str], np.ndarray]
+Vertex = tuple[str, Hashable]
 SPAN = (pd.Timestamp.min.value // 10**9 + 1, pd.Timestamp.max.value // 10**9)  # epoch seconds
+
+
+@dataclass(frozen=True)
+class Draw:
+    """What a draw has made so far: latents, records and records as numbers by table, and links
+    by table and key."""
+
+    latents: dict[str, dict[str, np.ndarray]]
+    records: dict[str, dict[str, pd.Series]]
+    recorded: dict[str, dict[str, np.ndarray]]
+    links: Links
+
+    @classmethod
+    def empty(cls, tables: Collection[str]) -> "Draw":
+        return cls(*({table: {} for table in tables} for _ in range(3)), {})
+
+
+@dataclass(frozen=True)
+class Linked:
+    """The vertex of a key's links: the parent row each row of its table points at."""
+
+    column: str
 
 
 def checked(name: str, node: Node, latent: np.ndarray, n: int) -> np.ndarray:
@@ -116,7 +140,9 @@ class Table:
         if unknown := set(given) - set(self.declared):
             raise ValueError(f"docs name no entries of the table: {sorted(unknown)}")
         self.docs = {name: given[name] for name in self.declared if name in given}
-        self.family = any(isinstance(e, Declaration) and e.family for e in self.declared.values())
+        self.family = any(
+            isinstance(e, Declaration | ForeignKey) and e.family for e in self.declared.values()
+        )
         table = self.draws(0)
         keys = {name for name, entry in table.items() if isinstance(entry, ForeignKey)}
         self.table: dict[str, Node | Column | ForeignKey | PrimaryKey | Derived] = {}
@@ -173,6 +199,19 @@ class Table:
         if len(sizes) > 1:
             raise ValueError(f"given values disagree on the row count: {sorted(sizes)}")
         self.size = sizes.pop() if sizes else None
+        counted = [name for name, fk in self.fkeys.items() if fk.counts is not None]
+        if len(counted) > 1:
+            raise ValueError(f"keys {counted} would each set the table's size: give one counts")
+        if counted and self.size is not None:
+            raise ValueError(f"{counted[0]!r} counts rows of a table whose rows are given")
+        self.counted = counted[0] if counted else None
+        for name, fk in self.fkeys.items():
+            for column in fk.match:
+                if column not in self.fkeys and kinds.get(column) != "categorical":
+                    raise ValueError(
+                        f"{name!r} matches on {column!r}: a key matches on a categorical or a key"
+                        " of its table"
+                    )
         self.readable = {
             *self.derived,
             *(c for c, kind in kinds.items() if kind in ("numeric", "timestamp")),
@@ -285,7 +324,7 @@ class Table:
         table = table or self.name or "table"
         return {
             name: entry.draw(lane(root, "realize", table, name))
-            if isinstance(entry, Declaration)
+            if isinstance(entry, Declaration) or isinstance(entry, ForeignKey) and entry.family
             else entry
             for name, entry in self.declared.items()
         }
@@ -440,16 +479,90 @@ class Schema:
             for name, node in scm.nodes.items()
             if node.across
         }
-        parents: dict[tuple[str, Hashable], tuple[tuple[str, Hashable], ...]] = {}
+        self.sized = {t: scm.counted for t, scm in self.tables.items() if scm.counted}
+        self.choosers: dict[tuple[str, str], tuple[Node, tuple[Edge, ...]]] = {}
+        for (table, column), fk in keys.items():
+            if fk.counts is not None and fk.parent == table:
+                raise ValueError(f"{column!r} would count rows of its own table")
+            self.check_match(table, column, fk)
+            causes, noise = (fk.counts.causes, fk.counts.noise) if fk.counts else (fk.prefer, 0)
+            parent = self.tables[fk.parent]
+            node = key_node(causes, noise, parent.fkeys)
+            if node is not None:
+                if unknown := set(node.parents) - set(parent.nodes):
+                    raise ValueError(f"{column!r} reads unknown columns {sorted(unknown)}")
+                local = (
+                    bind(e, parent.table.get(e.parent.removesuffix(CODE)))
+                    if isinstance(e.parent, str)
+                    else e
+                    for e in node.edges
+                )
+                node = replace(node, edges=tuple(local))
+                across = tuple(self.bound(fk.parent, e) for e in node.across)
+                self.choosers[table, column] = (node, across)
+        self.read: set[tuple[str, str]] = set()
+        parents: dict[Vertex, tuple[Vertex, ...]] = {}
         for table, scm in self.tables.items():
             for vertex, reads in scm.graph.items():
                 parents[table, vertex] = tuple((table, read) for read in reads)
-        self.read: set[tuple[str, str]] = set()
         for (table, name), edges in self.crossings.items():
-            sources = tuple(self.source(table, edge.parent) for edge in edges)
-            parents[table, name] += tuple(source for source in sources if source[1] is not None)
-            self.read |= {(t, read.column) for t, read in sources if isinstance(read, Recorded)}
+            parents[table, name] += self.reads(table, edges)
+        for (table, column), fk in keys.items():
+            reads = [] if column == self.sized.get(table) else self.size(table)
+            reads += self.size(fk.parent)
+            for mine, theirs in fk.match.items():
+                reads.append(self.matched_vertex(table, mine))
+                reads.append(self.matched_vertex(fk.parent, theirs))
+            if (table, column) in self.choosers:
+                node, edges = self.choosers[table, column]
+                reads += [(fk.parent, p) for p in node.parents]
+                reads += self.reads(fk.parent, edges)
+            parents[table, Linked(column)] = tuple(reads)
+        for table in self.sized:
+            for vertex in self.tables[table].graph:
+                parents[table, vertex] += tuple(self.size(table))
         self.order = topological(parents)
+
+    def size(self, table: str) -> list[Vertex]:
+        """The vertex a table's size waits on: the key that counts its rows, if one does."""
+        return [(table, Linked(self.sized[table]))] if table in self.sized else []
+
+    def reads(self, table: str, edges: tuple[Edge, ...]) -> tuple[Vertex, ...]:
+        """What edges a node of `table` resolves read: nodes, records and the links they cross;
+        the records among them are noted as read."""
+        out: list[Vertex] = []
+        for edge in edges:
+            origin, read = self.source(table, edge.parent)
+            if read is not None:
+                out.append((origin, read))
+            if isinstance(read, Recorded):
+                self.read.add((origin, read.column))
+            if isinstance(edge.parent, Foreign):
+                out.append((table, Linked(edge.parent.key)))
+            elif isinstance(edge.parent, Summary):
+                out.append((edge.parent.table, Linked(edge.parent.key)))
+        return tuple(out)
+
+    def matched_vertex(self, table: str, column: str) -> Vertex:
+        """What a match reads of a column: a key's links or a categorical's record."""
+        keyed = column in self.tables[table].fkeys
+        return table, Linked(column) if keyed else Recorded(column)
+
+    def check_match(self, table: str, column: str, fk: ForeignKey) -> None:
+        """A match pairs two categoricals, or two keys pointing at the same table."""
+        parent = self.tables[fk.parent]
+        for mine, theirs in fk.match.items():
+            if mine in self.tables[table].fkeys:
+                pointed = self.keys[table, mine].parent
+                if theirs not in parent.fkeys or parent.fkeys[theirs].parent != pointed:
+                    raise ValueError(
+                        f"{column!r} matches key {mine!r} to {fk.parent}.{theirs}, which is no key"
+                        f" of {pointed!r}"
+                    )
+            elif getattr(parent.columns.get(theirs), "kind", None) != "categorical":
+                raise ValueError(
+                    f"{column!r} matches {mine!r} to {fk.parent}.{theirs}, which is no categorical"
+                )
 
     def bound(self, table: str, edge: Edge) -> Edge:
         """A crossing edge lined up with the column it reads; a record is a number to weigh."""
@@ -489,23 +602,91 @@ class Schema:
             raise ValueError(f"unknown node {origin}.{read}")
         return origin, read
 
-    def links(self, rows: Mapping[str, int], root: int) -> Links:
-        links = {}
-        for (table, column), fk in self.keys.items():
-            if fk.values is not None:
-                links[table, column] = self.real_link(table, column, fk, rows[fk.parent])
-                continue
-            stream = lane(root, "link", self.identity[table], column)
+    def link(
+        self,
+        table: str,
+        column: str,
+        rows: dict[str, int],
+        root: int,
+        state: "Draw",
+    ) -> np.ndarray:
+        """The parent row each row of `table` points at through `column`: given, counted per
+        parent, matched among eligible parents by preference, or drawn by its link."""
+        fk = self.keys[table, column]
+        if fk.values is not None:
+            return self.real_link(table, column, fk, rows[fk.parent])
+        stream = lane(root, "link", self.identity[table], column)
+        weights = np.ones(rows[fk.parent])
+        if (table, column) in self.choosers:
+            node, edges = self.choosers[table, column]
+            noise = lane(root, "key", self.identity[table], column)
+            value = self.evaluate(fk.parent, node, edges, noise, rows, state)
+            value = checked(f"{column} weights", node, value, rows[fk.parent])[:, 0]
+            weights = np.exp(value - value.max()) if len(value) else value
+        if fk.counts is not None:
+            drawn = counted(weights, fk.counts.mean, rows.get(table), stream)
+            rows[table] = len(drawn)
+        elif fk.match or fk.prefer:
+            child, parent = self.groups(table, fk, rows, state)
+            drawn = matched(child, parent, weights, stream)
+            if not fk.nullable and (unmatched := int((drawn < 0).sum())):
+                raise ValueError(
+                    f"{unmatched} rows of {table!r} match no row of {fk.parent!r} on"
+                    f" {dict(fk.match)}: make {column!r} nullable to leave them pointing at nothing"
+                )
+        else:
             drawn = np.asarray(fk.link.sample(rows[table], rows[fk.parent], stream))
-            if drawn.shape != (rows[table],) or not np.issubdtype(drawn.dtype, np.integer):
-                raise ValueError(f"link {column!r} must return one integer per child row")
-            if len(drawn) and (drawn.min() < -1 or drawn.max() >= rows[fk.parent]):
-                raise ValueError(f"link {column!r} points outside the parent table")
-            indices = drawn.astype(np.int64)
-            if fk.nullable:
-                indices[stream.random(len(indices)) < fk.nullable] = -1
-            links[table, column] = indices
-        return links
+        if drawn.shape != (rows[table],) or not np.issubdtype(drawn.dtype, np.integer):
+            raise ValueError(f"link {column!r} must return one integer per child row")
+        if len(drawn) and (drawn.min() < -1 or drawn.max() >= rows[fk.parent]):
+            raise ValueError(f"link {column!r} points outside the parent table")
+        indices = drawn.astype(np.int64)
+        if fk.nullable:
+            indices[stream.random(len(indices)) < fk.nullable] = -1
+        return indices
+
+    def groups(
+        self, table: str, fk: ForeignKey, rows: Mapping[str, int], state: "Draw"
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """One integer per child row and per parent row, equal where every matched column agrees,
+        -1 where one is blank."""
+        n = rows[table]
+        joint = np.zeros(n + rows[fk.parent], dtype=np.int64)
+        for mine, theirs in fk.match.items():
+            values = np.concatenate(
+                [self.match_values(table, mine, state), self.match_values(fk.parent, theirs, state)]
+            )
+            codes = pd.factorize(values)[0]
+            joint = np.where((joint < 0) | (codes < 0), -1, joint * (codes.max() + 1) + codes)
+            joint = np.where(joint < 0, -1, pd.factorize(joint)[0])
+        return joint[:n], joint[n:]
+
+    def match_values(self, table: str, column: str, state: "Draw") -> np.ndarray:
+        """A matched column's values, NaN where blank: a key's parent rows or a categorical's levels."""
+        if column in self.tables[table].fkeys:
+            indices = state.links[table, column]
+            return np.where(indices < 0, np.nan, indices).astype(object)
+        return state.records[table][column].astype(object).to_numpy()
+
+    def evaluate(
+        self,
+        table: str,
+        node: Node,
+        edges: tuple[Edge, ...],
+        stream: np.random.Generator,
+        rows: Mapping[str, int],
+        state: "Draw",
+    ) -> np.ndarray:
+        """A node's value over the rows of `table`: its edges, those the schema resolves among
+        them, plus its noise."""
+        exogenous, across = node.sample_noise(rows[table], stream), None
+        for edge in edges:
+            term = edge.apply(
+                self.resolve(table, edge.parent, rows, state.latents, state.recorded, state.links)
+            )
+            across = term if across is None else across + term
+        parents = {parent: state.latents[table][parent] for parent in node.parents}
+        return node.evaluate(parents, exogenous, across)
 
     def real_link(self, table: str, column: str, fk: ForeignKey, n_parent: int) -> np.ndarray:
         """Row positions in the parent of given key values; a blank points at nothing."""
@@ -576,42 +757,37 @@ class Schema:
 
     def propagate(
         self,
-        rows: Mapping[str, int],
-        links: Links,
+        rows: dict[str, int],
         root: int,
         held: Mapping[str, Mapping[str, np.ndarray]],
-    ) -> tuple[dict[str, dict[str, np.ndarray]], dict[str, dict[str, pd.Series]]]:
-        """Evaluate every node of every table once and record every column, in topological order,
-        each with its own stream: a held node takes its values, any other its edges plus noise."""
-        latents: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
-        records: dict[str, dict[str, pd.Series]] = {table: {} for table in self.tables}
-        recorded: dict[str, dict[str, np.ndarray]] = {table: {} for table in self.tables}
+    ) -> "Draw":
+        """Link every key, evaluate every node and record every column once, in topological order,
+        each with its own stream: a held node takes its values, any other its edges plus noise. A
+        key that counts its table's rows sets its size in `rows`."""
+        state = Draw.empty(self.tables)
         for table, name in self.order:
-            scm, n = self.tables[table], rows[table]
+            scm = self.tables[table]
+            if isinstance(name, Linked):
+                state.links[table, name.column] = self.link(table, name.column, rows, root, state)
+                continue
+            n = rows[table]
             if isinstance(name, Recorded):
                 column = name.column
                 stream = lane(root, "column", self.identity[table], column)
-                records[table][column] = scm.record(
-                    column, latents[table], records[table], stream, n
-                )
+                record = scm.record(column, state.latents[table], state.records[table], stream, n)
+                state.records[table][column] = record
                 if (table, column) in self.read:
-                    recorded[table][column] = numbers(records[table][column], f"{table}.{column}")
+                    state.recorded[table][column] = numbers(record, f"{table}.{column}")
                 continue
             node = scm.nodes[name]
             if name in held.get(table, {}):
-                latents[table][name] = checked(name, node, held[table][name], n)
+                state.latents[table][name] = checked(name, node, held[table][name], n)
                 continue
-            exogenous, across = (
-                node.sample_noise(n, lane(root, "noise", self.identity[table], name)),
-                None,
-            )
-            for edge in self.crossings.get((table, name), ()):
-                term = edge.apply(self.resolve(table, edge.parent, rows, latents, recorded, links))
-                across = term if across is None else across + term
-            parents = {parent: latents[table][parent] for parent in node.parents}
-            value = node.evaluate(parents, exogenous, across)
-            latents[table][name] = checked(name, node, value, n)
-        return latents, records
+            stream = lane(root, "noise", self.identity[table], name)
+            edges = self.crossings.get((table, name), ())
+            value = self.evaluate(table, node, edges, stream, rows, state)
+            state.latents[table][name] = checked(name, node, value, n)
+        return state
 
     def observe(
         self,
@@ -670,7 +846,13 @@ class Schema:
             rows = {table: as_int(n) for table, n in rows.items()}
         except TypeError as error:
             raise ValueError("row counts must be integers") from error
-        if set(rows) != set(self.tables) or min(rows.values(), default=0) < 0:
+        counted = set(self.sized)
+        if not set(self.tables) - counted <= set(rows) <= set(self.tables):
+            raise ValueError(
+                "rows must give a non-negative count for every table, which a table whose key"
+                " counts its rows may leave out"
+            )
+        if min(rows.values(), default=0) < 0:
             raise ValueError("rows must give a non-negative count for every table")
         held = dict(held or {})
         for table, nodes in held.items():
@@ -679,12 +861,11 @@ class Schema:
             if unknown := set(nodes) - set(self.tables[table].nodes):
                 raise ValueError(f"held values for unknown nodes {sorted(unknown)} of {table!r}")
         root = int(generator(seed).integers(2**63))
-        links = self.links(rows, root)
         for table, scm in self.tables.items():
             if scm.real:
                 held[table] = {**scm.real, **held.get(table, {})}
-        latents, records = self.propagate(rows, links, root, held)
-        return self.observe(rows, records, links), latents
+        state = self.propagate(rows, root, held)
+        return self.observe(rows, state.records, state.links), state.latents
 
     def realize(self, seed: int) -> "Schema":
         """One database of this family: see `Table.realize`."""

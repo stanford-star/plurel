@@ -281,18 +281,30 @@ def _node(
     return Node(tuple(edges), op=HOW[how], noise=noise), helpers
 
 
-class Declaration:
+class Drawable:
+    @property
+    def family(self) -> bool:
+        """Whether a seed must draw this before its table can be sampled."""
+        return any(ranged(getattr(self, f.name)) for f in fields(self))
+
+    def draw(self, rng: np.random.Generator) -> "Drawable":
+        return replace(self, **{f.name: drawn(getattr(self, f.name), rng) for f in fields(self)})
+
+
+class Declaration(Drawable):
     def entries(self, name: str, keys: Collection[str]) -> dict[str, Node | Column]:
         """The table entries this declaration compiles to; `keys` are the table's foreign keys."""
         raise NotImplementedError
 
-    @property
-    def family(self) -> bool:
-        """Whether a seed must draw this declaration before its table can be sampled."""
-        return any(ranged(getattr(self, f.name)) for f in fields(self))
 
-    def draw(self, rng: np.random.Generator) -> "Declaration":
-        return replace(self, **{f.name: drawn(getattr(self, f.name), rng) for f in fields(self)})
+def key_node(causes: Causes, noise: object, keys: Collection[str]) -> Node | None:
+    """The node a key reads from its parent's columns, causes plus noise; None without causes."""
+    if not causes:
+        return None
+    node, helpers = _node("key", causes, noise, keys)
+    if helpers:
+        raise ValueError("a key reads its parent's columns one at a time: no products")
+    return node
 
 
 @dataclass(frozen=True)
@@ -593,21 +605,51 @@ class PrimaryKey:
         return pd.Series(np.arange(n)) if self.values is None else self.values
 
 
+@dataclass(frozen=True)
+class Counts(Drawable):
+    """How many child rows point at each parent row: `mean` on average, each parent's share scaled
+    by the exponential of its causes, read from the parent's columns, plus `noise`. A row count
+    given for the child table is split among the parents by those shares; without one each parent
+    draws its own Poisson count, and the counts are the child table's size."""
+
+    mean: float | Range
+    causes: Causes = field(default_factory=dict)
+    noise: float | Range | Noise | Distribution | None = None
+
+    def __post_init__(self) -> None:
+        if not ranged(self.mean) and not (np.isfinite(self.mean) and self.mean > 0.0):
+            raise ValueError("mean is a positive count of children per parent")
+
+
 @dataclass(frozen=True, eq=False)
-class ForeignKey:
+class ForeignKey(Drawable):
     """A key pointing at rows of `parent`, drawn by `link` or given as the parent's key `values`;
     a share `nullable` of the rows point at nothing, and latents read across it take `fill` there.
-    A `Recorded` cause across it takes the `Recorded` fill instead."""
+    A `Recorded` cause across it takes the `Recorded` fill instead.
+
+    A key may read its parent's columns instead of a structural link. `match` maps a column of
+    this table to one of the parent that must hold the same level, or point at the same row when
+    both are keys; a row no parent matches points at nothing if the key is `nullable`, and raises
+    otherwise. `prefer` weighs the eligible parents by the exponential of causes read from the
+    parent's columns. `counts` sets how many rows point at each parent, and so the table's size."""
 
     parent: str
     link: Link = RandomLink()
     nullable: float = 0.0
     fill: float | None = None
     values: pd.Series | np.ndarray | Sequence[object] | None = None
+    match: Mapping[str, str] = field(default_factory=dict)
+    prefer: Causes = field(default_factory=dict)
+    counts: Counts | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.nullable < 1.0:
             raise ValueError("nullable must be in [0, 1)")
+        reads = bool(self.match or self.prefer or self.counts)
+        if reads and (self.link != RandomLink() or self.values is not None):
+            raise ValueError("match, prefer and counts choose the parents: no link or values")
+        if self.counts is not None and (self.match or self.prefer or self.nullable):
+            raise ValueError("counts give every child its parent: no match, prefer or nullable")
         if self.fill is not None and not np.isfinite(self.fill):
             raise ValueError("fill must be finite")
         if self.values is not None:

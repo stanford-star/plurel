@@ -30,6 +30,7 @@ from plurel.graph import (
     standardize,
 )
 from plurel.links import HSBMLink, RandomLink, TreeLink
+from plurel.schema import Linked
 
 N = 300
 
@@ -464,7 +465,7 @@ def test_order_puts_every_node_after_its_parents(schema):
     assert set(position) == {
         (t, v)
         for t, scm in schema.tables.items()
-        for v in (*scm.nodes, *map(Recorded, (*scm.columns, *scm.derived)))
+        for v in (*scm.nodes, *map(Recorded, (*scm.columns, *scm.derived)), *map(Linked, scm.fkeys))
     }
     for table, scm in schema.tables.items():
         for name, reads in scm.graph.items():

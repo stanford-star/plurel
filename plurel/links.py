@@ -147,3 +147,42 @@ class TreeLink:
         roots = rng.random(n_child) < self.roots
         roots[:1] = True
         return np.where(roots, -1, parents)
+
+
+def matched(
+    child: np.ndarray, parent: np.ndarray, weights: np.ndarray, rng: np.random.Generator
+) -> np.ndarray:
+    """For each child row, a parent row of the same group drawn by weight: a group is an integer,
+    -1 for none, and -1 is returned where no parent of its group has weight."""
+    eligible = np.flatnonzero((parent >= 0) & (weights > 0))
+    order = eligible[np.argsort(parent[eligible], kind="stable")]
+    groups, cumulative = parent[order], np.cumsum(weights[order])
+    start = np.searchsorted(groups, child, side="left")
+    end = np.searchsorted(groups, child, side="right")
+    found = (child >= 0) & (end > start)
+    draws = rng.random(len(child))
+    out = np.full(len(child), -1, dtype=np.int64)
+    if found.any():
+        start, end = start[found], end[found]
+        before = np.where(start > 0, cumulative[np.maximum(start - 1, 0)], 0.0)
+        target = before + draws[found] * (cumulative[end - 1] - before)
+        pick = np.clip(np.searchsorted(cumulative, target, side="right"), start, end - 1)
+        out[found] = order[pick]
+    return out
+
+
+def counted(
+    weights: np.ndarray, mean: float, total: int | None, rng: np.random.Generator
+) -> np.ndarray:
+    """The parent row of each child row, the rows in random order: a given `total` split among the
+    parents in proportion to their weights, or else each parent's Poisson count around `mean`
+    times its weight over the average weight."""
+    if not len(weights):
+        if total:
+            raise ValueError("no parent rows to give children to")
+        return np.empty(0, dtype=np.int64)
+    share = weights / weights.sum()
+    counts = (
+        rng.poisson(mean * len(weights) * share) if total is None else rng.multinomial(total, share)
+    )
+    return rng.permutation(np.repeat(np.arange(len(weights)), counts))
