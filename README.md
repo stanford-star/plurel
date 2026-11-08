@@ -427,6 +427,10 @@ no parent is left for, on a key that matches or is unique, and keeps every row t
 `nullable` drops a share of the rows at random, matched or not. A `fill` gives what latents read
 across such a row.
 
+Migrating from earlier v2 commits: `nullable` used to leave unmatched rows pointing at nothing as
+well, and now only controls random missingness, so code that allows unmatched rows adds
+`unmatched="null"` explicitly.
+
 `Summary` reads the rows pointing back. It takes the table and its key, and counts them unless told
 to aggregate a column of theirs, as its sum (`Summary("staff", "boss_id", "pay", "mean",
 fill=0.0)`; also `sum`, `max` and `min`; all but `sum` need a `fill` for rows that nothing points
