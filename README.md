@@ -66,6 +66,9 @@ pip install "git+https://github.com/stanford-star/plurel.git@v2"
 Each recipe runs on its own in a fresh Python process. [Getting Started](#getting-started) explains every
 part in detail, and [`examples/generation`](examples/generation/) has longer domain recipes, retail
 orders, clinic visits and student enrollments, that check every relationship they declare.
+For small runnable explanations of individual concepts, start with
+[`examples/concepts`](examples/concepts/): realization, sampling, calibration, synthetic and
+semi-synthetic authoring, and the edge cases that change how these operations behave.
 
 Generating takes two steps, each with its own seed:
 
@@ -76,9 +79,11 @@ Generating takes two steps, each with its own seed:
   decides which dataset of that kind you get; the generator's weights stay as they were.
 
 Vary the mechanism seed for different kinds of datasets and the data seed for more data of one
-kind. A table or schema without ranges is a generator already and samples directly; realizing it
-only fits its level cuts, which pins categorical shares instead of meeting them exactly in every
-draw.
+kind. Fixed declarations without scored categoricals sample directly. Realizing them can still
+fit categorical cut points, so later draws fluctuate around the calibrated shares. Categoricals
+on retained rows or dependent on keys keep cutting each draw. Scored categoricals require
+realization to fit their class biases even when every coefficient is fixed; the
+[calibration examples](examples/concepts/README.md#reading-order) demonstrate these cases.
 
 #### One table
 
