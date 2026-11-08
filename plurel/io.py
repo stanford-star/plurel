@@ -89,12 +89,16 @@ def write_database(
     path: str | Path,
     *,
     name: str,
-    val_timestamp: pd.Timestamp,
-    test_timestamp: pd.Timestamp,
+    val_timestamp: pd.Timestamp | None = None,
+    test_timestamp: pd.Timestamp | None = None,
     description: str | None = None,
     overwrite: bool = False,
 ) -> Path:
     """Write every file into a hidden sibling of `path`, check it, then rename it into place.
+
+    `val_timestamp` and `test_timestamp` give a temporal split. A static database, one with no
+    time column, may leave both out: its manifest then records `NaT`, no split, and it loads all
+    its rows.
 
     A symlinked `path` is written where it points. `path` holds a complete dataset or none. A
     failed or interrupted write keeps the previous dataset. A killed one leaves a hidden
@@ -102,7 +106,15 @@ def write_database(
     `.<name>.*.retired` sibling. Of writers racing for one path, each either publishes a complete
     dataset or raises FileExistsError.
     """
-    if val_timestamp > test_timestamp:
+    if (val_timestamp is None) != (test_timestamp is None):
+        raise ValueError("give both val_timestamp and test_timestamp, or neither for no split")
+    timed = sorted(name for name, table in db.table_dict.items() if table.time_col)
+    if val_timestamp is None and timed:
+        raise ValueError(
+            f"tables {timed} hold events, which relbench cuts at the split when it loads them: give"
+            " val_timestamp and test_timestamp, e.g. from split_timestamps(db)"
+        )
+    if val_timestamp is not None and val_timestamp > test_timestamp:
         raise ValueError("val_timestamp must not be after test_timestamp")
     for table_name, table in db.table_dict.items():
         if table.time_col and not is_time_sorted(table.df[table.time_col]):
@@ -140,8 +152,8 @@ def stage(
     db: Database,
     staging: Path,
     name: str,
-    val_timestamp: pd.Timestamp,
-    test_timestamp: pd.Timestamp,
+    val_timestamp: pd.Timestamp | None,
+    test_timestamp: pd.Timestamp | None,
     description: str | None,
 ) -> None:
     (staging / "db").mkdir(parents=True)
@@ -149,8 +161,8 @@ def stage(
         table.df.to_parquet(staging / "db" / f"{table_name}.parquet", index=False)
     manifest = DatasetManifest(
         name=name,
-        val_timestamp=str(val_timestamp),
-        test_timestamp=str(test_timestamp),
+        val_timestamp=str(pd.Timestamp(val_timestamp)),
+        test_timestamp=str(pd.Timestamp(test_timestamp)),
         description=description,
         tables={
             table_name: TableSpec(
@@ -196,6 +208,7 @@ def publish(staging: Path, path: Path, overwrite: bool) -> None:
 
 
 def read_database(path: str | Path) -> Database:
+    """The saved database, every row of it, whether or not it was saved with a split."""
     return load_dataset(Path(path).expanduser()).get_db(upto_test_timestamp=False)
 
 

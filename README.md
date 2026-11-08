@@ -406,6 +406,24 @@ write_database(
 )
 ```
 
+The split is optional for a static database, one whose tables hold no events: it saves without one,
+and a database with events raises without one, since relbench cuts events at the split. The
+manifest then records both timestamps as `NaT`, which means no split, and `read_database` loads
+every row with its keys. relbench's tasks need a split, so save one with timestamps when you will
+evaluate over time; saving never makes one up.
+
+```python
+from plurel import read_database
+
+static = Schema({
+    "people": Table({"id": PrimaryKey(), "age": Numeric(Uniform(18, 80))}),
+    "visits": Table({"person_id": ForeignKey("people"), "value": Numeric()}),
+})
+db = create_database(static, static.sample({"people": 10, "visits": 50}, seed=0))
+loaded = read_database(write_database(db, "~/.cache/relbench/static", name="static", overwrite=True))
+assert loaded.table_dict["visits"].fkey_col_to_pkey_table == {"person_id": "people"}
+```
+
 ### Inspect a schema
 
 `describe()` gives a table or schema as resolved, in plain dicts, lists, strings and numbers that
