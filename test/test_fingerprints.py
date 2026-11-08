@@ -1,9 +1,8 @@
 import json
 import os
 
-import pytest
-
 import fingerprints
+import pytest
 
 
 def test_seeded_draws_keep_their_stored_bytes_on_this_platform():
