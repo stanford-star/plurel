@@ -54,6 +54,116 @@ pip install "git+https://github.com/stanford-star/plurel.git@v2"
 `v2` moves; for a training run you want to reproduce, pin a commit instead, as in
 `pip install "git+https://github.com/stanford-star/plurel.git@<commit>"`.
 
+## Quickstarts
+
+| You want to | Start with |
+|---|---|
+| Generate one synthetic table | [One table](#one-table) |
+| Author a family and draw many distinct, reproducible datasets | [A family of datasets](#a-family-of-datasets) |
+| Keep real rows and add a generated target or child table | [Real rows with a generated target](#real-rows-with-a-generated-target) |
+| Build a small database, inspect it, and save it | [A database, inspected and saved](#a-database-inspected-and-saved) |
+
+Each recipe runs on its own in a fresh Python process. [Getting Started](#getting-started) explains every
+part in detail.
+
+Two seeds do different things. `realize(seed)` draws a family's mechanism, every weight, noise and
+marginal given as a range, and pins its level cuts: it decides what kind of dataset you get.
+`sample(rows, seed=...)` draws the rows of one mechanism: it decides which dataset of that kind you
+get. A table or schema without ranges is already one mechanism and samples directly.
+
+#### One table
+
+<!-- standalone -->
+```python
+from plurel import Categorical, LogNormal, Numeric, PrimaryKey, Table, Uniform
+
+table = Table({
+    "id": PrimaryKey(),
+    "age": Numeric(Uniform(18, 80), round=1),
+    "segment": Categorical({"bronze": 0.6, "silver": 0.3, "gold": 0.1}, causes={"age": 1.0}),
+    "spend": Numeric(LogNormal(3, 0.5), causes={"age": 0.8, "segment": {"gold": 1.5}}),
+})
+print(table.explain())
+frame = table.sample(500, seed=0)
+assert frame.shape == (500, 4) and frame.age.between(18, 80).all()
+```
+
+Weights say how closely a column follows its causes, not units per unit: see
+[Latent and recorded values](#latent-and-recorded-values).
+
+#### A family of datasets
+
+<!-- standalone -->
+```python
+from plurel import MEDIUM, STRONG, Categorical, Numeric, Range, Scaled, Table
+
+family = Table({
+    "wait_days": Numeric(Scaled("duration", 0, 60), round=1),
+    "outcome": Categorical({"declined": 0.7, "accepted": 0.3}, causes={"wait_days": -STRONG}),
+    "cost": Numeric(Scaled("amount", 0, 5000), causes={"wait_days": Range(0.2, 1.0)}, noise=MEDIUM),
+})
+datasets = [family.realize(seed).sample(1000, seed=seed) for seed in range(3)]
+assert all(len(frame) == 1000 for frame in datasets)
+assert family.realize(1).sample(1000, seed=1).equals(datasets[1])
+assert not datasets[0].equals(datasets[1])
+```
+
+Every seed of `realize` gives another table of the same description, and the same seed gives the
+same one: see [Author many tables from one description](#author-many-tables-from-one-description).
+
+#### Real rows with a generated target
+
+<!-- standalone -->
+```python
+import pandas as pd
+
+from plurel import Categorical, ForeignKey, LogNormal, Numeric, PrimaryKey, Schema, Table
+
+real = pd.DataFrame({"customer_id": ["C1", "C2", "C3", "C4"], "age": [34, 51, 29, 62]})
+customers = Table.from_frame(
+    real,
+    primary_key="customer_id",
+    extra={"churned": Categorical({"no": 0.8, "yes": 0.2}, causes={"age": -1.0})},
+    target="churned",
+    docs={"age": "age in years", "churned": "left within a year"},
+)
+orders = Table({"id": PrimaryKey(), "customer_id": ForeignKey("customers"), "amount": Numeric(LogNormal())})
+frames = Schema({"customers": customers, "orders": orders}).sample({"orders": 100}, seed=0)
+assert frames["customers"][["customer_id", "age"]].equals(real)
+assert frames["orders"].customer_id.isin(real.customer_id).all()
+```
+
+The real table keeps its own rows in every draw; the generated columns and tables read them: see
+[Start from real rows](#start-from-real-rows).
+
+#### A database, inspected and saved
+
+<!-- standalone -->
+```python
+import tempfile
+from pathlib import Path
+
+from plurel import (
+    ForeignKey, Numeric, PrimaryKey, Schema, Summary, Table, Uniform, create_database,
+    read_database, write_database,
+)
+
+schema = Schema({
+    "teams": Table({"id": PrimaryKey(), "size": Numeric(causes={Summary("staff", "team_id"): 1.0}, noise=0)}),
+    "staff": Table({"id": PrimaryKey(), "team_id": ForeignKey("teams"), "pay": Numeric(Uniform(40, 120))}),
+})
+print(schema.explain())
+frames = schema.sample({"teams": 5, "staff": 60}, seed=0)
+db = create_database(schema, frames)
+with tempfile.TemporaryDirectory() as folder:
+    loaded = read_database(write_database(db, Path(folder) / "teams", name="teams"))
+assert len(loaded.table_dict["staff"].df) == 60
+assert loaded.table_dict["staff"].fkey_col_to_pkey_table == {"team_id": "teams"}
+```
+
+This database has no events, so it saves without a temporal split; one with events saves with
+`split_timestamps`: see [Save a database](#save-a-database).
+
 ## Getting Started
 
 ### Build a table
@@ -565,7 +675,7 @@ pixi run pre-commit install
 pixi run test        # the suite
 pixi run lint        # ruff check and format check, at the version pre-commit pins
 pixi run typecheck   # pyright over test/typing_examples.py, the public API as users write it
-pixi run examples    # every Python block of this README, in order, in one namespace
+pixi run examples    # every README block in order in one namespace, then each quickstart alone
 pixi run wheel       # a wheel in dist/
 ```
 
