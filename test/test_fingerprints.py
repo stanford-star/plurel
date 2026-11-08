@@ -3,14 +3,20 @@ import json
 import fingerprints
 
 
-def test_seeded_draws_keep_their_stored_bytes():
-    stored = json.loads(fingerprints.STORED.read_text())
+def test_seeded_draws_keep_their_stored_bytes_on_this_platform():
     drawn = fingerprints.draw()
-    assert set(drawn) == set(stored), "workloads and stored fingerprints differ: run --update"
-    moved = sorted(name for name in drawn if drawn[name] != stored[name])
+    stored = fingerprints.stored()
+    assert fingerprints.PLATFORM in stored, (
+        f"no fingerprints stored for {fingerprints.PLATFORM}; to add them, put this under that key"
+        f" in test/fingerprints.json: {json.dumps(drawn, sort_keys=True)}"
+    )
+    mine = stored[fingerprints.PLATFORM]
+    assert set(drawn) == set(mine), "workloads and stored fingerprints differ: run --update"
+    moved = sorted(name for name in drawn if drawn[name] != mine[name])
     assert not moved, (
-        f"draws moved for {moved}. If the change means to move them, run"
-        " `pixi run fingerprints` and say so in the PR; COMPATIBILITY.md says what that breaks"
+        f"draws moved on {fingerprints.PLATFORM} for {moved}. If the change means to move them,"
+        " run `pixi run fingerprints` on each tested platform and say so in the PR;"
+        " COMPATIBILITY.md says what that breaks"
     )
 
 

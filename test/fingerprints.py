@@ -1,12 +1,15 @@
 """Seeded draws whose exact bytes the compatibility contract promises, and their sha256 digests.
 
-`python test/fingerprints.py` prints whether the stored digests in fingerprints.json still match;
-`--update` rewrites them, which a change that moves draws on purpose does and its PR says so. See
-COMPATIBILITY.md for what is promised exactly and what is not.
+Digests are stored per platform, since exact bytes hold within a platform only: transcendental
+functions and matrix products differ in their last bits across operating systems and processors.
+`python test/fingerprints.py` prints whether this platform's stored digests in fingerprints.json
+still match; `--update` rewrites them, which a change that moves draws on purpose does on every
+tested platform, and its PR says so. See COMPATIBILITY.md for what is promised exactly and what not.
 """
 
 import hashlib
 import json
+import platform
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -39,6 +42,7 @@ from plurel import (
 from plurel.prior import SchemaPrior
 
 STORED = Path(__file__).with_name("fingerprints.json")
+PLATFORM = f"{sys.platform}-{platform.machine()}"  # e.g. darwin-arm64, linux-x86_64
 
 
 def digest(frames: dict[str, pd.DataFrame]) -> str:
@@ -152,13 +156,17 @@ def draw() -> dict[str, str]:
     }
 
 
+def stored() -> dict[str, dict[str, str]]:
+    return json.loads(STORED.read_text()) if STORED.exists() else {}
+
+
 if __name__ == "__main__":
     drawn = draw()
     if "--update" in sys.argv:
-        STORED.write_text(json.dumps(drawn, indent=1, sort_keys=True) + "\n")
-        print(f"wrote {len(drawn)} fingerprints to {STORED}")
+        STORED.write_text(json.dumps(stored() | {PLATFORM: drawn}, indent=1, sort_keys=True) + "\n")
+        print(f"wrote {len(drawn)} fingerprints for {PLATFORM} to {STORED}")
     else:
-        stored = json.loads(STORED.read_text())
-        moved = sorted(name for name in drawn if stored.get(name) != drawn[name])
-        print("all match" if not moved else f"moved: {moved}")
+        mine = stored().get(PLATFORM, {})
+        moved = sorted(name for name in drawn if mine.get(name) != drawn[name])
+        print("all match" if not moved else f"moved on {PLATFORM}: {moved}")
         sys.exit(1 if moved else 0)
