@@ -1,3 +1,4 @@
+from collections import Counter
 from collections.abc import Hashable, Mapping
 from dataclasses import replace
 from graphlib import CycleError, TopologicalSorter
@@ -63,7 +64,8 @@ class Table:
     """A table: a dict of its keys, its columns (`Numeric`, `Categorical`, `Timestamp`, `Real`,
     `Derived`) and the `Hidden` causes they read. The lower-level `Node` and `Column` are accepted
     too. A table holding ranges is a family: `realize(seed)` draws one table of it. `doc`, `target`
-    and `sources` say what the table records, what it is read for and where its numbers come from."""
+    and `sources` say what the table records, what it is read for and where its numbers come from;
+    `docs` holds each entry's description, from its `doc` or given, and survives realizing."""
 
     def __init__(
         self,
@@ -74,9 +76,15 @@ class Table:
         doc: str | None = None,
         target: str | None = None,
         sources: str | None = None,
+        docs: Mapping[str, str] | None = None,
     ) -> None:
         self.declared = dict(table)
         self.name, self.doc, self.target, self.sources = name, doc, target, sources
+        given = {k: e.doc for k, e in self.declared.items() if getattr(e, "doc", None)}
+        given |= dict(docs or {})
+        if unknown := set(given) - set(self.declared):
+            raise ValueError(f"docs name no entries of the table: {sorted(unknown)}")
+        self.docs = {name: given[name] for name in self.declared if name in given}
         self.family = any(isinstance(e, Declaration) and e.family for e in self.declared.values())
         table = self.draws(0)
         keys = {name for name, entry in table.items() if isinstance(entry, ForeignKey)}
@@ -148,8 +156,18 @@ class Table:
             if by is not None and kinds.get(by[0]) != "numeric":
                 raise ValueError(f"{name!r} is blank by {by[0]!r}, which is no numeric column")
         for name, derived in self.derived.items():
-            if unknown := [c for c in derived.inputs if kinds.get(c) != "numeric"]:
-                raise ValueError(f"{name!r} reads {unknown}, which are no numeric columns")
+            readable = {*self.derived, *(c for c, kind in kinds.items() if kind == "numeric")}
+            if unknown := [c for c in derived.inputs if c not in readable]:
+                raise ValueError(
+                    f"{name!r} reads {unknown}, which are no numeric or derived columns"
+                )
+        inputs = {name: tuple(c for c in d.inputs if c in self.derived) for name, d in self.derived.items()}  # fmt: skip
+        try:
+            self.derived_order = tuple(TopologicalSorter(inputs).static_order())
+        except CycleError as error:
+            raise ValueError(
+                f"derived columns read each other in a cycle: {error.args[1]}"
+            ) from error
         for name, (parent, ranges) in self.by_level.items():
             if kinds.get(parent) != "categorical":
                 raise ValueError(f"{name!r} takes ranges from {parent!r}: no categorical")
@@ -165,17 +183,25 @@ class Table:
             for scored in (getattr(entry, "scores", None) or {}).values():
                 if unknown := set(scored) - numbers:
                     raise ValueError(f"{name!r} scores {sorted(unknown)}: no numbers of its table")
-        if self.target is not None and self.target not in self.table:
-            raise ValueError(f"target {self.target!r} is no column of the table")
+        if self.target is not None:
+            recorded = {*self.derived, *(c for c, kind in kinds.items() if kind != "key")}
+            if self.target not in recorded:
+                why = (
+                    "a hidden cause no frame records"
+                    if self.target in self.nodes
+                    else ("a key" if self.target in self.table else "no entry of the table")
+                )
+                raise ValueError(f"target {self.target!r} is {why}: it must be a recorded column")
 
     @property
-    def metadata(self) -> dict[str, str | None]:
+    def metadata(self) -> dict[str, object]:
         return {
             "time_column": self.time_column,
             "name": self.name,
             "doc": self.doc,
             "target": self.target,
             "sources": self.sources,
+            "docs": self.docs,
         }
 
     @property
@@ -225,8 +251,8 @@ class Table:
             codes, order = latents[parent + CODE][:, 0], self.columns[parent].categories
             values = frame[name].to_numpy(dtype=float)
             frame[name] = self.columns[name].placed_by_level(values, codes, order)
-        for name, derived in self.derived.items():
-            frame[name] = derived.compute(frame)
+        for name in self.derived_order:
+            frame[name] = self.derived[name].compute(frame)
         return frame[[name for name in self.table if name in frame]]
 
     @classmethod
@@ -298,10 +324,19 @@ class Table:
 
 class Schema:
     """The plan of a database: its tables, joined by the foreign keys they hold and the edges
-    that read across them. It realizes every node in one topological order across tables."""
+    that read across them. It realizes every node in one topological order across tables. A
+    table's draws follow its name, else its key here, so a named table draws the same under any
+    key."""
 
     def __init__(self, tables: Mapping[str, Table]) -> None:
         self.tables = dict(tables)
+        self.identity = {table: scm.name or table for table, scm in self.tables.items()}
+        named = Counter(self.identity.values())
+        if shared := sorted(t for t, name in self.identity.items() if named[name] > 1):
+            raise ValueError(
+                f"tables {shared} share a name, so they would share their draws: give each table"
+                " its own name, e.g. a copy as Table(entries, name=...)"
+            )
         keys = {
             (table, column): fk
             for table, scm in self.tables.items()
@@ -369,7 +404,7 @@ class Schema:
             if fk.values is not None:
                 links[table, column] = self.real_link(table, column, fk, rows[fk.parent])
                 continue
-            stream = lane(root, "link", table, column)
+            stream = lane(root, "link", self.identity[table], column)
             drawn = np.asarray(fk.link.sample(rows[table], rows[fk.parent], stream))
             if drawn.shape != (rows[table],) or not np.issubdtype(drawn.dtype, np.integer):
                 raise ValueError(f"link {column!r} must return one integer per child row")
@@ -450,7 +485,10 @@ class Schema:
             if name in held.get(table, {}):
                 latents[table][name] = checked(name, node, held[table][name], n)
                 continue
-            exogenous, across = node.sample_noise(n, lane(root, "noise", table, name)), None
+            exogenous, across = (
+                node.sample_noise(n, lane(root, "noise", self.identity[table], name)),
+                None,
+            )
             for edge in self.crossings.get((table, name), ()):
                 term = edge.apply(self.resolve(table, edge.parent, rows, latents, links))
                 across = term if across is None else across + term
@@ -471,7 +509,9 @@ class Schema:
         for table, scm in self.tables.items():
             n = rows[table]
             observed = {
-                name: column.observe(name, latents[table], lane(root, "column", table, name), n)
+                name: column.observe(
+                    name, latents[table], lane(root, "column", self.identity[table], name), n
+                )
                 for name, column in scm.columns.items()
             }
             frame = pd.DataFrame(observed, index=range(n))
@@ -530,7 +570,7 @@ class Schema:
 
     def realize(self, seed: int) -> "Schema":
         """One database of this family: see `Table.realize`."""
-        drawn = {t: scm.drawn(seed, scm.name or t) for t, scm in self.tables.items()}
+        drawn = {t: scm.drawn(seed, self.identity[t]) for t, scm in self.tables.items()}
         return Schema(drawn).fitted(seed)
 
     def fitted(self, seed: int) -> "Schema":

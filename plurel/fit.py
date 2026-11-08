@@ -67,9 +67,10 @@ def cut(table, latents: Mapping[str, np.ndarray]):
 
 def fitted(schema, seed: int):
     """The schema with its scores and level cuts fit to one draw of `CALIBRATION_ROWS` rows per
-    table, each scored column after those it reads. Given rows cut each draw: they are all the rows
-    there are."""
-    tables, rng, rebuilt = dict(schema.tables), lane(seed, "fit"), type(schema)
+    table, each scored column after those it reads. Every fit draws from streams named by its table
+    and column, so adding a column moves no other fit. Given rows cut each draw: they are all the
+    rows there are."""
+    tables, rebuilt = dict(schema.tables), type(schema)
     rows = {t: CALIBRATION_ROWS if scm.size is None else scm.size for t, scm in tables.items()}
     for fk in schema.keys.values():
         if fk.values is not None and schema.parent_keys(fk) is None and fk.values.notna().any():
@@ -77,9 +78,12 @@ def fitted(schema, seed: int):
     for table, scm in schema.tables.items():
         for name in scm.order:
             if getattr(scm.columns.get(name), "fit_shares", None):
-                latents = rebuilt(tables).sample_with_latents(rows, seed=rng)[1]
-                tables[table] = fit_score(tables[table], name, latents[table], rng)
-    latents = rebuilt(tables).sample_with_latents(rows, seed=rng)[1]
+                identity = schema.identity[table]
+                draw = lane(seed, "fit", identity, name)
+                latents = rebuilt(tables).sample_with_latents(rows, seed=draw)[1]
+                noise = lane(seed, "fit noise", identity, name)
+                tables[table] = fit_score(tables[table], name, latents[table], noise)
+    latents = rebuilt(tables).sample_with_latents(rows, seed=lane(seed, "fit cuts"))[1]
     return rebuilt(
         {t: scm if scm.size is not None else cut(scm, latents[t]) for t, scm in tables.items()}
     )

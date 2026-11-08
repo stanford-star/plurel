@@ -406,8 +406,8 @@ class Foreign:
 @dataclass(frozen=True)
 class Summary:
     """Tail of an edge aggregating, per row, the rows of `table` that point at it through
-    `key`: how many, or the `how` of their `node`. `fill` is read where no row does, needed for
-    mean, max and min."""
+    `key`: how many, or the `how` of their `node`'s latents, not its recorded values. `fill` is
+    read where no row does, needed for mean, max and min."""
 
     table: str
     key: str

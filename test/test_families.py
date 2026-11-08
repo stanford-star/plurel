@@ -130,6 +130,52 @@ def test_a_named_table_realizes_the_same_alone_and_in_a_schema():
     alone, joined = named.realize(4), Schema({"anything": named}).realize(4).tables["anything"]
     assert weight(alone, "wait", "cover") == weight(joined, "wait", "cover")
     assert not alone.family and weight(alone.realize(9), "wait", "cover") == weight(alone, "wait", "cover")  # fmt: skip
+    assert alone.columns["outcome"].binning == joined.columns["outcome"].binning
+    assert alone.sample(2000, seed=0).equals(joined.sample(2000, seed=0))
+
+
+def test_an_unrelated_scored_column_moves_no_calibrated_output():
+    entries = {"x": Numeric(), "y": Categorical({"a": 0.5, "b": 0.5}, causes={"x": 1.0})}
+    extra = {"extra": Categorical({"c": 0.5, "d": 0.5}, scores={"c": {"x": 1.0}})}
+    alone = Table(entries).realize(0)
+    for grown in (Table({**entries, **extra}), Table({**extra, **entries})):
+        realized = grown.realize(0)
+        assert realized.columns["y"].binning == alone.columns["y"].binning
+        assert realized.sample(3000, seed=0).y.equals(alone.sample(3000, seed=0).y)
+
+
+def test_derived_columns_chain_in_dependency_order():
+    table = Table(
+        {
+            "tax": Derived(lambda total: total * 0.1),
+            "price": Numeric(Uniform(1, 10), missing=0.2),
+            "quantity": Numeric(Uniform(1, 5)),
+            "total": Derived(lambda price, quantity: price * quantity),
+            "due": Derived(lambda total, tax: total + tax),
+        }
+    )
+    frame = table.sample(500, seed=0)
+    assert list(frame.columns) == ["tax", "price", "quantity", "total", "due"]
+    whole = frame.dropna()
+    assert np.allclose(whole.tax, whole.total * 0.1, atol=1e-5)
+    assert np.allclose(whole.due, whole.total + whole.tax, atol=1e-5)
+    assert (frame.due.isna() == frame.price.isna()).all()
+
+
+def test_column_docs_survive_realizing():
+    table = Table(
+        {
+            "age": Numeric(Scaled("duration", 0, 90), doc="age in years"),
+            "kind": Categorical(Shares(["a", "b"]), doc="the kind"),
+            "cause": Hidden(doc="an unrecorded cause"),
+            "copy": Derived(lambda age: age, doc="the age again"),
+        },
+        name="people",
+    )
+    realized = table.realize(0)
+    assert realized.docs == {"age": "age in years", "kind": "the kind", "cause": "an unrecorded cause", "copy": "the age again"}  # fmt: skip
+    assert realized.realize(1).docs == realized.docs
+    assert Schema({"any": table}).realize(0).tables["any"].docs == realized.docs
 
 
 def test_a_rare_authored_level_keeps_its_scale_under_drawn_shares():
@@ -169,7 +215,11 @@ def test_a_stated_strength_means_what_it_says():
         (lambda: Table({"x": Numeric(Normal(), missing=0.1, missing_by=("y", "high"))}), "numeric"),
         (lambda: Table({"d": Derived(lambda y: y)}), "numeric"),
         (lambda: Table({"d": Derived(lambda: 1.0)}), "at least one"),
-        (lambda: Table({"x": Numeric(Normal()), "d": Derived(lambda x: x), "e": Derived(lambda d: d)}), "numeric"),
+        (lambda: Table({"d": Derived(lambda e: e), "e": Derived(lambda d: d)}), "cycle"),
+        (lambda: Table({"h": Hidden(), "x": Numeric()}, target="h"), "hidden cause"),
+        (lambda: Table({"id": PrimaryKey(), "x": Numeric()}, target="id"), "a key"),
+        (lambda: Table({"x": Numeric()}, docs={"y": "nothing"}), "docs name"),
+        (lambda: Schema({"a": Table({"x": Numeric()}, name="t"), "b": Table({"y": Numeric()}, name="t")}), "share a name"),
         (lambda: Table({"x": Numeric(Normal()), "d": Derived(lambda x: x), "y": Numeric(causes={"d": 1.0})}), "unknown parents"),
         (lambda: Table({"x": Numeric(ByLevel("k", {"a": (0, 1)}))}), "categorical"),
         (lambda: Table({"k": Categorical(["a", "b"]), "x": Numeric(ByLevel("k", {"a": (0, 1)}))}), "one range"),

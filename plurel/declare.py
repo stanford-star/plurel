@@ -312,8 +312,9 @@ class ByLevel:
 
 @dataclass(frozen=True)
 class Numeric(Declaration):
-    """A number following `marginal`: the causes' weighted sum plus `noise` orders the rows, and
-    they take the marginal's values in that order. Without a marginal the column is that sum. A
+    """A number following `marginal`: the causes' weighted sum plus `noise`, its latent, orders the
+    rows, and they take the marginal's values in that order; causes read latents, not recorded
+    values. Without a marginal the column is that sum. A
     share `zeros` of the rows record the marginal's floor, or 0, and `clip` (either side may be
     None) and `round` (a step) apply last. `how` combines the causes: their sum, largest, smallest,
     compounding product, or `rules`, a sum whose pairs are thresholds. A pair in `causes` is the
@@ -564,7 +565,8 @@ class PrimaryKey:
 @dataclass(frozen=True, eq=False)
 class ForeignKey:
     """A key pointing at rows of `parent`, drawn by `link` or given as the parent's key `values`;
-    a share `nullable` of the rows point at nothing, and causes read across it take `fill` there."""
+    a share `nullable` of the rows point at nothing, and causes read across it take `fill` there,
+    a latent value."""
 
     parent: str
     link: Link = RandomLink()
