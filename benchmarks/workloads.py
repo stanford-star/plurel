@@ -4,6 +4,7 @@ domain recipes with their retained rows, and keys that match, prefer, count and 
 
 import sys
 from collections.abc import Callable
+from importlib import import_module
 from pathlib import Path
 
 import pandas as pd
@@ -97,20 +98,22 @@ def keyed(rows: int) -> tuple[Schema, dict[str, int]]:
     return schema, {"students": max(2, rows // 3)}
 
 
-def recipe(name: str, per_scale: int) -> Build:
-    """A domain recipe from examples/generation, its fixtures scaled to about `rows` rows."""
+def retail(rows: int) -> tuple[Schema, dict[str, int]]:
+    """The retail recipe, its retained customers grown with the size: about 380 rows per 40."""
+    recipe = import_module("retail")
+    return recipe.build(*recipe.fixtures(max(1, round(rows / 380)))), {}
 
-    def build(rows: int) -> tuple[Schema, dict[str, int]]:
-        module = __import__(name)
-        scale = max(1, round(rows / per_scale))
-        if name == "visits":
-            schema = module.build(*module.fixtures())
-            return schema, {"patients": max(2, rows // 3)}
-        fixtures = module.fixtures(scale)
-        return module.build(*fixtures), {}
 
-    build.__doc__ = f"the {name} recipe"
-    return build
+def visits(rows: int) -> tuple[Schema, dict[str, int]]:
+    """The visits recipe: its retained lookups stay small, and patients take the size."""
+    recipe = import_module("visits")
+    return recipe.build(*recipe.fixtures()), {"patients": max(2, rows // 3)}
+
+
+def enrollments(rows: int) -> tuple[Schema, dict[str, int]]:
+    """The enrollments recipe, its retained students grown with the size: about 430 rows per 150."""
+    recipe = import_module("enrollments")
+    return recipe.build(*recipe.fixtures(max(1, round(rows / 430)))), {}
 
 
 WORKLOADS: dict[str, Build] = {
@@ -120,7 +123,7 @@ WORKLOADS: dict[str, Build] = {
     "prior-1": prior(1),
     "prior-2": prior(2),
     "keyed": keyed,
-    "retail": recipe("retail", 380),
-    "visits": recipe("visits", 3),
-    "enrollments": recipe("enrollments", 430),
+    "retail": retail,
+    "visits": visits,
+    "enrollments": enrollments,
 }

@@ -33,11 +33,19 @@ def environment() -> dict[str, object]:
         except (OSError, subprocess.CalledProcessError):
             return "unknown"
 
-    cpu = (
-        run("sysctl", "-n", "machdep.cpu.brand_string")
-        if sys.platform == "darwin"
-        else platform.processor()
-    )
+    if sys.platform == "darwin":
+        cpu = run("sysctl", "-n", "machdep.cpu.brand_string")
+    else:
+        names = (
+            [
+                line
+                for line in Path("/proc/cpuinfo").read_text().splitlines()
+                if line.startswith("model name")
+            ]
+            if Path("/proc/cpuinfo").exists()
+            else []
+        )
+        cpu = names[0].split(":", 1)[1].strip() if names else platform.processor() or "unknown"
     memory = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
     return {
         "when": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -65,6 +73,18 @@ def environment() -> dict[str, object]:
 def peak_mib() -> float:
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return round(peak / 2**20 if sys.platform == "darwin" else peak / 2**10, 1)  # bytes vs KiB
+
+
+def copied_cells(generator, frames) -> int:
+    """Cells holding given values, copied rather than drawn: real columns and given keys."""
+    copied = 0
+    for name, scm in generator.tables.items():
+        given = [
+            c for c, entry in scm.columns.items() if getattr(entry, "values", None) is not None
+        ]
+        given += [c for c, fk in scm.fkeys.items() if fk.values is not None]
+        copied += len(frames[name]) * len(given)
+    return copied
 
 
 def one(workload: str, rows: int, seed: int) -> dict[str, object]:
@@ -98,15 +118,18 @@ def one(workload: str, rows: int, seed: int) -> dict[str, object]:
         )
         disk = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
         timed("read", lambda: read_database(path))
-    retained = sum(len(frames[t]) for t, scm in generator.tables.items() if scm.size is not None)
+    given = [t for t, scm in generator.tables.items() if scm.size is not None]
+    retained = sum(len(frames[t]) for t in given)
     total = sum(len(frame) for frame in frames.values())
+    cells = int(sum(frame.size for frame in frames.values()))
     return {
         "seconds": seconds,
         "total_seconds": round(sum(seconds.values()), 4),
         "rows": total,
         "generated_rows": total - retained,
         "retained_rows": retained,
-        "cells": int(sum(frame.size for frame in frames.values())),
+        "cells": cells,
+        "generated_cells": cells - copied_cells(generator, frames),
         "tables": len(frames),
         "disk_mib": round(disk / 2**20, 2),
         "peak_mib": peak_mib(),
@@ -135,6 +158,7 @@ def main() -> None:
     names = args.workloads or list(WORKLOADS)
     if unknown := sorted(set(names) - set(WORKLOADS)):
         sys.exit(f"unknown workloads {unknown}; there are {sorted(WORKLOADS)}")
+    started = environment()  # before the runs, so a checkout changing meanwhile is caught
     records = []
     for name in names:
         for rows in args.sizes:
@@ -178,9 +202,10 @@ def main() -> None:
                 )
                 print(f"{name:12} {rows:>9} #{repeat}: {status}", flush=True)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(
-        json.dumps({"environment": environment(), "runs": records}, indent=1) + "\n"
-    )
+    if environment()["commit"] != started["commit"]:
+        started["commit_changed_during_runs"] = True
+        print("warning: the checkout changed commit during the runs", file=sys.stderr)
+    args.out.write_text(json.dumps({"environment": started, "runs": records}, indent=1) + "\n")
     print(f"wrote {len(records)} runs to {args.out}")
 
 

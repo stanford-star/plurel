@@ -38,8 +38,11 @@ def summarize(runs: list[dict]) -> dict[tuple[str, int], dict[str, object]]:
             "cells": int(statistics.median(r["cells"] for r in group)),
             "phases": {p: [r["seconds"][p] for r in group] for p in PHASES},
             "total": totals,
+            "generated_cells": int(statistics.median(r["generated_cells"] for r in group)),
             "cells_per_second": statistics.median(
-                r["cells"] / r["seconds"]["sample"] for r in group if r["seconds"]["sample"]
+                r["generated_cells"] / r["seconds"]["sample"]
+                for r in group
+                if r["seconds"]["sample"]
             ),
             "peak": [r["peak_mib"] for r in group],
             "disk": statistics.median(r["disk_mib"] for r in group),
@@ -102,15 +105,15 @@ def report(results: dict, summary: dict, images: list[str], source: str) -> str:
         "",
         "## Phases",
         "",
-        "| Workload | Size | Rows (generated) | Cells | "
+        "| Workload | Size | Rows (generated) | Cells (generated) | "
         + " | ".join(PHASES)
-        + " | Total | Cells/s sampled | Peak MiB | Disk MiB |",
+        + " | Total | Generated cells/s sampled | Peak MiB | Disk MiB |",
         "|---|---:|---:|---:|" + "---:|" * len(PHASES) + "---:|---:|---:|---:|",
     ]
     for (workload, size), s in sorted(summary.items()):
         phases = " | ".join(median_range(s["phases"][p]) for p in PHASES)
         lines.append(
-            f"| {workload} | {size:,} | {s['rows']:,} ({s['generated']:,}) | {s['cells']:,} | {phases}"
+            f"| {workload} | {size:,} | {s['rows']:,} ({s['generated']:,}) | {s['cells']:,} ({s['generated_cells']:,}) | {phases}"
             f" | {median_range(s['total'])} | {s['cells_per_second'] / 1e6:.2f}M | {median_range(s['peak'], ',.0f')}"
             f" | {s['disk']:.1f} |"
         )
