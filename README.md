@@ -697,6 +697,12 @@ of cutting a rank. Realizing fits these scores and the level cuts to one draw of
 realized table's shares follow its rows and it can be sampled at any size. A column that depends on a
 key keeps its shares exactly in every draw instead, since rows sharing a parent are not independent.
 
+## Compatibility
+
+[COMPATIBILITY.md](COMPATIBILITY.md) says what the API and its seeded draws promise, exactly and
+statistically, and on which environments that was checked; [CHANGELOG.md](CHANGELOG.md) lists
+each breaking change with its migration.
+
 ## Development
 
 Set up the environment with [pixi](https://pixi.sh/latest/installation/):
@@ -710,13 +716,15 @@ pixi run typecheck   # pyright over test/typing_examples.py, the public API as u
 pixi run examples    # every README block in order in one namespace, then each quickstart alone
 pixi run recipes     # every domain recipe in examples/generation, small, each in its own process
 pixi run bench       # generation time and memory up to 1M rows; see benchmarks/README.md
+pixi run fingerprints  # rewrite test/fingerprints.json, for a change that moves draws on purpose
 pixi run wheel       # a wheel in dist/
 ```
 
 CI runs the same on every pull request to `main` and `v2`: lint, types and the README on Linux,
 the suite on Linux and macOS, and the wheel installed clean into Python 3.12 and 3.13 and run by
 `scripts/smoke.py` from outside the checkout, which also checks that importing plurel leaves
-relbench unloaded. Corpus generation and performance runs stay out of it.
+relbench unloaded. Of the benchmarks only a 1k smoke run is in CI; corpus generation and full
+performance runs stay out of it.
 
 The v1 generator, the paper-exact code, remains at the
 [`v1.1.0`](https://github.com/stanford-star/plurel/tree/v1.1.0) and
