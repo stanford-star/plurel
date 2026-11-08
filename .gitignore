@@ -230,3 +230,6 @@ examples/**/churn_*.parquet
 
 # wandb
 wandb/
+benchmarks/results/latest.json
+benchmarks/results/smoke.*
+benchmarks/__pycache__/

@@ -715,6 +715,7 @@ pixi run lint        # ruff check and format check, at the version pre-commit pi
 pixi run typecheck   # pyright over test/typing_examples.py, the public API as users write it
 pixi run examples    # every README block in order in one namespace, then each quickstart alone
 pixi run recipes     # every domain recipe in examples/generation, small, each in its own process
+pixi run bench       # generation time and memory up to 1M rows; see benchmarks/README.md
 pixi run fingerprints  # rewrite test/fingerprints.json, for a change that moves draws on purpose
 pixi run wheel       # a wheel in dist/
 ```
@@ -722,7 +723,8 @@ pixi run wheel       # a wheel in dist/
 CI runs the same on every pull request to `main` and `v2`: lint, types and the README on Linux,
 the suite on Linux and macOS, and the wheel installed clean into Python 3.12 and 3.13 and run by
 `scripts/smoke.py` from outside the checkout, which also checks that importing plurel leaves
-relbench unloaded. Corpus generation and performance runs stay out of it.
+relbench unloaded. Of the benchmarks only a 1k smoke run is in CI; corpus generation and full
+performance runs stay out of it.
 
 The v1 generator, the paper-exact code, remains at the
 [`v1.1.0`](https://github.com/stanford-star/plurel/tree/v1.1.0) and
