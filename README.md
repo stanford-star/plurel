@@ -420,7 +420,11 @@ name prefix and validation and test shares.
 
 Any weight, effect, noise or marginal above may be drawn from a range. The table is then a family: `realize(seed)` draws one
 table of it, and one description gives many tables, each reproducible from its seed. `Schema.realize`
-does the same for a whole database, so an agent can author either.
+does the same for a whole database, so an agent can author either. Realizing then fits level cuts
+and scores to one calibration draw, skipped when there are none. That draw takes 4096 rows per
+generated table, at most the parent's rows for a key unique on its own, and what its counts give
+for a counted table; `realize(seed, rows={"enrollments": 100})` sets other sizes when a schema's
+keys make those infeasible.
 
 ```python
 from plurel import LOW, MEDIUM, STRONG, WEAK, Categorical, Noise, Numeric, Scaled, Table
