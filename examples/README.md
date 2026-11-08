@@ -1,5 +1,9 @@
 # Examples
 
+- [`concepts/`](concepts/): small, independent scripts explaining the lifecycle, latent and
+  recorded values, realization, sampling, calibration, synthetic and semi-synthetic authoring,
+  relational constraints, missingness, time, export, priors and edge cases. Start here to learn
+  one concept at a time; `pixi run recipes` checks these scripts as well as the domain recipes.
 - [`generation/`](generation/): standalone v2 recipes that compose the generation API around a
   domain, each checking the relationships it declares. Each runs on its own from the installed
   package with embedded synthetic fixtures, no data or network:

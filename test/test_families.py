@@ -353,15 +353,18 @@ def test_each_level_takes_its_range():
     assert frame.x[frame.k == "big"].between(100, 1000).all()
 
 
-def test_scores_are_fit_to_their_shares():
+@pytest.mark.parametrize("weight", [-2.0, -Range(1, 3)])
+def test_scores_are_fit_to_their_shares(weight):
     wanted = {"a": 0.6, "b": 0.3, "c": 0.1}
     table = Table(
         {
             "x": Numeric(Normal()),
-            "k": Categorical(wanted, scores={"a": {"x": 2.0}, "c": {"x": -Range(1, 3)}}),
+            "k": Categorical(wanted, scores={"a": {"x": 2.0}, "c": {"x": weight}}),
         }
     )
     assert table.family
+    with pytest.raises(ValueError, match=r"realize\(seed\).*fits categorical scores"):
+        table.sample(10, seed=0)
     frame = table.realize(0).sample(8000, seed=0)
     shares = frame.k.value_counts(normalize=True)
     for level, share in wanted.items():

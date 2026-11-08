@@ -27,7 +27,8 @@ format), and the layout of `describe()` beyond being plain JSON-ready data.
 
 1. Declare a `Table` or `Schema`. Ranges make it a family.
 2. `realize(mechanism_seed)` makes a generator: every range drawn, level cuts and scores fit to a
-   calibration draw. A declaration without ranges is a generator already and samples directly.
+   calibration draw. Declarations with neither parameter ranges nor categorical scores sample
+   directly.
 3. `sample(rows, seed=data_seed)` returns frames. Sampling never changes the generator.
 
 ## What a draw repeats

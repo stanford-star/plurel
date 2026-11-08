@@ -643,7 +643,8 @@ class Schema:
         `held` nodes take the given `(n, dim)` values."""
         if family := [table for table, scm in self.tables.items() if scm.family]:
             raise ValueError(
-                f"{family} hold ranges: make a generator with realize(seed), then sample it"
+                f"{family} need realization: realize(seed) resolves parameter ranges and fits"
+                " categorical scores; then sample the returned generator"
             )
         rows = dict(rows or {})
         for table, scm in self.tables.items():
