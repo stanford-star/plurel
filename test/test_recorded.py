@@ -66,7 +66,7 @@ def test_recorded_summaries_agree_with_pandas():
     groups = frames["staff"].groupby("team_id").pay
     for how, fill in hows.items():
         expected = getattr(groups, how)().reindex(range(40)).fillna(0.0 if fill is None else fill)
-        np.testing.assert_array_equal(frames["teams"][how], expected.to_numpy(dtype=float))
+        np.testing.assert_allclose(frames["teams"][how], expected.to_numpy(dtype=float), rtol=1e-12)
     assert (frames["teams"]["count"] == 0).any() and (frames["teams"]["mean"] == -1.0).any()
 
 

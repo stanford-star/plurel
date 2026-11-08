@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main, v2]
+  push:
+    branches: [main, v2]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    # lint, types and the README examples once, on Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: v0.73.0
+          locked: true
+          cache: true
+      - run: pixi run lint
+      - run: pixi run typecheck
+      - run: pixi run examples
+
+  tests:
+    # the suite on both platforms the lockfile solves for
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: v0.73.0
+          locked: true
+          cache: true
+      - run: pixi run test
+
+  package:
+    # a wheel installed clean, from PyPI's dependencies and no cache, into each supported Python
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build --wheel
+      - run: uv venv --python ${{ matrix.python }} "$RUNNER_TEMP/smoke"
+      - run: uv pip install --no-cache --python "$RUNNER_TEMP/smoke" dist/*.whl
+      - working-directory: ${{ runner.temp }}
+        run: "$RUNNER_TEMP/smoke/bin/python -I $GITHUB_WORKSPACE/scripts/smoke.py"
