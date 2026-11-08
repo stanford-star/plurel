@@ -42,8 +42,12 @@ from plurel.graph import (
 from plurel.links import Link, RandomLink
 from plurel.random import Range
 
-Effect = float | Range | tuple | Mapping[object, float]
-Causes = Mapping[str | Recorded | Summary | tuple[str, str], Effect]
+Weight = float | Range
+Levels = Mapping[object, Weight]  # an effect per level of a categorical cause
+Effect = Weight | tuple[Weight, Function] | Levels | tuple[Weight, Levels]
+# a cause names a column, a recorded value, a summary or a pair whose product it reads
+Cause = str | Recorded | Summary | tuple[str, str]
+Causes = Mapping[Cause, Effect]
 
 CODE = ".code"  # a categorical column's hidden node holding its level's index
 NOISE = 0.5  # the default standard deviation of the noise on a column's causes
@@ -206,7 +210,7 @@ def _scaled_levels(effect: Effect) -> Effect:
     return effect
 
 
-def _cause(cause: str | Summary, effect: Effect, keys: Collection[str]) -> Edge:
+def _cause(cause: str | Recorded | Summary, effect: Effect, keys: Collection[str]) -> Edge:
     """The edge of one cause: a weight, a weight and a transform, one effect per level, or a weight
     and the effects it scales."""
     tail = _tail(cause, keys)
@@ -541,7 +545,7 @@ class Derived:
     def inputs(self) -> tuple[str, ...]:
         return tuple(inspect.signature(self.function).parameters)
 
-    def compute(self, frame: pd.DataFrame) -> np.ndarray:
+    def compute(self, frame: Mapping[str, pd.Series]) -> np.ndarray:
         args = [frame[name].to_numpy(dtype=float) for name in self.inputs]
         with np.errstate(all="ignore"):
             computed = np.round(np.asarray(self.function(*args), dtype=float), 6)

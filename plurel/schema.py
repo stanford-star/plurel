@@ -34,6 +34,7 @@ from plurel.links import TreeLink, counted, distinct, joint_codes, matched, repe
 from plurel.random import Seed, generator, lane
 
 Links = dict[tuple[str, str], np.ndarray]
+Entry = Declaration | ForeignKey | PrimaryKey | Derived | Node | Column  # what a table holds
 Vertex = tuple[str, Hashable]
 SPAN = (pd.Timestamp.min.value // 10**9 + 1, pd.Timestamp.max.value // 10**9)  # epoch seconds
 
@@ -136,7 +137,7 @@ class Table:
 
     def __init__(
         self,
-        table: Mapping[str, object],
+        table: Mapping[str, "Entry"],
         *,
         time_column: str | None = None,
         name: str | None = None,
