@@ -255,7 +255,11 @@ level by an effect per level, so generated columns follow the real values' order
 `create_database` orders event tables by time and gives keys as row positions, the
 [relbench](https://github.com/stanford-star/relbench) form, which `write_database` saves and
 `read_database` loads back; it writes a `db` directory and a `manifest.yaml` under the given path.
-It refuses a path that already holds a dataset unless given `overwrite=True`.
+It refuses a path that already holds a dataset unless given `overwrite=True`, and a path holding
+anything else. It writes into a hidden sibling directory and renames it into place, so the path
+holds a complete dataset or none, and a failed or interrupted write keeps the previous one. A
+symlinked path is written where it points. Of writers racing for
+one path, each publishes a complete dataset or raises `FileExistsError`.
 
 ```python
 from plurel import create_database, split_timestamps, write_database

@@ -1,5 +1,7 @@
+import errno
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -7,7 +9,9 @@ import pytest
 from relbench.base import Database
 from relbench.base import Table as RelbenchTable
 from relbench.base.table import is_time_sorted
+from relbench.manifest import DatasetManifest
 
+import plurel.io as plurel_io
 from plurel import Exponential, ForeignKey, Normal, PrimaryKey, Schema, Table, Uniform
 from plurel.columns import DEFAULT_CALENDAR, Column
 from plurel.distributions import Gumbel
@@ -150,6 +154,119 @@ def test_write_and_read_round_trip(schema, tmp_path):
         write_database(
             unordered, tmp_path / "bad", name="x", val_timestamp=split, test_timestamp=split
         )
+
+
+@pytest.fixture
+def written(schema, tmp_path):
+    db = create_database(schema, schema.sample(ROWS, seed=0))
+    split = db.max_timestamp
+    path = write_database(db, tmp_path / "out", name="x", val_timestamp=split, test_timestamp=split)
+    smaller = create_database(schema, schema.sample({"customers": 40, "orders": 100}, seed=1))
+    return path, smaller, split
+
+
+def kept_previous(path):
+    assert len(read_database(path).table_dict["orders"].df) == ROWS["orders"]
+    assert [p.name for p in path.parent.iterdir()] == [path.name]
+
+
+@pytest.mark.parametrize(
+    "failing, error",
+    [
+        ("orders table", OSError),
+        ("manifest", OSError),
+        ("publish rename", OSError),
+        ("interrupted rename", KeyboardInterrupt),
+    ],
+)
+def test_a_failed_overwrite_keeps_the_previous_dataset(written, failing, error, monkeypatch):
+    path, smaller, split = written
+    to_parquet, rename = pd.DataFrame.to_parquet, Path.rename
+
+    def table_fails(frame, target, **kwargs):
+        if Path(target).name == "orders.parquet":
+            raise OSError("disk full")
+        to_parquet(frame, target, **kwargs)
+
+    def manifest_fails(manifest, target):
+        raise OSError("disk full")
+
+    def publish_fails(source, target):
+        if source.name.endswith(".staging"):
+            raise OSError(errno.EIO, "io error")
+        return rename(source, target)
+
+    def publish_interrupted(source, target):
+        if source.name.endswith(".staging"):
+            raise KeyboardInterrupt
+        return rename(source, target)
+
+    patch = {"orders table": (pd.DataFrame, "to_parquet", table_fails)}
+    patch["manifest"] = (DatasetManifest, "save", manifest_fails)
+    patch["publish rename"] = (Path, "rename", publish_fails)
+    patch["interrupted rename"] = (Path, "rename", publish_interrupted)
+    monkeypatch.setattr(*patch[failing])
+    with pytest.raises(error) as raised:
+        write_database(
+            smaller, path, name="x", val_timestamp=split, test_timestamp=split, overwrite=True
+        )
+    assert raised.type is error
+    monkeypatch.undo()
+    kept_previous(path)
+
+
+def test_a_symlinked_path_is_written_where_it_points(written):
+    path, smaller, split = written
+    (path.parent / "cache").mkdir()
+    link = path.parent / "cache" / "shop"
+    link.symlink_to(path, target_is_directory=True)
+    returned = write_database(
+        smaller, link, name="x", val_timestamp=split, test_timestamp=split, overwrite=True
+    )
+    assert returned == link and link.is_symlink() and link.resolve() == path.resolve()
+    assert len(read_database(path).table_dict["orders"].df) == 100
+    assert [p.name for p in (path.parent / "cache").iterdir()] == ["shop"]
+    assert sorted(p.name for p in path.parent.iterdir()) == ["cache", "out"]
+
+
+def test_a_filesystem_root_is_refused(written):
+    _, smaller, split = written
+    with pytest.raises(ValueError, match="filesystem root"):
+        write_database(smaller, "/", name="x", val_timestamp=split, test_timestamp=split)
+
+
+def test_a_writer_that_loses_the_race_raises_and_leaves_the_winner(written, monkeypatch):
+    path, smaller, split = written
+    original = plurel_io.stage
+    target = path.with_name("fresh")
+
+    def rival_publishes_first(db, staging, *args):
+        original(db, staging, *args)
+        monkeypatch.setattr(plurel_io, "stage", original)
+        write_database(smaller, target, name="x", val_timestamp=split, test_timestamp=split)
+
+    monkeypatch.setattr(plurel_io, "stage", rival_publishes_first)
+    with pytest.raises(FileExistsError, match="another writer"):
+        write_database(smaller, target, name="x", val_timestamp=split, test_timestamp=split)
+    assert len(read_database(target).table_dict["orders"].df) == 100
+    assert sorted(p.name for p in path.parent.iterdir()) == ["fresh", "out"]
+
+
+def test_only_a_dataset_or_an_empty_directory_is_replaced(written):
+    path, smaller, split = written
+    (path.parent / "empty").mkdir()
+    write_database(
+        smaller, path.parent / "empty", name="x", val_timestamp=split, test_timestamp=split
+    )
+    assert len(read_database(path.parent / "empty").table_dict["orders"].df) == 100
+    (path.parent / "notes").mkdir()
+    (path.parent / "notes" / "keep.txt").write_text("mine")
+    for target in [path.parent / "notes", path.parent / "notes" / "keep.txt"]:
+        with pytest.raises(FileExistsError, match="no dataset"):
+            write_database(
+                smaller, target, name="x", val_timestamp=split, test_timestamp=split, overwrite=True
+            )
+    assert (path.parent / "notes" / "keep.txt").read_text() == "mine"
 
 
 def test_a_home_path_is_expanded(schema, tmp_path, monkeypatch):
