@@ -6,22 +6,29 @@ the saved database back. Results are saved as JSON in [`results/`](results/) and
 which only runs the smallest size once.
 
 ```bash
-pixi run bench          # every workload at 1k, 10k, 100k and 1M rows, 3 repeats, to results/latest.json
+pixi run bench          # every workload at 1k, 10k, 100k and 1M rows, seeds 0-2, each run twice
 pixi run bench-report   # REPORT.md from results/latest.json, without plots
-pixi run bench-smoke    # 1k rows once, as CI runs it
+pixi run bench-smoke    # 1k rows, seed 0, once, as CI runs it
 pixi exec --spec python=3.12 --spec matplotlib python benchmarks/report.py \
     benchmarks/results/latest.json --out benchmarks/REPORT.md   # with time.png and memory.png
-python benchmarks/run.py --workloads wide retail --sizes 1000 10000 --repeats 1 --out /tmp/a.json
+python benchmarks/run.py --workloads wide retail --sizes 1000 10000 --seeds 0 --repeats 1 --out /tmp/a.json
 ```
 
 The report reads only the JSON, never PluRel, so plots need matplotlib alone, not in the project's
 environment, whose locked versions the measurements depend on.
 
+On Linux, the [`measure`](../.github/workflows/measure.yml) workflow runs the full benchmark on
+GitHub's `ubuntu-latest` runner, outside pull-request CI: push a commit to a branch named
+`measure/...`, then download its artifact, which holds the results, their report and the
+fingerprinted draws for [COMPATIBILITY.md](../COMPATIBILITY.md).
+
 ## What is measured
 
 Each run is one workload at one size under one seed, in a fresh process, so its peak memory
-(`ru_maxrss`) is its own and includes the interpreter and imports, about 190 MiB. Its phases are
-timed apart and summed:
+(`ru_maxrss`) is its own and includes the interpreter and imports, about 190 MiB. There is no
+warm-up: every run is cold, and imports are not timed. Each seed is run twice, so the report can
+tell how much the time moves with the draw, across seeds, from timing noise, across repeats of one
+seed. Its phases are timed apart and summed:
 
 | Phase | What it times |
 |---|---|
@@ -42,7 +49,12 @@ kept with its configuration and message, and the report lists it.
 |---|---|
 | `narrow` | one table of five columns and a short chain of causes |
 | `wide` | one table of 50 numbers, each caused by the three before it, and a categorical |
+| `columns-10`, `columns-200` | one table of 10 or 200 numbers, each caused by the three before it; 200 columns stop at 100k rows, 20M cells |
+| `dense` | one table of 40 numbers, each caused by every one before it: 780 causes |
+| `tables-2`, `tables-8`, `tables-32` | a chain of 2, 8 or 32 tables of five columns, each keyed to the one before and caused by it, the rows split evenly, none below 256 |
 | `prior-0`, `prior-1`, `prior-2` | `SchemaPrior` databases under three seeds, scaled so the largest table takes the size; no table goes below 256 rows, which a link's clusters need |
+| `prior-table` | one table of 20 columns drawn by `TablePrior`, the same table at every size |
+| `mixed` | hand-authored customers and orders around a product table drawn by `TablePrior`; orders' amount is caused across both keys |
 | `keyed` | students counted per student with `least` and `most`, matched to real courses by level, preferred by recorded size and unique per student |
 | `retail`, `visits`, `enrollments` | the recipes in [`examples/generation`](../examples/generation/), their fixtures scaled to about the size; retail and enrollments grow their retained tables with the size |
 

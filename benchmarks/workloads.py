@@ -14,15 +14,18 @@ from plurel import (
     Categorical,
     Counts,
     ForeignKey,
+    IntegersRange,
+    LogNormal,
     Numeric,
     PrimaryKey,
     Recorded,
     Schema,
     Shares,
     Table,
+    Timestamp,
     Uniform,
 )
-from plurel.prior import SchemaPrior
+from plurel.prior import SchemaPrior, TablePrior
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples" / "generation"))
 
@@ -101,6 +104,41 @@ def prior(seed: int) -> Build:
     return build
 
 
+def prior_table(rows: int) -> tuple[Schema, dict[str, int]]:
+    """One table of 20 columns drawn by TablePrior, the same table at every size."""
+    table = TablePrior(column_count=IntegersRange(20, 20)).realize(0)
+    return Schema({"t": table}), {"t": rows}
+
+
+def mixed(rows: int) -> tuple[Schema, dict[str, int]]:
+    """Hand-authored customers and orders around a product table drawn by TablePrior: orders
+    point at both, their amount caused across both keys. A twentieth of the rows are products,
+    a tenth customers, the rest orders."""
+    products = TablePrior(column_count=IntegersRange(10, 10)).realize(0)
+    customers = Table(
+        {
+            "id": PrimaryKey(),
+            "segment": Categorical({"gold": 0.2, "silver": 0.3, "bronze": 0.5}),
+            "income": Numeric(LogNormal(), causes={"segment": {"gold": 1.0}}),
+        }
+    )
+    orders = Table(
+        {
+            "id": PrimaryKey(),
+            "customer_id": ForeignKey("customers"),
+            "product_id": ForeignKey("products"),
+            "time": Timestamp("2020-01-01", "2024-01-01"),
+            "amount": Numeric(
+                LogNormal(), causes={"customer_id.income": 1.0, "product_id.col0": 0.5}
+            ),
+        },
+        time_column="time",
+    )
+    schema = Schema({"products": products, "customers": customers, "orders": orders})
+    share = {"products": 0.05, "customers": 0.1, "orders": 0.85}
+    return schema, {t: max(256, round(rows * s)) for t, s in share.items()}
+
+
 def keyed(rows: int) -> tuple[Schema, dict[str, int]]:
     """Students counted per real course level, matched to courses, unique per student."""
     courses = Table.from_frame(
@@ -157,9 +195,11 @@ WORKLOADS: dict[str, Build] = {
     "tables-2": tables(2),
     "tables-8": tables(8),
     "tables-32": tables(32),
+    "prior-table": prior_table,
     "prior-0": prior(0),
     "prior-1": prior(1),
     "prior-2": prior(2),
+    "mixed": mixed,
     "keyed": keyed,
     "retail": retail,
     "visits": visits,
