@@ -170,8 +170,16 @@ def kept_previous(path):
     assert [p.name for p in path.parent.iterdir()] == [path.name]
 
 
-@pytest.mark.parametrize("failing", ["orders table", "manifest", "publish rename"])
-def test_a_failed_overwrite_keeps_the_previous_dataset(written, failing, monkeypatch):
+@pytest.mark.parametrize(
+    "failing, error",
+    [
+        ("orders table", OSError),
+        ("manifest", OSError),
+        ("publish rename", OSError),
+        ("interrupted rename", KeyboardInterrupt),
+    ],
+)
+def test_a_failed_overwrite_keeps_the_previous_dataset(written, failing, error, monkeypatch):
     path, smaller, split = written
     to_parquet, rename = pd.DataFrame.to_parquet, Path.rename
 
@@ -188,17 +196,43 @@ def test_a_failed_overwrite_keeps_the_previous_dataset(written, failing, monkeyp
             raise OSError(errno.EIO, "io error")
         return rename(source, target)
 
+    def publish_interrupted(source, target):
+        if source.name.endswith(".staging"):
+            raise KeyboardInterrupt
+        return rename(source, target)
+
     patch = {"orders table": (pd.DataFrame, "to_parquet", table_fails)}
     patch["manifest"] = (DatasetManifest, "save", manifest_fails)
     patch["publish rename"] = (Path, "rename", publish_fails)
+    patch["interrupted rename"] = (Path, "rename", publish_interrupted)
     monkeypatch.setattr(*patch[failing])
-    with pytest.raises(OSError) as raised:
+    with pytest.raises(error) as raised:
         write_database(
             smaller, path, name="x", val_timestamp=split, test_timestamp=split, overwrite=True
         )
-    assert raised.type is OSError
+    assert raised.type is error
     monkeypatch.undo()
     kept_previous(path)
+
+
+def test_a_symlinked_path_is_written_where_it_points(written):
+    path, smaller, split = written
+    (path.parent / "cache").mkdir()
+    link = path.parent / "cache" / "shop"
+    link.symlink_to(path, target_is_directory=True)
+    returned = write_database(
+        smaller, link, name="x", val_timestamp=split, test_timestamp=split, overwrite=True
+    )
+    assert returned == link and link.is_symlink() and link.resolve() == path.resolve()
+    assert len(read_database(path).table_dict["orders"].df) == 100
+    assert [p.name for p in (path.parent / "cache").iterdir()] == ["shop"]
+    assert sorted(p.name for p in path.parent.iterdir()) == ["cache", "out"]
+
+
+def test_a_filesystem_root_is_refused(written):
+    _, smaller, split = written
+    with pytest.raises(ValueError, match="filesystem root"):
+        write_database(smaller, "/", name="x", val_timestamp=split, test_timestamp=split)
 
 
 def test_a_writer_that_loses_the_race_raises_and_leaves_the_winner(written, monkeypatch):

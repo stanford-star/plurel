@@ -96,10 +96,11 @@ def write_database(
 ) -> Path:
     """Write every file into a hidden sibling of `path`, check it, then rename it into place.
 
-    `path` holds a complete dataset or none. A failed write keeps the previous dataset. A killed
-    one leaves a hidden `.<name>.*.staging` sibling, or, if killed while replacing, the previous
-    dataset in a `.<name>.*.retired` sibling. Of writers racing for one path, each either
-    publishes a complete dataset or raises FileExistsError.
+    A symlinked `path` is written where it points. `path` holds a complete dataset or none. A
+    failed or interrupted write keeps the previous dataset. A killed one leaves a hidden
+    `.<name>.*.staging` sibling, or, if killed while replacing, the previous dataset in a
+    `.<name>.*.retired` sibling. Of writers racing for one path, each either publishes a complete
+    dataset or raises FileExistsError.
     """
     if val_timestamp > test_timestamp:
         raise ValueError("val_timestamp must not be after test_timestamp")
@@ -113,15 +114,19 @@ def write_database(
                     " survive parquet"
                 )
     path = Path(path).expanduser()
-    if holds_dataset(path) and not overwrite:
-        raise FileExistsError(f"{path} already holds a dataset; pass overwrite=True")
-    if path.exists() and not holds_dataset(path) and (not path.is_dir() or any(path.iterdir())):
+    target = path.resolve()
+    if target == target.parent:
+        raise ValueError(f"{path} is a filesystem root, which cannot hold a dataset")
+    if holds_dataset(target):
+        if not overwrite:
+            raise FileExistsError(f"{path} already holds a dataset; pass overwrite=True")
+    elif target.exists() and (not target.is_dir() or any(target.iterdir())):
         raise FileExistsError(f"{path} holds files but no dataset, so it is not replaced")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    staging = path.with_name(f".{path.name}.{uuid.uuid4().hex}.staging")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = target.with_name(f".{target.name}.{uuid.uuid4().hex}.staging")
     try:
         stage(db, staging, name, val_timestamp, test_timestamp, description)
-        publish(staging, path, overwrite)
+        publish(staging, target, overwrite)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return path
@@ -160,24 +165,34 @@ def stage(
     saved = DatasetManifest.load(staging / "manifest.yaml")
     for table_name, table in db.table_dict.items():
         written = pq.read_metadata(staging / "db" / f"{table_name}.parquet")
-        if table_name not in saved.tables or written.num_rows != len(table.df):
+        columns = [str(column) for column in table.df.columns]
+        if (
+            table_name not in saved.tables
+            or written.num_rows != len(table.df)
+            or written.schema.names != columns
+        ):
             raise OSError(f"table {table_name!r} did not survive writing to {staging}")
 
 
 def publish(staging: Path, path: Path, overwrite: bool) -> None:
+    """Rename `staging` onto `path`, keeping a replaced dataset aside until the rename lands."""
     retired = staging.with_suffix(".retired")
-    if overwrite and holds_dataset(path):
-        path.rename(retired)
     try:
+        if overwrite and holds_dataset(path):
+            path.rename(retired)
+        elif path.is_dir():
+            path.rmdir()
         staging.rename(path)
-    except OSError as error:
-        if retired.exists() and not path.exists():
+    except BaseException as error:
+        taken = path.exists()
+        if not taken and retired.exists():
             retired.rename(path)
-        if error.errno in (errno.EEXIST, errno.ENOTEMPTY):
-            raise FileExistsError(f"another writer published {path} first") from error
+        if taken and isinstance(error, OSError) and error.errno in (errno.EEXIST, errno.ENOTEMPTY):
+            if holds_dataset(path):
+                shutil.rmtree(retired, ignore_errors=True)
+            raise FileExistsError(f"another writer took {path} first") from error
         raise
-    finally:
-        shutil.rmtree(retired, ignore_errors=True)
+    shutil.rmtree(retired, ignore_errors=True)
 
 
 def read_database(path: str | Path) -> Database:
