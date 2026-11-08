@@ -1,9 +1,12 @@
+import errno
 import shutil
+import uuid
 from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 from relbench.base import Database, Table
 from relbench.base.table import is_time_sorted
 from relbench.load import load_dataset
@@ -91,6 +94,13 @@ def write_database(
     description: str | None = None,
     overwrite: bool = False,
 ) -> Path:
+    """Write every file into a hidden sibling of `path`, check it, then rename it into place.
+
+    `path` holds a complete dataset or none. A failed write keeps the previous dataset. A killed
+    one leaves a hidden `.<name>.*.staging` sibling, or, if killed while replacing, the previous
+    dataset in a `.<name>.*.retired` sibling. Of writers racing for one path, each either
+    publishes a complete dataset or raises FileExistsError.
+    """
     if val_timestamp > test_timestamp:
         raise ValueError("val_timestamp must not be after test_timestamp")
     for table_name, table in db.table_dict.items():
@@ -103,13 +113,35 @@ def write_database(
                     " survive parquet"
                 )
     path = Path(path).expanduser()
-    if (path / "manifest.yaml").exists():
-        if not overwrite:
-            raise FileExistsError(f"{path} already holds a dataset; pass overwrite=True")
-        shutil.rmtree(path / "db", ignore_errors=True)
-    (path / "db").mkdir(parents=True, exist_ok=True)
+    if holds_dataset(path) and not overwrite:
+        raise FileExistsError(f"{path} already holds a dataset; pass overwrite=True")
+    if path.exists() and not holds_dataset(path) and (not path.is_dir() or any(path.iterdir())):
+        raise FileExistsError(f"{path} holds files but no dataset, so it is not replaced")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staging = path.with_name(f".{path.name}.{uuid.uuid4().hex}.staging")
+    try:
+        stage(db, staging, name, val_timestamp, test_timestamp, description)
+        publish(staging, path, overwrite)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return path
+
+
+def holds_dataset(path: Path) -> bool:
+    return (path / "manifest.yaml").is_file()
+
+
+def stage(
+    db: Database,
+    staging: Path,
+    name: str,
+    val_timestamp: pd.Timestamp,
+    test_timestamp: pd.Timestamp,
+    description: str | None,
+) -> None:
+    (staging / "db").mkdir(parents=True)
     for table_name, table in db.table_dict.items():
-        table.df.to_parquet(path / "db" / f"{table_name}.parquet", index=False)
+        table.df.to_parquet(staging / "db" / f"{table_name}.parquet", index=False)
     manifest = DatasetManifest(
         name=name,
         val_timestamp=str(val_timestamp),
@@ -124,8 +156,28 @@ def write_database(
             for table_name, table in db.table_dict.items()
         },
     )
-    manifest.save(path / "manifest.yaml")
-    return path
+    manifest.save(staging / "manifest.yaml")
+    saved = DatasetManifest.load(staging / "manifest.yaml")
+    for table_name, table in db.table_dict.items():
+        written = pq.read_metadata(staging / "db" / f"{table_name}.parquet")
+        if table_name not in saved.tables or written.num_rows != len(table.df):
+            raise OSError(f"table {table_name!r} did not survive writing to {staging}")
+
+
+def publish(staging: Path, path: Path, overwrite: bool) -> None:
+    retired = staging.with_suffix(".retired")
+    if overwrite and holds_dataset(path):
+        path.rename(retired)
+    try:
+        staging.rename(path)
+    except OSError as error:
+        if retired.exists() and not path.exists():
+            retired.rename(path)
+        if error.errno in (errno.EEXIST, errno.ENOTEMPTY):
+            raise FileExistsError(f"another writer published {path} first") from error
+        raise
+    finally:
+        shutil.rmtree(retired, ignore_errors=True)
 
 
 def read_database(path: str | Path) -> Database:
