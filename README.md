@@ -418,9 +418,19 @@ frames = school.sample({"students": 200, "courses": 30}, seed=0)
 ```
 
 Row counts of a counted table: without one, each parent draws a Poisson count around `mean` times
-its share and the counts are the table's size, each capped at `most`. Given one, that total is
-split among the parents by the same shares, rows over `most` are dealt again to parents with room,
-and a total above `most` times the parents raises.
+its share and the counts are the table's size, each clipped to `least` and `most`, so `mean` is the
+Poisson mean before clipping. Given one, every parent first takes `least` rows, the rest is split
+among the parents by the same shares, rows over `most` are dealt again to parents with room, and a
+total below `least` or above `most` times the parents raises. `least=1` gives every order a line:
+
+```python
+orders = Schema({
+    "orders": Table({"id": PrimaryKey()}),
+    "lines": Table({"order_id": ForeignKey("orders", counts=Counts(3.0, least=1, most=8))}),
+})
+lines = orders.sample({"orders": 1000}, seed=0)["lines"]
+assert lines.order_id.nunique() == 1000 and lines.order_id.value_counts().max() <= 8
+```
 
 Two options leave rows pointing at nothing, and they compose. `unmatched="null"` does so for rows
 no parent is left for, on a key that matches or is unique, and keeps every row that has one;
