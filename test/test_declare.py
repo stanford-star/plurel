@@ -4,6 +4,7 @@ import pytest
 
 from plurel import (
     Categorical,
+    Derived,
     ForeignKey,
     Hidden,
     LogNormal,
@@ -383,3 +384,67 @@ def test_rounding_lands_on_the_step():
 def test_one_string_is_no_levels():
     with pytest.raises(ValueError, match="not one string"):
         Categorical("abc")
+
+
+def test_real_rows_take_table_metadata_and_a_task_target():
+    real = pd.DataFrame({"id": ["A", "B", "C"], "age": [20, 40, 60]})
+    table = Table.from_frame(
+        real,
+        primary_key="id",
+        extra={"churn": Categorical({"no": 0.8, "yes": 0.2}, causes={"age": -0.8})},
+        target="churn",
+        name="customers",
+        doc="One customer per row",
+        sources="a CRM export",
+        docs={"age": "Age in years", "churn": "Left within a year"},
+    )
+    realized = table.realize(0)
+    for each in (table, realized):
+        assert (each.name, each.target, each.doc, each.sources) == (
+            "customers",
+            "churn",
+            "One customer per row",
+            "a CRM export",
+        )
+        assert each.docs == {"age": "Age in years", "churn": "Left within a year"}
+    frame = realized.sample(seed=0)
+    assert frame.id.tolist() == ["A", "B", "C"] and frame.age.tolist() == [20, 40, 60]
+    described = realized.describe()
+    assert described["target"] == "churn" and described["columns"]["age"]["doc"] == "Age in years"
+    assert Table.from_frame(real, primary_key="id", target="age").target == "age"
+    with pytest.raises(ValueError, match="target 'id' is a key"):
+        Table.from_frame(real, primary_key="id", target="id")
+
+
+def test_derived_columns_bind_parameters_to_any_column_name():
+    real = pd.DataFrame({"Unit Price": [10.0, 20.0, None], "Quantity": [2.0, 3.0, 4.0]})
+    total = Derived(
+        lambda price, quantity: price * quantity,
+        columns={"price": "Unit Price", "quantity": "Quantity"},
+    )
+    table = Table.from_frame(
+        real,
+        extra={
+            "Total": total,
+            "With tax": Derived(lambda total: total * 1.1, columns={"total": "Total"}),
+        },
+    )
+    frame = table.sample(seed=0)
+    assert list(frame) == ["Unit Price", "Quantity", "Total", "With tax"]
+    np.testing.assert_array_equal(frame.Total, [20.0, 60.0, np.nan])
+    np.testing.assert_allclose(frame["With tax"], [22.0, 66.0, np.nan])
+    assert table.describe()["columns"]["Total"]["inputs"] == ["Unit Price", "Quantity"]
+    with pytest.raises(ValueError, match=r"binds \['cost'\]"):
+        Derived(lambda price: price, columns={"cost": "Unit Price"})
+    with pytest.raises(ValueError, match=r"reads Price \(as price\)"):
+        Table.from_frame(
+            real, extra={"T": Derived(lambda price: price, columns={"price": "Price"})}
+        )
+    assert Derived(lambda a: a, "what it is").doc == "what it is"
+    with pytest.raises(ValueError, match="cycle"):
+        Table(
+            {
+                "a": Derived(lambda x: x, columns={"x": "b"}),
+                "b": Derived(lambda y: y, columns={"y": "a"}),
+            }
+        )

@@ -239,12 +239,12 @@ def distinct(
     log_weights: np.ndarray,
     together: np.ndarray,
     rng: np.random.Generator,
-    nullable: bool = False,
+    leave: bool = False,
 ) -> np.ndarray:
     """`matched`, with no two rows of one `together` group (-1: none) on the same parent. Repeats
     are redrawn a few rounds; a group still repeating, or with more rows than parents, is then
     drawn whole, without replacement, by Gumbel keys, so a full group costs its pool once. Rows a
-    group has no parent left for point at nothing if `nullable`, and raise otherwise."""
+    group has no parent left for point at nothing if `leave`, and raise otherwise."""
     blank = [np.where(codes < 0, np.nan, codes) for codes in (child, together)]
     group = joint_codes(blank, len(child))
     eligible = np.flatnonzero((parent >= 0) & np.isfinite(log_weights))
@@ -257,7 +257,7 @@ def distinct(
     first[group[group >= 0][::-1]] = np.flatnonzero(group >= 0)[::-1]
     supply = size[child[first]] if len(demand) else np.empty(0, dtype=np.int64)
     short = demand > supply
-    if short.any() and not nullable:
+    if short.any() and not leave:
         worst = int(np.flatnonzero(short)[0])
         raise ValueError(
             f"{demand[worst]} rows that must not repeat a parent share only {supply[worst]}"

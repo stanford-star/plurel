@@ -16,6 +16,7 @@ from plurel import (
     Uniform,
 )
 from plurel.columns import DEFAULT_CALENDAR, Column
+from plurel.draw import Linked, Run
 from plurel.graph import (
     AGGREGATES,
     Edge,
@@ -30,7 +31,6 @@ from plurel.graph import (
     standardize,
 )
 from plurel.links import HSBMLink, RandomLink, TreeLink
-from plurel.schema import Linked
 
 N = 300
 
@@ -392,28 +392,27 @@ def test_aggregates_handle_empty_groups():
         {"a": Table({"x": Node()}), "b": Table({"x": Node(dim=2)})},
         (("b", "a_id", ForeignKey("a", nullable=0.5)),),
     )
-    rows, latents = {"a": 3, "b": 3}, {"a": {"x": values[:, :1]}, "b": {"x": values}}
+    latents = {"a": {"x": values[:, :1]}, "b": {"x": values}}
+
+    def resolve(table, tail, links):
+        run = Run(schema, {"a": 3, "b": 3}, root=0)
+        run.latents.update(latents)
+        run.links.update(links)
+        return run.resolve(table, tail)
+
     links = {("b", "a_id"): index}
     with pytest.raises(ValueError, match="fill"):
-        schema.resolve("a", Summary("b", "a_id", "x", "mean"), rows, latents, {}, links)
+        resolve("a", Summary("b", "a_id", "x", "mean"), links)
     np.testing.assert_array_equal(
-        schema.resolve("a", Summary("b", "a_id", "x", "mean", fill=-1.0), rows, latents, {}, links)[
-            1
-        ],
-        [-1.0, -1.0],
+        resolve("a", Summary("b", "a_id", "x", "mean", fill=-1.0), links)[1], [-1.0, -1.0]
     )
     np.testing.assert_array_equal(
-        schema.resolve("a", Summary("b", "a_id", "x", "sum"), rows, latents, {}, links),
-        expected["sum"],
+        resolve("a", Summary("b", "a_id", "x", "sum"), links), expected["sum"]
     )
     with pytest.raises(ValueError, match="fill"):
-        schema.resolve(
-            "b", Foreign("a_id", "x"), rows, latents, {}, {("b", "a_id"): np.array([0, -1, 2])}
-        )
+        resolve("b", Foreign("a_id", "x"), {("b", "a_id"): np.array([0, -1, 2])})
     np.testing.assert_array_equal(
-        schema.resolve(
-            "b", Foreign("a_id", "x"), rows, latents, {}, {("b", "a_id"): np.array([2, 0, 1])}
-        ),
+        resolve("b", Foreign("a_id", "x"), {("b", "a_id"): np.array([2, 0, 1])}),
         [[5.0], [1.0], [3.0]],
     )
 
