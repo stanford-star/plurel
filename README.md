@@ -272,6 +272,49 @@ enrollments = Table({
 A position within a group, such as an order's line number, is no key: compute it afterwards with
 `frame.groupby("order_id").cumcount() + 1`.
 
+#### Foreign key options at a glance
+
+| Option | Says | Combines with | Raises with |
+|---|---|---|---|
+| `link` | how rows pick parents by structure: `RandomLink()`, `HSBMLink`, `TreeLink` | `nullable` | any other option, unless left as `RandomLink()` |
+| `values` | the parent keys of real rows | `unique` (the given pairs are checked) | `match`, `prefer`, `counts`, `nullable` |
+| `match` | columns the parent must agree on | `prefer`, `unique`, `nullable` | `link`, `values`, `counts` |
+| `prefer` | weights read from the parent's columns | `match`, `unique`, `nullable` | `link`, `values`, `counts` |
+| `counts` | how many rows point at each parent, and so the table's size | none on the same key | everything else |
+| `unique` | no repeated parent, alone or per group | `match`, `prefer`, `nullable`, `values` | `link`, `counts` |
+| `nullable` | a share of rows that point at nothing | `link`, `match`, `prefer`, `unique` | `values`, `counts` |
+
+`counts` and `unique` go on different keys: one key counts each student's enrollments, another is
+unique per student, and `most` keeps a student from taking more enrollments than there are
+courses. A table has at most one counting key.
+
+```python
+from plurel import Schema
+
+school = Schema({
+    "students": Table({"id": PrimaryKey(), "year": Numeric(Uniform(1, 4), round=1)}),
+    "courses": Table({"id": PrimaryKey(), "level": Categorical(("intro", "advanced")), "size": Numeric()}),
+    "enrollments": Table({
+        "student_id": ForeignKey("students", counts=Counts(3.0, causes={"year": 0.5}, most=5)),
+        "level": Categorical(("intro", "advanced"), causes={"student_id.year": 1.0}),
+        "course_id": ForeignKey(
+            "courses", match={"level": "level"}, prefer={"size": 1.0}, unique="student_id",
+            nullable=0.01, fill=0.0,
+        ),
+    }),
+})
+frames = school.sample({"students": 200, "courses": 30}, seed=0)
+```
+
+Row counts of a counted table: without one, each parent draws a Poisson count around `mean` times
+its share and the counts are the table's size, each capped at `most`. Given one, that total is
+split among the parents by the same shares, rows over `most` are dealt again to parents with room,
+and a total above `most` times the parents raises.
+
+`nullable` does two things. A share of the rows point at nothing, drawn at random, and on a key
+that matches or is unique, rows no parent is left for point at nothing instead of raising. A
+`fill` gives what latents read across such a row.
+
 `Summary` reads the rows pointing back. It takes the table and its key, and counts them unless told
 to aggregate a column of theirs, as its sum (`Summary("staff", "boss_id", "pay", "mean",
 fill=0.0)`; also `sum`, `max` and `min`; all but `sum` need a `fill` for rows that nothing points
@@ -420,7 +463,11 @@ name prefix and validation and test shares.
 
 Any weight, effect, noise or marginal above may be drawn from a range. The table is then a family: `realize(seed)` draws one
 table of it, and one description gives many tables, each reproducible from its seed. `Schema.realize`
-does the same for a whole database, so an agent can author either.
+does the same for a whole database, so an agent can author either. Realizing then fits level cuts
+and scores to one calibration draw, skipped when there are none. That draw takes 4096 rows per
+generated table, at most the parent's rows for a key unique on its own, and what its counts give
+for a counted table; `realize(seed, rows={"enrollments": 100})` sets other sizes when a schema's
+keys make those infeasible.
 
 ```python
 from plurel import LOW, MEDIUM, STRONG, WEAK, Categorical, Noise, Numeric, Scaled, Table

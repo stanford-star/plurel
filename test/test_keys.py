@@ -199,7 +199,7 @@ def test_a_counted_table_can_be_the_parent_of_more_counts():
         (lambda: Table({"k": ForeignKey("p", match={"x": "x"}), "x": Numeric()}), "categorical"),
         (lambda: clinics(match={"region": "capacity"}), "no categorical"),
         (lambda: clinics(prefer={("capacity", "region"): 1.0}), "no products"),
-        (lambda: clinics(prefer={"nothing": 1.0}), "unknown columns"),
+        (lambda: clinics(prefer={"nothing": 1.0}), "no columns of"),
         (
             lambda: Schema(
                 {"t": Table({"id": PrimaryKey(), "k": ForeignKey("t", counts=Counts(1.0))})}

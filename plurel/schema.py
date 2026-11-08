@@ -291,11 +291,8 @@ class Table:
                 )
         for name, node in self.nodes.items():
             for edge in node.across:
-                if isinstance(edge.parent, Recorded) and edge.parent.column not in self.readable:
-                    raise ValueError(
-                        f"{name!r} reads {edge.parent.column!r} as recorded: Recorded reads a"
-                        " numeric, timestamp or derived column of the table"
-                    )
+                if isinstance(edge.parent, Recorded):
+                    self.check_recorded(edge.parent.column, f"{name!r}")
         for name, (parent, ranges) in self.by_level.items():
             if kinds.get(parent) != "categorical":
                 raise ValueError(f"{name!r} takes ranges from {parent!r}: no categorical")
@@ -315,6 +312,25 @@ class Table:
                     else ("a key" if self.target in self.table else "no entry of the table")
                 )
                 raise ValueError(f"target {self.target!r} is {why}: it must be a recorded column")
+
+    def check_recorded(self, column: str, reader: str) -> None:
+        """That `reader` may read `column` of this table as recorded: a number, a time or a
+        derived value."""
+        if column in self.readable:
+            return
+        entry = self.table.get(column)
+        if entry is None:
+            why = "no column of the table"
+        elif isinstance(entry, ForeignKey):
+            why = "a foreign key"
+        elif isinstance(entry, Node):
+            why = "a hidden cause"
+        else:
+            why = f"a {entry.kind} column"
+        raise ValueError(
+            f"{reader} reads {column!r} as recorded, which is {why}: Recorded reads a numeric,"
+            " timestamp or derived column"
+        )
 
     @property
     def metadata(self) -> dict[str, object]:
@@ -342,7 +358,9 @@ class Table:
         table = table or self.name or "table"
         return {
             name: entry.draw(lane(root, "realize", table, name))
-            if isinstance(entry, Declaration) or isinstance(entry, ForeignKey) and entry.family
+            if isinstance(entry, Declaration)
+            or isinstance(entry, ForeignKey)
+            and (entry.counts is not None or bool(entry.prefer))
             else entry
             for name, entry in self.declared.items()
         }
@@ -358,11 +376,14 @@ class Table:
         holds nothing to draw."""
         return self.like(self.like(self.draws(root, table)).table) if self.family else self
 
-    def realize(self, seed: int) -> "Table":
+    def realize(self, seed: int, rows: int | None = None) -> "Table":
         """One table of this family: every range drawn from `seed`, then its level cuts and scores
-        fit to one draw of its rows. A table draws by its name, so a named table realizes the same
-        alone and in a Schema; one with nothing left to draw is only fit again."""
-        return Schema({self.name or "table": self}).realize(seed).tables[self.name or "table"]
+        fit to one draw of its rows, `rows` of them if given. A table draws by its name, so a named
+        table realizes the same alone and in a Schema; one with nothing left to draw is only fit
+        again."""
+        name = self.name or "table"
+        given = None if rows is None else {name: rows}
+        return Schema({name: self}).realize(seed, given).tables[name]
 
     def record(
         self,
@@ -535,10 +556,16 @@ class Schema:
         node = key_node(causes, noise, parent.fkeys)
         if node is None:
             return None
+        what = "counts its rows" if fk.counts else "weighs its parents"
         if unknown := set(node.parents) - set(parent.nodes):
-            raise ValueError(f"{column!r} reads unknown columns {sorted(unknown)}")
+            raise ValueError(
+                f"{column!r} of {table!r} {what} by {sorted(unknown)}, no columns of {fk.parent!r}"
+            )
         node = bound_local(node, parent.table)
-        return node, tuple(self.bound(fk.parent, edge) for edge in node.across)
+        try:
+            return node, tuple(self.bound(fk.parent, edge) for edge in node.across)
+        except ValueError as error:
+            raise ValueError(f"{column!r} of {table!r} {what} in {fk.parent!r}: {error}") from error
 
     def link_reads(self, table: str, column: str, fk: ForeignKey) -> tuple[Vertex, ...]:
         """What a key's links wait on: the sizes of both tables, the columns it matches and what
@@ -608,6 +635,7 @@ class Schema:
     def source(self, table: str, tail: Hashable) -> tuple[str, str | Recorded | None]:
         """The node or record an edge of `table` reads through its tail; a bare count reads none."""
         if isinstance(tail, Recorded):
+            self.tables[table].check_recorded(tail.column, f"a cause of {table!r}")
             return table, tail.vertex
         if isinstance(tail, Foreign):
             origin, read = self.key(table, tail.key).parent, tail.node
@@ -620,11 +648,7 @@ class Schema:
         else:
             raise ValueError(f"{tail!r} is not a Foreign, a Summary or a Recorded")
         if isinstance(read, Recorded):
-            if read.column not in self.tables[origin].readable:
-                raise ValueError(
-                    f"{origin}.{read.column} is read as recorded: Recorded reads a numeric,"
-                    " timestamp or derived column"
-                )
+            self.tables[origin].check_recorded(read.column, f"a cause of {table!r} across a key")
             return origin, read.vertex
         if read is not None and read not in self.tables[origin].nodes:
             raise ValueError(f"unknown node {origin}.{read}")
@@ -929,11 +953,12 @@ class Schema:
         """Every table as resolved, as readable lines."""
         return explain(self.describe())
 
-    def realize(self, seed: int) -> "Schema":
-        """One database of this family: see `Table.realize`."""
+    def realize(self, seed: int, rows: Mapping[str, int] | None = None) -> "Schema":
+        """One database of this family: see `Table.realize`; `rows` sets the calibration draw's
+        row counts, see `plurel.fit.fitted`."""
         drawn = {t: scm.drawn(seed, self.identity[t]) for t, scm in self.tables.items()}
-        return Schema(drawn).fitted(seed)
+        return Schema(drawn).fitted(seed, rows)
 
-    def fitted(self, seed: int) -> "Schema":
+    def fitted(self, seed: int, rows: Mapping[str, int] | None = None) -> "Schema":
         """Scores and level cuts fit to one draw: see `plurel.fit.fitted`."""
-        return fitted(self, seed)
+        return fitted(self, seed, rows)

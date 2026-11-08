@@ -649,7 +649,8 @@ class ForeignKey(Drawable):
     `unique=True` points no two rows at the same parent; `unique="student_id"`, or a tuple of
     columns, points no two rows that agree on those keys or categoricals at the same parent, so
     the pair is unique, as in a table of enrollments. A row blank in one of them is free, as SQL
-    treats nulls; a group with more rows than parents to give them raises."""
+    treats nulls; a group with more rows than parents to give them raises. Which options combine
+    is in the README's "Foreign key options at a glance"."""
 
     parent: str
     link: Link = RandomLink()
