@@ -86,6 +86,9 @@ typecheck = "pyright"
 test = "pytest"
 examples = "python scripts/readme_examples.py README.md"
 recipes = "python -I scripts/run_recipes.py"
+bench = "python benchmarks/run.py --out benchmarks/results/latest.json"
+bench-report = "python benchmarks/report.py benchmarks/results/latest.json --out benchmarks/REPORT.md"
+bench-smoke = "python benchmarks/run.py --sizes 1000 --repeats 1 --out benchmarks/results/smoke.json && python benchmarks/report.py benchmarks/results/smoke.json --out benchmarks/results/smoke.md"
 wheel = "rm -rf dist && uv build --wheel"
 
 [tool.ruff]
