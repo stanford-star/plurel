@@ -1,6 +1,7 @@
 """The benchmark's workloads: each builds a declaration and the row counts that draw about `rows`
-rows from it. They cover single tables narrow and wide, dense causes, random-prior databases, the
-domain recipes with their retained rows, and keys that match, prefer, count and stay unique."""
+rows from it. They cover single tables narrow and wide, ladders of columns, causes and tables,
+random-prior databases, the domain recipes with their retained rows, and keys that match, prefer,
+count and stay unique."""
 
 import sys
 from collections.abc import Callable
@@ -43,15 +44,46 @@ def narrow(rows: int) -> tuple[Schema, dict[str, int]]:
     return Schema({"narrow": table}), {"narrow": rows}
 
 
+def chained(width: int, causes: int) -> dict[str, object]:
+    """`width` numbers, each caused by the `causes` before it."""
+    columns: dict[str, object] = {"x0": Numeric(Uniform(0, 1))}
+    for i in range(1, width):
+        columns[f"x{i}"] = Numeric(
+            Uniform(0, 1), causes={f"x{j}": 0.3 for j in range(max(0, i - causes), i)}
+        )
+    return columns
+
+
 def wide(rows: int) -> tuple[Schema, dict[str, int]]:
     """One table of 50 numbers, each caused by the three before it, and a categorical."""
-    columns: dict[str, object] = {"x0": Numeric(Uniform(0, 1))}
-    for i in range(1, 50):
-        columns[f"x{i}"] = Numeric(
-            Uniform(0, 1), causes={f"x{j}": 0.3 for j in range(max(0, i - 3), i)}
-        )
-    columns["c"] = Categorical(Shares(("a", "b", "c")), causes={"x49": 1.0})
+    columns = chained(50, 3) | {"c": Categorical(Shares(("a", "b", "c")), causes={"x49": 1.0})}
     return Schema({"wide": Table(columns, name="wide")}), {"wide": rows}
+
+
+def shaped(width: int, causes: int) -> Build:
+    """One table of `width` numbers, each caused by the `causes` before it."""
+
+    def build(rows: int) -> tuple[Schema, dict[str, int]]:
+        return Schema({"t": Table(chained(width, causes), name="t")}), {"t": rows}
+
+    build.__doc__ = f"one table of {width} numbers, each caused by up to {causes} before it"
+    return build
+
+
+def tables(count: int) -> Build:
+    """A chain of `count` tables of five columns, each keyed to the one before and caused by it,
+    the rows split evenly, none below 256."""
+
+    def build(rows: int) -> tuple[Schema, dict[str, int]]:
+        declared = {"t0": Table({"id": PrimaryKey()} | chained(4, 1))}
+        for i in range(1, count):
+            columns = {"id": PrimaryKey(), "parent": ForeignKey(f"t{i - 1}")} | chained(4, 1)
+            columns["x0"] = Numeric(Uniform(0, 1), causes={"parent.x3": 1.0})
+            declared[f"t{i}"] = Table(columns)
+        return Schema(declared), {t: max(256, rows // count) for t in declared}
+
+    build.__doc__ = f"a chain of {count} keyed tables"
+    return build
 
 
 def prior(seed: int) -> Build:
@@ -119,6 +151,12 @@ def enrollments(rows: int) -> tuple[Schema, dict[str, int]]:
 WORKLOADS: dict[str, Build] = {
     "narrow": narrow,
     "wide": wide,
+    "columns-10": shaped(10, 3),
+    "columns-200": shaped(200, 3),
+    "dense": shaped(40, 40),
+    "tables-2": tables(2),
+    "tables-8": tables(8),
+    "tables-32": tables(32),
     "prior-0": prior(0),
     "prior-1": prior(1),
     "prior-2": prior(2),
@@ -127,3 +165,7 @@ WORKLOADS: dict[str, Build] = {
     "visits": visits,
     "enrollments": enrollments,
 }
+
+# the size above which a workload is not attempted, kept for the report: 200 columns at 1M rows is
+# 200M cells, beyond the memory of the machines measured so far
+LARGEST: dict[str, int] = {"columns-200": 100_000}

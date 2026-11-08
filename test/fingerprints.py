@@ -4,7 +4,9 @@ Digests are stored per platform, since exact bytes hold within a platform only: 
 functions and matrix products differ in their last bits across operating systems and processors.
 `python test/fingerprints.py` prints whether this platform's stored digests in fingerprints.json
 still match; `--update` rewrites them, which a change that moves draws on purpose does on every
-tested platform, and its PR says so. See COMPATIBILITY.md for what is promised exactly and what not.
+tested platform, and its PR says so; `--save DIR` writes the draws themselves as parquet, to compare
+platforms with scripts/compare_draws.py. See COMPATIBILITY.md for what is promised exactly and what
+not.
 """
 
 import hashlib
@@ -148,12 +150,24 @@ def workloads() -> Iterator[tuple[str, Schema, dict[str, int]]]:
         yield f"prior/{seed}", generator, rows
 
 
+def draws() -> Iterator[tuple[str, dict[str, pd.DataFrame]]]:
+    for name, generator, rows in workloads():
+        for seed in (0, 1):
+            yield f"{name}/seed {seed}", generator.sample(rows, seed=seed)
+
+
 def draw() -> dict[str, str]:
-    return {
-        f"{name}/seed {seed}": digest(generator.sample(rows, seed=seed))
-        for name, generator, rows in workloads()
-        for seed in (0, 1)
-    }
+    return {name: digest(frames) for name, frames in draws()}
+
+
+def save(directory: Path) -> None:
+    """Every draw's tables as parquet, `<directory>/<draw>/<table>.parquet`, for
+    scripts/compare_draws.py to set beside another platform's."""
+    for name, frames in draws():
+        folder = directory / name.replace("/", "-").replace(" ", "")
+        folder.mkdir(parents=True, exist_ok=True)
+        for table, frame in frames.items():
+            frame.to_parquet(folder / f"{table}.parquet")
 
 
 def stored() -> dict[str, dict[str, str]]:
@@ -161,6 +175,9 @@ def stored() -> dict[str, dict[str, str]]:
 
 
 if __name__ == "__main__":
+    if "--save" in sys.argv:
+        save(Path(sys.argv[sys.argv.index("--save") + 1]))
+        sys.exit(0)
     drawn = draw()
     if "--update" in sys.argv:
         STORED.write_text(json.dumps(stored() | {PLATFORM: drawn}, indent=1, sort_keys=True) + "\n")

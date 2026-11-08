@@ -2,10 +2,12 @@
 memory is its own. Phases are timed apart: construct (declare and check the schema), realize (draw
 ranges and fit cuts), sample, database (relbench form), write (to parquet) and read (load back).
 
-    python benchmarks/run.py                                  # the full ladder, 3 repeats
-    python benchmarks/run.py --sizes 1000 --repeats 1 --out /tmp/smoke.json   # a smoke run
+    python benchmarks/run.py --out a.json                     # the full ladder: 3 seeds, 2 repeats each
+    python benchmarks/run.py --sizes 1000 --seeds 0 --repeats 1 --out /tmp/smoke.json   # a smoke run
 
-Results go to one JSON file: the environment, then one record per run, failures included."""
+Seeds vary the draw, repeats rerun one seed, so their spreads tell draws from timing noise apart.
+There is no warm-up: every run is a cold process, and imports are not timed. Results go to one
+JSON file: the environment, then one record per run, failures and skipped sizes included."""
 
 import argparse
 import json
@@ -142,7 +144,8 @@ def main() -> None:
         "--workloads", nargs="*", help="names from benchmarks/workloads.py; all by default"
     )
     parser.add_argument("--sizes", nargs="*", type=int, default=list(SIZES))
-    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--seeds", nargs="*", type=int, default=[0, 1, 2])
+    parser.add_argument("--repeats", type=int, default=2, help="runs of each seed")
     parser.add_argument("--timeout", type=float, default=900.0, help="seconds per run")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
@@ -153,7 +156,7 @@ def main() -> None:
         print(json.dumps(one(args.one[0], int(args.one[1]), int(args.one[2]))))
         return
     sys.path.insert(0, str(HERE))
-    from workloads import WORKLOADS
+    from workloads import LARGEST, WORKLOADS
 
     names = args.workloads or list(WORKLOADS)
     if unknown := sorted(set(names) - set(WORKLOADS)):
@@ -162,8 +165,13 @@ def main() -> None:
     records = []
     for name in names:
         for rows in args.sizes:
-            for repeat in range(args.repeats):
-                record = {"workload": name, "size": rows, "repeat": repeat, "seed": repeat}
+            if rows > LARGEST.get(name, rows):
+                records.append(
+                    {"workload": name, "size": rows, "skipped": f"above {LARGEST[name]:,} rows"}
+                )
+                continue
+            for seed, repeat in ((s, r) for s in args.seeds for r in range(args.repeats)):
+                record = {"workload": name, "size": rows, "repeat": repeat, "seed": seed}
                 command = [
                     sys.executable,
                     "-I",
@@ -173,7 +181,7 @@ def main() -> None:
                     "--one",
                     name,
                     str(rows),
-                    str(repeat),
+                    str(seed),
                 ]
                 try:
                     done = subprocess.run(
@@ -200,7 +208,7 @@ def main() -> None:
                     record.get("failure")
                     or f"{record['total_seconds']:.2f} s, {record['peak_mib']:.0f} MiB"
                 )
-                print(f"{name:12} {rows:>9} #{repeat}: {status}", flush=True)
+                print(f"{name:12} {rows:>9} seed {seed} #{repeat}: {status}", flush=True)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     if environment()["commit"] != started["commit"]:
         started["commit_changed_during_runs"] = True
