@@ -354,6 +354,24 @@ write_database(
 )
 ```
 
+### Inspect a schema
+
+`describe()` gives a table or schema as resolved, in plain dicts, lists, strings and numbers that
+serialize to JSON, and `explain()` gives the same as readable lines. Each authored column lists
+its kind, marginal, levels and shares, the causes it reads with their weights or effects and
+whether each reads a latent or a recorded value, its noise, and its blanks; keys list their parent
+and how they choose it. The products and level codes a declaration compiles to are folded into the
+column that owns them. A realized column also keeps its declaration as written, ranges and all,
+under `declared`, and what realizing fit to a calibration draw, its level cuts and score biases,
+under `calibrated`:
+
+```python
+import json
+
+print(schema.explain())
+json.dump(schema.realize(0).describe(), open("schema.json", "w"), indent=1)
+```
+
 ### Draw random tables and databases
 
 `TablePrior` and `SchemaPrior` draw whole tables and databases. Every knob is a `Range` or a

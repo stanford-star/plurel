@@ -17,6 +17,7 @@ from plurel.declare import (
     Real,
     key_node,
 )
+from plurel.describe import describe_schema, describe_table, explain
 from plurel.fit import fitted
 from plurel.graph import (
     AGGREGATES,
@@ -145,6 +146,7 @@ class Table:
         docs: Mapping[str, str] | None = None,
     ) -> None:
         self.declared = dict(table)
+        self.authored = self.declared
         self.name, self.doc, self.target, self.sources = name, doc, target, sources
         given = {k: e.doc for k, e in self.declared.items() if getattr(e, "doc", None)}
         given |= dict(docs or {})
@@ -345,8 +347,10 @@ class Table:
         }
 
     def like(self, entries: Mapping[str, object]) -> "Table":
-        """A table of other entries under this one's metadata."""
-        return Table(entries, **self.metadata)
+        """A table of other entries under this one's metadata and authored entries."""
+        table = Table(entries, **self.metadata)
+        table.authored = self.authored
+        return table
 
     def drawn(self, root: int, table: str | None = None) -> "Table":
         """The table one seed draws, compiled, so nothing in it is left to draw; itself when it
@@ -390,6 +394,14 @@ class Table:
         parent = column.by_level[0]
         codes, levels = latents[parent + CODE][:, 0], self.columns[parent].categories
         return pd.Series(column.placed_by_level(recorded.to_numpy(dtype=float), codes, levels))
+
+    def describe(self) -> dict[str, object]:
+        """This table as resolved, as plain data: see `plurel.describe`."""
+        return describe_table(self)
+
+    def explain(self) -> str:
+        """This table as resolved, as readable lines."""
+        return explain(self.describe())
 
     @classmethod
     def from_frame(
@@ -907,6 +919,14 @@ class Schema:
                 held[table] = {**scm.real, **held.get(table, {})}
         state = self.propagate(rows, root, held)
         return self.observe(rows, state.records, state.links), state.latents
+
+    def describe(self) -> dict[str, object]:
+        """Every table as resolved, as plain data: see `plurel.describe`."""
+        return describe_schema(self)
+
+    def explain(self) -> str:
+        """Every table as resolved, as readable lines."""
+        return explain(self.describe())
 
     def realize(self, seed: int) -> "Schema":
         """One database of this family: see `Table.realize`."""
