@@ -85,6 +85,7 @@ lint = "ruff check . && ruff format --check ."
 typecheck = "pyright"
 test = "pytest"
 examples = "python scripts/readme_examples.py README.md"
+recipes = "python -I scripts/run_recipes.py"
 wheel = "rm -rf dist && uv build --wheel"
 
 [tool.ruff]

@@ -24,6 +24,7 @@ jobs:
       - run: pixi run lint
       - run: pixi run typecheck
       - run: pixi run examples
+      - run: pixi run recipes
 
   tests:
     # the suite on both platforms the lockfile solves for
@@ -56,3 +57,5 @@ jobs:
       - run: uv pip install --no-cache --python "$RUNNER_TEMP/smoke" dist/*.whl
       - working-directory: ${{ runner.temp }}
         run: "$RUNNER_TEMP/smoke/bin/python -I $GITHUB_WORKSPACE/scripts/smoke.py"
+      - working-directory: ${{ runner.temp }}
+        run: "$RUNNER_TEMP/smoke/bin/python -I $GITHUB_WORKSPACE/scripts/run_recipes.py"

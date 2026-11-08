@@ -64,12 +64,21 @@ pip install "git+https://github.com/stanford-star/plurel.git@v2"
 | Build a small database, inspect it, and save it | [A database, inspected and saved](#a-database-inspected-and-saved) |
 
 Each recipe runs on its own in a fresh Python process. [Getting Started](#getting-started) explains every
-part in detail.
+part in detail, and [`examples/generation`](examples/generation/) has longer domain recipes, retail
+orders, clinic visits and student enrollments, that check every relationship they declare.
 
-Two seeds do different things. `realize(seed)` draws a family's mechanism, every weight, noise and
-marginal given as a range, and pins its level cuts: it decides what kind of dataset you get.
-`sample(rows, seed=...)` draws the rows of one mechanism: it decides which dataset of that kind you
-get. A table or schema without ranges is already one mechanism and samples directly.
+Generating takes two steps, each with its own seed:
+
+- `realize(seed)` makes a generator. It draws every weight, noise and marginal given as a range,
+  fits level cuts to a calibration draw, and returns a `Table` or `Schema` with nothing left to draw.
+  Its seed, the mechanism seed, decides what kind of dataset you get.
+- `sample(rows, seed=...)` draws rows from a generator and returns frames. Its seed, the data seed,
+  decides which dataset of that kind you get; the generator's weights stay as they were.
+
+Vary the mechanism seed for different kinds of datasets and the data seed for more data of one
+kind. A table or schema without ranges is a generator already and samples directly; realizing it
+only fits its level cuts, which pins categorical shares instead of meeting them exactly in every
+draw.
 
 #### One table
 
@@ -102,14 +111,23 @@ family = Table({
     "outcome": Categorical({"declined": 0.7, "accepted": 0.3}, causes={"wait_days": -STRONG}),
     "cost": Numeric(Scaled("amount", 0, 5000), causes={"wait_days": Range(0.2, 1.0)}, noise=MEDIUM),
 })
-datasets = [family.realize(seed).sample(1000, seed=seed) for seed in range(3)]
-assert all(len(frame) == 1000 for frame in datasets)
-assert family.realize(1).sample(1000, seed=1).equals(datasets[1])
-assert not datasets[0].equals(datasets[1])
+mechanism_seed, data_seed = 1, 10
+generator = family.realize(mechanism_seed)           # one mechanism: weights drawn, cuts fit
+first = generator.sample(1000, seed=data_seed)       # two datasets of it
+second = generator.sample(1000, seed=data_seed + 1)
+assert generator.describe() == family.realize(mechanism_seed).describe()  # same mechanism
+assert not first.equals(second)                                           # other rows
+
+mechanisms = [family.realize(seed) for seed in range(3)]           # three mechanisms
+datasets = [each.sample(1000, seed=data_seed) for each in mechanisms]  # one dataset each
+assert len({str(each.describe()) for each in mechanisms}) == 3
 ```
 
-Every seed of `realize` gives another table of the same description, and the same seed gives the
-same one: see [Author many tables from one description](#author-many-tables-from-one-description).
+`describe()` shows what a mechanism seed chose: every drawn weight and cut.
+
+Every mechanism seed gives another generator of the same description, and the same seed gives the
+same one; sampling never changes it: see
+[Author many tables from one description](#author-many-tables-from-one-description).
 
 #### Real rows with a generated target
 
@@ -690,6 +708,7 @@ pixi run test        # the suite
 pixi run lint        # ruff check and format check, at the version pre-commit pins
 pixi run typecheck   # pyright over test/typing_examples.py, the public API as users write it
 pixi run examples    # every README block in order in one namespace, then each quickstart alone
+pixi run recipes     # every domain recipe in examples/generation, small, each in its own process
 pixi run wheel       # a wheel in dist/
 ```
 
