@@ -327,10 +327,10 @@ class Table:
         return self.like(self.like(self.draws(root, table)).table) if self.family else self
 
     def realize(self, seed: int, rows: int | None = None) -> "Table":
-        """One table of this family: every range drawn from `seed`, then its level cuts and scores
-        fit to one draw of its rows, `rows` of them if given. A table draws by its name, so a named
-        table realizes the same alone and in a Schema; one with nothing left to draw is only fit
-        again."""
+        """A generator of this family: a table with every range drawn from `seed`, the mechanism
+        seed, then its level cuts and scores fit to one draw of its rows, `rows` of them if given;
+        `sample` it for rows. A table draws by its name, so a named table realizes the same alone
+        and in a Schema; one with nothing left to draw is only fit again."""
         name = self.name or "table"
         given = None if rows is None else {name: rows}
         return Schema({name: self}).realize(seed, given).tables[name]
@@ -427,6 +427,8 @@ class Table:
                 self.table[name] = bound_local(entry, self.table)
 
     def sample(self, n: int | None = None, *, seed: Seed = None) -> pd.DataFrame:
+        """`n` rows of this table, which must hold nothing left to draw; `seed`, the data seed,
+        picks the rows and leaves the mechanism as it is."""
         return self.sample_with_latents(n, seed=seed)[0]
 
     def sample_with_latents(
@@ -625,6 +627,8 @@ class Schema:
         *,
         seed: Seed = None,
     ) -> dict[str, pd.DataFrame]:
+        """One frame per table of this database, which must hold nothing left to draw; `seed`,
+        the data seed, picks the rows and leaves the mechanism as it is."""
         return self.sample_with_latents(rows, seed=seed)[0]
 
     def sample_with_latents(
@@ -676,8 +680,8 @@ class Schema:
         return explain(self.describe())
 
     def realize(self, seed: int, rows: Mapping[str, int] | None = None) -> "Schema":
-        """One database of this family: see `Table.realize`; `rows` sets the calibration draw's
-        row counts, see `plurel.fit.fitted`."""
+        """A generator of this family: every table realized from `seed`, the mechanism seed, see
+        `Table.realize`; `rows` sets the calibration draw's row counts, see `plurel.fit.fitted`."""
         drawn = {t: scm.drawn(seed, self.identity[t]) for t, scm in self.tables.items()}
         return Schema(drawn).fitted(seed, rows)
 

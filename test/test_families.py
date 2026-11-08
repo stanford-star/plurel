@@ -524,3 +524,18 @@ def test_real_columns_stay_unranged():
         1.0,
         2.0,
     ]
+
+
+def test_sampling_never_moves_the_mechanism_realizing_chose():
+    family = Table(
+        {"x": Numeric(), "y": Numeric(causes={"x": Range(0.2, 0.8)}, noise=0.5)}, name="pair"
+    )
+    generator = family.realize(1)
+    before = generator.describe()
+    first, second = generator.sample(500, seed=10), generator.sample(500, seed=11)
+    assert generator.describe() == before == family.realize(1).describe()
+    assert not first.equals(second) and first.equals(generator.sample(500, seed=10))
+    weights = {
+        family.realize(seed).describe()["columns"]["y"]["causes"][0]["weight"] for seed in range(4)
+    }
+    assert len(weights) == 4 and all(0.2 <= w <= 0.8 for w in weights)

@@ -24,6 +24,7 @@ jobs:
       - run: pixi run lint
       - run: pixi run typecheck
       - run: pixi run examples
+      - run: pixi run recipes
 
   tests:
     # the suite on both platforms the lockfile solves for
