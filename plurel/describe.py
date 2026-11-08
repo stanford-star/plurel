@@ -72,13 +72,15 @@ def reading(tail: object) -> dict[str, object]:
     return {"reads": str(tail).removesuffix(CODE), "values": "latent"}
 
 
-def cause(edge: object, nodes: Mapping[str, Node], categories: tuple | None) -> dict[str, object]:
-    """One edge as a cause: what it reads and its effect."""
-    if isinstance(edge.parent, str) and edge.parent in nodes and nodes[edge.parent].op == "product":
-        first, second = nodes[edge.parent].edges
+def cause(edge: object, helpers: Mapping[str, Node], categories: tuple | None) -> dict[str, object]:
+    """One edge as a cause: what it reads and its effect; a product a declaration compiled to a
+    helper is read as the pair it multiplies."""
+    if isinstance(edge, LinearEdge) and edge.parent in helpers:
+        first, second = helpers[edge.parent].edges
         described = {"product": [reading(first.parent)["reads"], reading(second.parent)["reads"]]}
         if isinstance(first, LevelEdge):
-            return {**described, "slopes": dict(first.effects), "values": "latent"}
+            slopes = {str(level): effect for level, effect in first.effects}
+            return {**described, "slopes": slopes, "values": "latent"}
         return {
             **described,
             "weight": edge.weight,
@@ -95,15 +97,15 @@ def cause(edge: object, nodes: Mapping[str, Node], categories: tuple | None) -> 
     return {**described, "edge": type(edge).__name__, "dim": edge.dim}
 
 
-def mechanism(node: Node, nodes: Mapping[str, Node], categories: tuple | None = None) -> dict:
+def mechanism(node: Node, helpers: Mapping[str, Node], categories: tuple | None = None) -> dict:
     return {
-        "causes": [cause(edge, nodes, categories) for edge in node.edges],
+        "causes": [cause(edge, helpers, categories) for edge in node.edges],
         "how": node.op,
         "noise": plain(node.noise),
     }
 
 
-def column(name: str, entry: object, table: object) -> dict[str, object]:
+def column(name: str, entry: object, helpers: Mapping[str, Node]) -> dict[str, object]:
     """One authored entry of a table, resolved."""
     if isinstance(entry, PrimaryKey):
         return {"kind": "primary key", "given": entry.values is not None}
@@ -123,11 +125,11 @@ def column(name: str, entry: object, table: object) -> dict[str, object]:
     if isinstance(entry, Derived):
         return {"kind": "derived", "inputs": list(entry.inputs), "function": plain(entry.function)}
     if isinstance(entry, Node):
-        return {"kind": "hidden", "dim": entry.dim, **mechanism(entry, table.nodes)}
+        return {"kind": "hidden", "dim": entry.dim, **mechanism(entry, helpers)}
     out: dict[str, object] = {"kind": entry.kind, "given": entry.values is not None}
     if entry.values is not None:
         return out | ({"levels": plain(entry.categories)} if entry.kind == "categorical" else {})
-    out |= mechanism(entry.node, table.nodes, entry.categories)
+    out |= mechanism(entry.node, helpers, entry.categories)
     if entry.kind == "categorical":
         shares = entry.fit_shares or entry.category_probabilities
         out |= {
@@ -161,12 +163,21 @@ def column(name: str, entry: object, table: object) -> dict[str, object]:
 def describe_table(table: object) -> dict[str, object]:
     """A table as resolved: its metadata, then each authored entry. A declaration is kept as
     written under `declared`, ranges and all, beside what it resolved to."""
+    helpers = {
+        name: node
+        for name, node in table.nodes.items()
+        if name not in table.authored and node.op == "product" and len(node.edges) == 2
+    }
     entries = {}
     for name, authored in table.authored.items():
-        described = column(name, table.table[name], table)
+        described = column(name, table.table[name], helpers)
         if name in table.docs:
             described["doc"] = table.docs[name]
-        if isinstance(authored, Declaration):
+        if (
+            isinstance(authored, Declaration)
+            or isinstance(authored, ForeignKey)
+            and authored.family
+        ):
             described["declared"] = plain(authored)
         entries[name] = described
     return {

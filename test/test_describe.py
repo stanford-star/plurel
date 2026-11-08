@@ -19,6 +19,7 @@ from plurel import (
     Timestamp,
     Uniform,
 )
+from plurel.graph import LinearEdge, Node
 from plurel.prior import SchemaPrior
 
 
@@ -104,12 +105,50 @@ def test_resolved_values_sit_beside_the_declaration_and_calibration(schema):
 
 
 def test_any_schema_describes_and_explains():
-    prior = SchemaPrior().realize(3)
-    assert json.dumps(prior.describe())
-    text = prior.explain()
-    assert all(f"{t}" in text for t in prior.tables)
+    for seed in range(30):
+        prior = SchemaPrior().realize(seed)
+        description = prior.describe()
+        assert json.loads(json.dumps(description)) == description
+        assert all(t in prior.explain() for t in prior.tables)
+    built = Table(
+        {
+            "a": Node(),
+            "b": Node(),
+            "c": Node(),
+            "p": Node((LinearEdge("a"), LinearEdge("b"), LinearEdge("c")), op="product"),
+            "y": Node(LinearEdge("p", 2.0)),
+        }
+    )
+    columns = built.describe()["columns"]
+    assert columns["p"]["how"] == "product" and len(columns["p"]["causes"]) == 3
+    assert columns["y"]["causes"] == [
+        {"reads": "p", "values": "latent", "weight": 2.0, "transform": "identity"}
+    ]
     shop = Table(
         {"when": Timestamp("2020-01-01", "2021-01-01"), "n": Numeric(causes={"when": 1.0})},
         time_column="when",
     )
     assert "time_column when" in shop.explain() and "<- 1 * when" in shop.explain()
+
+
+def test_levels_of_any_type_and_ranged_keys_survive_json():
+    table = Table(
+        {
+            "g": Categorical((1, 2, 3), ordered=True),
+            "x": Numeric(),
+            "y": Numeric(causes={("g", "x"): {1: 0.5, 2: 1.0}, "g": {3: 2.0}}),
+        }
+    )
+    description = table.describe()
+    assert json.loads(json.dumps(description)) == description
+    slopes = next(c for c in description["columns"]["y"]["causes"] if "product" in c)["slopes"]
+    assert slopes == {"1": 0.5, "2": 1.0}
+    ranged = Schema(
+        {
+            "p": Table({"id": PrimaryKey()}),
+            "c": Table({"p_id": ForeignKey("p", counts=Counts(Range(2.0, 6.0)))}),
+        }
+    ).realize(0)
+    key = ranged.describe()["tables"]["c"]["columns"]["p_id"]
+    assert 2.0 <= key["counts"]["mean"] <= 6.0
+    assert key["declared"]["counts"]["mean"] == {"range": [2.0, 6.0]}

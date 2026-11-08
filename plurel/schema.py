@@ -17,6 +17,7 @@ from plurel.declare import (
     Real,
     key_node,
 )
+from plurel.describe import describe_schema, describe_table, explain
 from plurel.fit import fitted
 from plurel.graph import (
     AGGREGATES,
@@ -396,14 +397,10 @@ class Table:
 
     def describe(self) -> dict[str, object]:
         """This table as resolved, as plain data: see `plurel.describe`."""
-        from plurel.describe import describe_table
-
         return describe_table(self)
 
     def explain(self) -> str:
         """This table as resolved, as readable lines."""
-        from plurel.describe import explain
-
         return explain(self.describe())
 
     @classmethod
@@ -925,14 +922,10 @@ class Schema:
 
     def describe(self) -> dict[str, object]:
         """Every table as resolved, as plain data: see `plurel.describe`."""
-        from plurel.describe import describe_schema
-
         return describe_schema(self)
 
     def explain(self) -> str:
         """Every table as resolved, as readable lines."""
-        from plurel.describe import explain
-
         return explain(self.describe())
 
     def realize(self, seed: int) -> "Schema":
