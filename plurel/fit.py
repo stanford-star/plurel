@@ -1,13 +1,18 @@
 """Realizing fits a database to one draw of its rows: each scored column's bias to its shares, then
-every level cut pinned where that draw puts it."""
+every level cut pinned where that draw puts it. A table of more given rows than `CALIBRATION_ROWS`
+takes part with a random `CALIBRATION_ROWS` of them, so the draw stays small however large the
+real tables are."""
 
 from collections.abc import Mapping
 from dataclasses import replace
+from graphlib import TopologicalSorter
 
 import numpy as np
+import pandas as pd
 from scipy.stats import poisson
 
 from plurel.columns import Column
+from plurel.declare import ForeignKey, PrimaryKey
 from plurel.graph import LookupEdge, Node, level_edges
 from plurel.random import lane
 
@@ -115,6 +120,71 @@ def calibration_rows(schema, given: Mapping[str, int] | None) -> dict[str, int]:
     return rows
 
 
+def kept_rows(schema, seed: int) -> dict[str, np.ndarray]:
+    """The rows each table of given rows keeps in the calibration draw, by position, for the tables
+    that change: a random `CALIBRATION_ROWS` of a larger one, and of a table whose given keys point
+    into a table that changed, the rows pointing at kept parent rows or nowhere. Parents go first."""
+    real = {t: scm for t, scm in schema.tables.items() if scm.size is not None}
+    parents = {
+        t: {
+            fk.parent
+            for fk in scm.fkeys.values()
+            if fk.values is not None and fk.parent in real and fk.parent != t
+        }
+        for t, scm in real.items()
+    }
+    keep: dict[str, np.ndarray] = {}
+    for table in TopologicalSorter(parents).static_order():
+        scm, rows = real[table], np.arange(real[table].size)
+        reads_changed = False
+        for fk in scm.fkeys.values():
+            if fk.values is None or fk.parent not in keep or fk.parent == table:
+                continue
+            reads_changed = True
+            positions = parent_positions(schema, fk)
+            rows = rows[
+                fk.values.isna().to_numpy()[rows] | np.isin(positions[rows], keep[fk.parent])
+            ]
+        if len(rows) > CALIBRATION_ROWS:
+            chosen = lane(seed, "fit rows", schema.identity[table]).choice(
+                rows, CALIBRATION_ROWS, replace=False
+            )
+            rows = np.sort(chosen)
+        if reads_changed or len(rows) < scm.size:
+            keep[table] = rows
+    return keep
+
+
+def parent_positions(schema, fk: ForeignKey) -> np.ndarray:
+    """The parent row each given key value names, -1 where blank."""
+    keys = schema.parent_keys(fk)
+    index = pd.RangeIndex(schema.tables[fk.parent].size) if keys is None else pd.Index(keys)
+    return index.get_indexer(fk.values)
+
+
+def sliced(schema, table: str, keep: Mapping[str, np.ndarray]):
+    """`table` with only its kept rows, its given keys pointing at its parents' kept rows: a key
+    whose parent row was left out is blank."""
+    scm, rows = schema.tables[table], keep[table]
+    entries: dict[str, object] = {}
+    for name, entry in scm.table.items():
+        if isinstance(entry, ForeignKey) and entry.values is not None:
+            values = entry.values.iloc[rows].reset_index(drop=True)
+            if entry.parent in keep:
+                old = parent_positions(schema, entry)[rows]
+                new = pd.Series(np.arange(len(keep[entry.parent])), index=keep[entry.parent])
+                kept = pd.Series(old).map(new)
+                if schema.parent_keys(entry) is None:
+                    values = kept.astype("Int64")
+                else:
+                    values = values.where(kept.notna().to_numpy())
+            entry = replace(entry, values=values)
+        elif isinstance(entry, Column | PrimaryKey) and entry.values is not None:
+            entry = replace(entry, values=entry.values.iloc[rows].reset_index(drop=True))
+        entries[name] = entry
+    return scm.like(entries)
+
+
 def fitted(schema, seed: int, given: Mapping[str, int] | None = None):
     """The schema with its scores and level cuts fit to one draw, each scored column after those
     it reads; a schema with nothing to fit is itself. The draw takes `calibration_rows`. Every fit
@@ -123,11 +193,22 @@ def fitted(schema, seed: int, given: Mapping[str, int] | None = None):
     if not any(fits(scm) for scm in schema.tables.values()):
         return schema
     tables, rebuilt = dict(schema.tables), type(schema)
-    rows = calibration_rows(schema, given)
+    keep = kept_rows(schema, seed)
+
+    def calibration():
+        """The current tables, those of many given rows cut to their kept ones."""
+        current = rebuilt(tables)
+        return rebuilt(
+            {t: sliced(current, t, keep) if t in keep else scm for t, scm in tables.items()}
+        )
+
+    rows = calibration_rows(
+        calibration(), {t: n for t, n in (given or {}).items() if t not in keep}
+    )
 
     def draw(stream):
         try:
-            return rebuilt(tables).sample_with_latents(rows, seed=stream)[1]
+            return calibration().sample_with_latents(rows, seed=stream)[1]
         except ValueError as error:
             raise ValueError(
                 f"realizing fits to one draw of {rows} rows, which failed: {error}. If those"
