@@ -298,9 +298,11 @@ class Declaration(Drawable):
 
 
 def key_node(causes: Causes, noise: object, keys: Collection[str]) -> Node | None:
-    """The node a key reads from its parent's columns, causes plus noise; None without causes."""
+    """The node a key reads from its parent's columns, causes plus noise; noise alone without
+    causes, and None without either."""
     if not causes:
-        return None
+        noise = _noise(noise)
+        return None if noise is None else Node(noise=noise)
     node, helpers = _node("key", causes, noise, keys)
     if helpers:
         raise ValueError("a key reads its parent's columns one at a time: no products")
@@ -608,7 +610,8 @@ class PrimaryKey:
 @dataclass(frozen=True)
 class Counts(Drawable):
     """How many child rows point at each parent row: `mean` on average, each parent's share scaled
-    by the exponential of its causes, read from the parent's columns, plus `noise`. A row count
+    by the exponential of its causes, read from the parent's columns, plus `noise`, 0.5 by default
+    when there are causes; `noise=0` leaves Poisson counts given the causes. A row count
     given for the child table is split among the parents by those shares; without one each parent
     draws its own Poisson count, and the counts are the child table's size."""
 

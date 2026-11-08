@@ -150,24 +150,30 @@ class TreeLink:
 
 
 def matched(
-    child: np.ndarray, parent: np.ndarray, weights: np.ndarray, rng: np.random.Generator
+    child: np.ndarray, parent: np.ndarray, log_weights: np.ndarray, rng: np.random.Generator
 ) -> np.ndarray:
-    """For each child row, a parent row of the same group drawn by weight: a group is an integer,
-    -1 for none, and -1 is returned where no parent of its group has weight."""
-    eligible = np.flatnonzero((parent >= 0) & (weights > 0))
+    """For each child row, a parent row of the same group drawn by weight, each group's weights
+    taken relative to its heaviest so none vanishes: a group is an integer, -1 for none, and -1 is
+    returned where no parent of its group has weight."""
+    eligible = np.flatnonzero((parent >= 0) & np.isfinite(log_weights))
     order = eligible[np.argsort(parent[eligible], kind="stable")]
-    groups, cumulative = parent[order], np.cumsum(weights[order])
+    groups = parent[order]
+    draws = rng.random(len(child))
+    out = np.full(len(child), -1, dtype=np.int64)
+    if not len(order):
+        return out
+    heads = np.flatnonzero(np.diff(groups, prepend=-2))
+    heaviest = np.maximum.reduceat(log_weights[order], heads)
+    segment = np.repeat(np.arange(len(heads)), np.diff(np.append(heads, len(order))))
+    cumulative = np.cumsum(np.exp(log_weights[order] - heaviest[segment]))
     start = np.searchsorted(groups, child, side="left")
     end = np.searchsorted(groups, child, side="right")
     found = (child >= 0) & (end > start)
-    draws = rng.random(len(child))
-    out = np.full(len(child), -1, dtype=np.int64)
-    if found.any():
-        start, end = start[found], end[found]
-        before = np.where(start > 0, cumulative[np.maximum(start - 1, 0)], 0.0)
-        target = before + draws[found] * (cumulative[end - 1] - before)
-        pick = np.clip(np.searchsorted(cumulative, target, side="right"), start, end - 1)
-        out[found] = order[pick]
+    start, end = start[found], end[found]
+    before = np.where(start > 0, cumulative[np.maximum(start - 1, 0)], 0.0)
+    target = before + draws[found] * (cumulative[end - 1] - before)
+    pick = np.clip(np.searchsorted(cumulative, target, side="right"), start, end - 1)
+    out[found] = order[pick]
     return out
 
 

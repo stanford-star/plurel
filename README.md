@@ -227,7 +227,8 @@ the key takes `fill`, which such a key must then set: `ForeignKey("customers", n
 
 A key can instead choose parents by their columns. `match` maps a column of the child to one of the
 parent that must agree: a categorical holding the same level, or a key pointing at the same row.
-`prefer` weighs the eligible parents by the exponential of causes read from the parent's columns.
+`prefer` weighs the eligible parents by the exponential of causes read from the parent's columns,
+with no noise, so a weight of 1 on a `Recorded` number sends nearly every row to the largest.
 A row that no parent matches points at nothing if the key is `nullable`, and raises otherwise:
 
 ```python
@@ -242,7 +243,8 @@ patients = Table({
 
 `counts` sets how many rows point at each parent instead, and so the child table's size:
 `ForeignKey("customers", counts=Counts(5.0, causes={"tenure": 0.8}))` gives each customer about 5
-orders, more with longer tenure, and some none. Each customer then draws its own count, so
+orders, more with longer tenure, and some none. `noise` (0.5 by default with causes) spreads the
+counts beyond Poisson; `noise=0` keeps them Poisson given the causes. Each customer then draws its own count, so
 `sample` may leave the orders table out of its rows. A row count given for it is instead split
 among the customers by the same shares. A table takes at most one such key, and a key cannot match
 on, or count from, a column that reads across it.

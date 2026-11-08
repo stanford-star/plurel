@@ -71,6 +71,45 @@ def test_rows_no_parent_matches_point_at_nothing_only_on_a_nullable_key():
     assert (linked.region[~unlinked] == linked.region_parent[~unlinked]).all()
 
 
+def test_keys_weigh_by_what_the_parent_reads_and_match_within_a_table():
+    schema = Schema(
+        {
+            "cities": Table({"id": PrimaryKey(), "rich": Numeric(Uniform(0, 1))}),
+            "shops": Table({"id": PrimaryKey(), "city_id": ForeignKey("cities")}),
+            "visits": Table(
+                {"shop_id": ForeignKey("shops", prefer={Recorded("city_id.rich"): 8.0})}
+            ),
+            "teams": Table({"id": PrimaryKey()}),
+            "staff": Table(
+                {
+                    "id": PrimaryKey(),
+                    "team_id": ForeignKey("teams"),
+                    "boss_id": ForeignKey("staff", match={"team_id": "team_id"}),
+                }
+            ),
+        }
+    )
+    rows = {"cities": 20, "shops": 200, "visits": 20000, "teams": 6, "staff": 300}
+    frames = schema.sample(rows, seed=0)
+    visits = frames["visits"].merge(frames["shops"], left_on="shop_id", right_on="id")
+    visits = visits.merge(frames["cities"], left_on="city_id", right_on="id")
+    assert visits.rich.mean() > frames["cities"].rich.mean() + 0.2
+    bosses = frames["staff"].merge(frames["staff"], left_on="boss_id", right_on="id")
+    assert len(bosses) == 300 and (bosses.team_id_x == bosses.team_id_y).all()
+
+
+def test_counts_noise_alone_spreads_the_counts():
+    def spread(noise):
+        orders = ForeignKey("customers", counts=Counts(5.0, noise=noise))
+        schema = Schema(
+            {"customers": Table({"id": PrimaryKey()}), "orders": Table({"customer_id": orders})}
+        )
+        per = schema.sample({"customers": 4000}, seed=0)["orders"].customer_id.value_counts()
+        return per.reindex(range(4000), fill_value=0).var()
+
+    assert abs(spread(None) - 5.0) < 0.5 and spread(1.0) > 20.0
+
+
 def test_keys_match_on_the_rows_other_keys_point_at():
     schema = Schema(
         {
@@ -201,10 +240,15 @@ def test_a_key_cannot_match_on_what_reads_across_it():
 
 def test_matched_and_counted_draw_within_groups_and_shares():
     rng = np.random.default_rng(0)
-    parent, weights = np.array([0, 1, 1, -1, 2]), np.array([1.0, 1.0, 3.0, 5.0, 0.0])
-    picks = matched(np.array([1] * 4000 + [0, 2, -1, 3]), parent, weights, rng)
-    assert set(picks[:4000]) == {1, 2} and abs((picks[:4000] == 2).mean() - 0.75) < 0.03
-    assert list(picks[4000:]) == [0, -1, -1, -1]
+    parent = np.array([0, 1, 1, -1, 2, 3, 3])
+    log_weights = np.array([1000.0, 0.0, np.log(3.0), 5.0, -np.inf, -2000.0, -2000.0 + np.log(3.0)])
+    picks = matched(np.array([1] * 4000 + [3] * 4000 + [0, 2, -1, 4]), parent, log_weights, rng)
+    assert set(picks[:4000].tolist()) == {1, 2} and abs((picks[:4000] == 2).mean() - 0.75) < 0.03
+    assert (
+        set(picks[4000:8000].tolist()) == {5, 6}
+        and abs((picks[4000:8000] == 6).mean() - 0.75) < 0.03
+    )
+    assert picks[8000:].tolist() == [0, -1, -1, -1]
     owners = counted(np.array([1.0, 0.0, 3.0]), 2.0, 100, rng)
     assert len(owners) == 100 and 1 not in owners
     assert len(counted(np.empty(0), 2.0, None, rng)) == 0

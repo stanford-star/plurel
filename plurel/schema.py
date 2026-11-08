@@ -79,6 +79,17 @@ def bind(edge: Edge, parent: Node | Column | None) -> Edge:
     return edge
 
 
+def bound_local(node: Node, entries: Mapping[str, object]) -> Node:
+    """The node with each edge lined up with the entry of its table it reads by name."""
+    edges = (
+        bind(edge, entries.get(edge.parent.removesuffix(CODE)))
+        if isinstance(edge.parent, str)
+        else edge
+        for edge in node.edges
+    )
+    return replace(node, edges=tuple(edges))
+
+
 def topological[T: Hashable](parents: Mapping[T, tuple[T, ...]]) -> tuple[T, ...]:
     try:
         return tuple(TopologicalSorter(parents).static_order())
@@ -407,20 +418,11 @@ class Table:
 
     def bind_local(self) -> None:
         """Line the edges up with the columns of this table they read."""
-
-        def bound(node: Node) -> Node:
-            edges = []
-            for edge in node.edges:
-                if isinstance(edge.parent, str):
-                    edge = bind(edge, self.table.get(edge.parent.removesuffix(CODE)))
-                edges.append(edge)
-            return replace(node, edges=tuple(edges))
-
         for name, entry in self.table.items():
             if isinstance(entry, Column):
-                self.table[name] = replace(entry, node=bound(entry.node))
+                self.table[name] = replace(entry, node=bound_local(entry.node, self.table))
             elif isinstance(entry, Node):
-                self.table[name] = bound(entry)
+                self.table[name] = bound_local(entry, self.table)
 
     def sample(self, n: int | None = None, *, seed: Seed = None) -> pd.DataFrame:
         return self.sample_with_latents(n, seed=seed)[0]
@@ -480,63 +482,71 @@ class Schema:
             if node.across
         }
         self.sized = {t: scm.counted for t, scm in self.tables.items() if scm.counted}
-        self.choosers: dict[tuple[str, str], tuple[Node, tuple[Edge, ...]]] = {}
-        for (table, column), fk in keys.items():
-            if fk.counts is not None and fk.parent == table:
-                raise ValueError(f"{column!r} would count rows of its own table")
-            self.check_match(table, column, fk)
-            causes, noise = (fk.counts.causes, fk.counts.noise) if fk.counts else (fk.prefer, 0)
-            parent = self.tables[fk.parent]
-            node = key_node(causes, noise, parent.fkeys)
-            if node is not None:
-                if unknown := set(node.parents) - set(parent.nodes):
-                    raise ValueError(f"{column!r} reads unknown columns {sorted(unknown)}")
-                local = (
-                    bind(e, parent.table.get(e.parent.removesuffix(CODE)))
-                    if isinstance(e.parent, str)
-                    else e
-                    for e in node.edges
-                )
-                node = replace(node, edges=tuple(local))
-                across = tuple(self.bound(fk.parent, e) for e in node.across)
-                self.choosers[table, column] = (node, across)
-        self.read: set[tuple[str, str]] = set()
+        self.choosers = {
+            (table, column): chooser
+            for (table, column), fk in keys.items()
+            if (chooser := self.chooser(table, column, fk)) is not None
+        }
         parents: dict[Vertex, tuple[Vertex, ...]] = {}
         for table, scm in self.tables.items():
             for vertex, reads in scm.graph.items():
                 parents[table, vertex] = tuple((table, read) for read in reads)
+        resolved: list[Vertex] = []
         for (table, name), edges in self.crossings.items():
-            parents[table, name] += self.reads(table, edges)
+            parents[table, name] += (found := self.reads(table, edges))
+            resolved += found
+        for (table, column), (_, edges) in self.choosers.items():
+            resolved += self.reads(keys[table, column].parent, edges)
+        self.read = {(t, read.column) for t, read in resolved if isinstance(read, Recorded)}
         for (table, column), fk in keys.items():
-            reads = [] if column == self.sized.get(table) else self.size(table)
-            reads += self.size(fk.parent)
-            for mine, theirs in fk.match.items():
-                reads.append(self.matched_vertex(table, mine))
-                reads.append(self.matched_vertex(fk.parent, theirs))
-            if (table, column) in self.choosers:
-                node, edges = self.choosers[table, column]
-                reads += [(fk.parent, p) for p in node.parents]
-                reads += self.reads(fk.parent, edges)
-            parents[table, Linked(column)] = tuple(reads)
+            parents[table, Linked(column)] = self.link_reads(table, column, fk)
         for table in self.sized:
             for vertex in self.tables[table].graph:
                 parents[table, vertex] += tuple(self.size(table))
         self.order = topological(parents)
+
+    def chooser(
+        self, table: str, column: str, fk: ForeignKey
+    ) -> tuple[Node, tuple[Edge, ...]] | None:
+        """The node weighing a key's parents, read from the parent's columns, and the edges the
+        schema resolves for it; None for a key that reads no column of its parent."""
+        if fk.counts is not None and fk.parent == table:
+            raise ValueError(f"{column!r} would count rows of its own table")
+        self.check_match(table, column, fk)
+        causes, noise = (fk.counts.causes, fk.counts.noise) if fk.counts else (fk.prefer, 0)
+        parent = self.tables[fk.parent]
+        node = key_node(causes, noise, parent.fkeys)
+        if node is None:
+            return None
+        if unknown := set(node.parents) - set(parent.nodes):
+            raise ValueError(f"{column!r} reads unknown columns {sorted(unknown)}")
+        node = bound_local(node, parent.table)
+        return node, tuple(self.bound(fk.parent, edge) for edge in node.across)
+
+    def link_reads(self, table: str, column: str, fk: ForeignKey) -> tuple[Vertex, ...]:
+        """What a key's links wait on: the sizes of both tables, the columns it matches and what
+        its weights read."""
+        reads = [] if column == self.sized.get(table) else self.size(table)
+        reads += self.size(fk.parent)
+        for mine, theirs in fk.match.items():
+            reads += [self.matched_vertex(table, mine), self.matched_vertex(fk.parent, theirs)]
+        if (table, column) in self.choosers:
+            node, edges = self.choosers[table, column]
+            reads += [(fk.parent, parent) for parent in node.parents]
+            reads += self.reads(fk.parent, edges)
+        return tuple(reads)
 
     def size(self, table: str) -> list[Vertex]:
         """The vertex a table's size waits on: the key that counts its rows, if one does."""
         return [(table, Linked(self.sized[table]))] if table in self.sized else []
 
     def reads(self, table: str, edges: tuple[Edge, ...]) -> tuple[Vertex, ...]:
-        """What edges a node of `table` resolves read: nodes, records and the links they cross;
-        the records among them are noted as read."""
+        """What edges a node of `table` resolves read: nodes, records and the links they cross."""
         out: list[Vertex] = []
         for edge in edges:
             origin, read = self.source(table, edge.parent)
             if read is not None:
                 out.append((origin, read))
-            if isinstance(read, Recorded):
-                self.read.add((origin, read.column))
             if isinstance(edge.parent, Foreign):
                 out.append((table, Linked(edge.parent.key)))
             elif isinstance(edge.parent, Summary):
@@ -616,19 +626,19 @@ class Schema:
         if fk.values is not None:
             return self.real_link(table, column, fk, rows[fk.parent])
         stream = lane(root, "link", self.identity[table], column)
-        weights = np.ones(rows[fk.parent])
+        log_weights = np.zeros(rows[fk.parent])
         if (table, column) in self.choosers:
             node, edges = self.choosers[table, column]
             noise = lane(root, "key", self.identity[table], column)
             value = self.evaluate(fk.parent, node, edges, noise, rows, state)
-            value = checked(f"{column} weights", node, value, rows[fk.parent])[:, 0]
-            weights = np.exp(value - value.max()) if len(value) else value
+            log_weights = checked(f"{column} weights", node, value, rows[fk.parent])[:, 0]
         if fk.counts is not None:
+            weights = np.exp(log_weights - log_weights.max()) if len(log_weights) else log_weights
             drawn = counted(weights, fk.counts.mean, rows.get(table), stream)
             rows[table] = len(drawn)
         elif fk.match or fk.prefer:
             child, parent = self.groups(table, fk, rows, state)
-            drawn = matched(child, parent, weights, stream)
+            drawn = matched(child, parent, log_weights, stream)
             if not fk.nullable and (unmatched := int((drawn < 0).sum())):
                 raise ValueError(
                     f"{unmatched} rows of {table!r} match no row of {fk.parent!r} on"
