@@ -58,6 +58,8 @@ only-include = [
     "plurel",
     "README.md",
     "LICENSE",
+    "COMPATIBILITY.md",
+    "CHANGELOG.md",
     "pyproject.toml",
 ]
 
@@ -86,6 +88,7 @@ typecheck = "pyright"
 test = "pytest"
 examples = "python scripts/readme_examples.py README.md"
 recipes = "python -I scripts/run_recipes.py"
+fingerprints = "python test/fingerprints.py --update"
 wheel = "rm -rf dist && uv build --wheel"
 
 [tool.ruff]

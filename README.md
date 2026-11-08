@@ -697,6 +697,12 @@ of cutting a rank. Realizing fits these scores and the level cuts to one draw of
 realized table's shares follow its rows and it can be sampled at any size. A column that depends on a
 key keeps its shares exactly in every draw instead, since rows sharing a parent are not independent.
 
+## Compatibility
+
+[COMPATIBILITY.md](COMPATIBILITY.md) says what the API and its seeded draws promise, exactly and
+statistically, and on which environments that was checked; [CHANGELOG.md](CHANGELOG.md) lists
+each breaking change with its migration.
+
 ## Development
 
 Set up the environment with [pixi](https://pixi.sh/latest/installation/):
@@ -709,6 +715,7 @@ pixi run lint        # ruff check and format check, at the version pre-commit pi
 pixi run typecheck   # pyright over test/typing_examples.py, the public API as users write it
 pixi run examples    # every README block in order in one namespace, then each quickstart alone
 pixi run recipes     # every domain recipe in examples/generation, small, each in its own process
+pixi run fingerprints  # rewrite test/fingerprints.json, for a change that moves draws on purpose
 pixi run wheel       # a wheel in dist/
 ```
 
