@@ -15,6 +15,12 @@
   explained by exact and near copies, and a shuffled-label control. It uses scikit-learn, which
   relbench already requires, and runs in under a minute; `pixi run recipes` runs a quick
   configuration (`PLUREL_QUICK=1`).
+- [`reference/`](reference/): generated data against real data. [`realism.py`](reference/realism.py)
+  profiles a real relbench database (`rel-f1` by default) and 60 draws of `SchemaPrior` at its row
+  counts with the measures of `diversity.py` (shared in [`analysis/_profile.py`](analysis/_profile.py))
+  and more, checks the rules the generator authors, and reports where the real database falls
+  among the draws, measure by measure. It downloads the dataset and runs in under a minute;
+  `pixi run recipes` runs only its `--self-test`, a generated stand-in with no download.
 - [`generation/`](generation/): standalone v2 recipes that compose the generation API around a
   domain, each checking the relationships it declares. Each runs on its own from the installed
   package with embedded synthetic fixtures, no data or network:
