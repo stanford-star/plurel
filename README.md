@@ -706,29 +706,28 @@ key keeps its shares exactly in every draw instead, since rows sharing a parent 
 What a random table or database costs to generate, end to end as a corpus is generated: draw it from
 the default prior, sample it at the row counts the prior draws, build the relbench database, write it
 to parquet and read it back. Measured on 100 tables (`TablePrior`, 10k to 30k rows) and 100 databases
-(`SchemaPrior`, 2 to 20 tables, 11k to 214k rows) at commit `8c87972`, each in a fresh process, on an
-Apple M4 with 16 GiB and on GitHub's `ubuntu-latest` runner (4 cores of an AMD EPYC 7763, 16 GiB);
-peak memory includes about 195 MiB for the interpreter and imports.
+(`SchemaPrior`, 2 to 20 tables, 11k to 211k rows) with `plurel` at commit `287fef8`, each in a fresh
+process, on an Apple M4 with 16 GiB and on GitHub's `ubuntu-latest` runner (4 cores of an AMD EPYC
+7763, 16 GiB); peak memory includes about 195 MiB for the interpreter and imports.
 
 | | Median | 90th percentile | Largest |
 |---|---:|---:|---:|
-| table: rows | 18,681 | 27,087 | 29,923 |
-| table: seconds, M4 / Linux | 0.13 / 0.16 | 0.39 / 0.35 | 1.0 / 0.58 |
-| table: peak memory, M4 / Linux | 231 / 259 MiB | 302 / 281 MiB | 381 / 298 MiB |
+| table: rows | 18,783 | 29,520 | 30,000 |
+| table: seconds, M4 / Linux | 0.13 / 0.14 | 0.31 / 0.35 | 0.59 / 0.64 |
+| table: peak memory, M4 / Linux | 226 / 258 MiB | 308 / 281 MiB | 411 / 303 MiB |
 | database: tables | 5 | 20 | 20 |
-| database: rows | 29,412 | 91,116 | 214,240 |
-| database: seconds, M4 / Linux | 0.32 / 0.47 | 0.81 / 1.2 | 7.1 / 9.1 |
-| database: peak memory, M4 / Linux | 268 / 286 MiB | 361 / 366 MiB | 1.5 / 1.4 GiB |
+| database: rows | 29,054 | 102,220 | 211,318 |
+| database: seconds, M4 / Linux | 0.29 / 0.44 | 0.98 / 1.4 | 4.1 / 4.4 |
+| database: peak memory, M4 / Linux | 264 / 290 MiB | 422 / 393 MiB | 776 / 702 MiB |
 
 <img src="benchmarks/results/2026-11-09-apple-m4-time.png" alt="Time of each of 200 draws against the rows it drew, on the Apple M4"/>
 
-A typical database takes a third of a second and a few hundred megabytes, so a corpus of thousands
-fits on a laptop: run one database per process, as `scripts/synthetic_gen.py --num_proc` does.
-Sampling takes half to three quarters of the time; most of the rest is writing and reading the
-parquet. Time
-grows with the rows drawn, but draws of one size differ more than tenfold, because each draws its
-own structure: how many hidden values a row computes, through which mechanisms, and how many keys
-it links. [benchmarks/](benchmarks/) has the harness, and the reports for the
+A typical database takes about a third of a second and a few hundred megabytes, so a corpus of
+thousands fits on a laptop: run one database per process, as `scripts/synthetic_gen.py --num_proc`
+does. Sampling takes 40 to 75% of the time; most of the rest is writing and reading the parquet.
+Time grows with the rows drawn, but draws of one size differ more than tenfold, because each draws
+its own structure: how many hidden values a row computes, through which mechanisms, and how many
+keys it links. [benchmarks/](benchmarks/) has the harness, and the reports for the
 [M4](benchmarks/REPORT.md) and the [Linux runner](benchmarks/REPORT-linux.md) give every
 distribution, the share of each phase and the slowest draws.
 
