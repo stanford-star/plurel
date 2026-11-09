@@ -40,9 +40,8 @@ from functools import cache
 import numpy as np
 import pandas as pd
 
-from plurel import LogIntegersRange
+from plurel import LogIntegersRange, Schema
 from plurel.prior import SchemaPrior
-from plurel.schema import Schema
 
 if not __debug__:
     raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
