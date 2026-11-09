@@ -54,7 +54,9 @@ def report(results: dict, images: list[str], source: str) -> str:
         "",
         "| | |",
         "|---|---|",
-        f"| commit | `{env['commit']}`{' (with local changes to plurel)' if env['dirty'] else ''} |",
+        f"| plurel | `{env.get('plurel_commit', env['commit'])}`, the last commit to change it"
+        f"{' (with local changes)' if env['dirty'] else ''} |",
+        f"| harness | `{env['commit']}` |",
         f"| when | {env['when']} |",
         f"| machine | {env['cpu']}, {env['cores']} cores, {env['memory_gib']} GiB, {env['machine']} |",
         f"| platform | {env['platform']} |",
@@ -63,12 +65,12 @@ def report(results: dict, images: list[str], source: str) -> str:
         f"| threads | {', '.join(f'{k}={v}' for k, v in env['threads'].items() if v) or 'library defaults'} |",
     ]
     for kind in kinds:
-        mine = [r for r in done if r["kind"] == kind]
+        mine = [r for r in done if r["kind"] == kind and r["total_seconds"] > 0]
         failed = sum(r["kind"] == kind and "failure" in r for r in runs)
+        lines += ["", f"## {LABELS[kind].capitalize()}: {len(mine)} draws, {failed} failed", ""]
+        if not mine:
+            continue
         lines += [
-            "",
-            f"## {LABELS[kind].capitalize()}: {len(mine)} draws, {failed} failed",
-            "",
             "| | median | 90th percentile | largest | smallest |",
             "|---|---:|---:|---:|---:|",
         ]

@@ -10,10 +10,11 @@ generate rather than a few hand-picked structures:
 
 | Kind | Draw `seed` |
 |---|---|
-| random table | `TablePrior().realize(seed)`, at a row count drawn as `SchemaPrior` draws an event table's: 10,000 to 30,000 |
+| random table | `TablePrior().realize(seed)`, at a row count drawn as `SchemaPrior` draws an event table's: from its 10,000 to 30,000 range, warped by the seed |
 | random database | `SchemaPrior().realize(seed)`, at the row counts `prior.rows(database, seed)` draws: 2 to 20 tables, 500 to 1,000 rows per referenced table and 10,000 to 30,000 per event table |
 
-By default seeds 0 to 99 of each. Every draw samples with data seed 0, in a fresh process with no
+By default seeds 0 to 99 of each. Every draw samples with data seed 0 (`scripts/synthetic_gen.py`
+samples with the database's own seed; the cost is the same), in a fresh process with no
 warm-up, timed in the phases the README's random-database example and `scripts/synthetic_gen.py`
 run:
 
@@ -48,5 +49,6 @@ against its rows and its peak memory against its cells, saved beside the results
 `ubuntu-latest` runner, outside pull-request CI: push a commit to a branch named `measure/...` and
 download its artifact.
 
-A result holds for the machine, packages and commit its report names; compare two only on the same
+A result holds for the machine, packages and plurel commit its report names (the last commit to
+change `plurel/`, which is on `v2` once its PR has merged); compare two only on the same
 machine, and on the same prior: a change to a prior changes what is drawn.

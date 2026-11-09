@@ -1,7 +1,7 @@
 """What the benchmark draws: tables and databases from the default priors, one per seed, as a corpus
 is generated. Database `seed` is `SchemaPrior().realize(seed)` at the row counts
 `prior.rows(database, seed)` draws for its tables; table `seed` is `TablePrior().realize(seed)` at a
-row count drawn the way the database prior draws an event table's."""
+row count drawn the way the database prior draws an event table's: warped, then drawn."""
 
 from collections.abc import Callable
 
@@ -20,7 +20,8 @@ def database(seed: int) -> tuple[Schema, dict[str, int]]:
 
 
 def table(seed: int) -> tuple[Schema, dict[str, int]]:
-    rows = int(SchemaPrior().activity_row_count.draw(np.random.default_rng(seed)))
+    rng = np.random.default_rng(seed)
+    rows = int(SchemaPrior().activity_row_count.warp(rng).draw(rng))
     return Schema({"table": TablePrior().realize(seed)}), {"table": rows}
 
 

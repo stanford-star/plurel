@@ -52,6 +52,10 @@ def environment() -> dict[str, object]:
     return {
         "when": datetime.now(UTC).isoformat(timespec="seconds"),
         "commit": run("git", "-C", str(HERE), "rev-parse", "--short", "HEAD"),
+        # the last commit to change the library: what was measured, and on v2 once it has merged
+        "plurel_commit": run(
+            "git", "-C", str(HERE.parent), "log", "-1", "--format=%h", "--", "plurel"
+        ),
         # changes to what is measured: the library, not the harness itself
         "dirty": bool(run("git", "-C", str(HERE.parent), "status", "--porcelain", "--", "plurel")),
         "platform": platform.platform(),
