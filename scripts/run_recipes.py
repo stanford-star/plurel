@@ -1,7 +1,9 @@
 """Run the concept examples, domain recipes and analyses, each in its own isolated process with the Python
 running this script, from a temporary directory: the plurel it imports is whichever that Python
-has installed, an editable checkout or a wheel. Exits non-zero on the first example that fails."""
+has installed, an editable checkout or a wheel. PLUREL_QUICK=1 asks the analyses for their small
+configuration. Exits non-zero on the first example that fails."""
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -17,7 +19,11 @@ for directory in ("concepts", "generation", "analysis"):
 with tempfile.TemporaryDirectory() as scratch:
     for recipe in recipes:
         done = subprocess.run(
-            [sys.executable, "-I", str(recipe)], cwd=scratch, capture_output=True, text=True
+            [sys.executable, "-I", str(recipe)],
+            cwd=scratch,
+            capture_output=True,
+            text=True,
+            env=os.environ | {"PLUREL_QUICK": "1"},
         )
         if done.returncode:
             sys.stdout.write(done.stdout)
