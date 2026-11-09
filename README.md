@@ -750,7 +750,7 @@ pixi run test        # the suite
 pixi run lint        # ruff check and format check, at the version pre-commit pins
 pixi run typecheck   # pyright over test/typing_examples.py, the public API as users write it
 pixi run examples    # every README block in order in one namespace, then each quickstart alone
-pixi run recipes     # every domain recipe in examples/generation, small, each in its own process
+pixi run recipes     # every example, recipe and analysis in examples/, small, each in its own process
 pixi run bench       # generation time and memory up to 1M rows; see benchmarks/README.md
 pixi run fingerprints  # rewrite test/fingerprints.json, for a change that moves draws on purpose
 pixi run wheel       # a wheel in dist/
