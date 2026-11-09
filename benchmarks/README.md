@@ -15,7 +15,10 @@ python benchmarks/run.py --workloads wide retail --sizes 1000 10000 --seeds 0 --
 ```
 
 The report reads only the JSON, never PluRel, so plots need matplotlib alone, not in the project's
-environment, whose locked versions the measurements depend on.
+environment, whose locked versions the measurements depend on. Its figures, drawn by
+[`figures.py`](figures.py), are saved beside the results they come from, named after them:
+`results/<results>-time.png`, `-memory.png` and `-phases.png`. They name each workload by what it
+is; the table below gives the short names the results and the command line use.
 
 On Linux, the [`measure`](../.github/workflows/measure.yml) workflow runs the full benchmark on
 GitHub's `ubuntu-latest` runner, outside pull-request CI: push a commit to a branch named

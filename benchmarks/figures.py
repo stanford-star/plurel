@@ -60,8 +60,32 @@ def style(plt) -> None:
     )
 
 
+# what each workload is, for readers; its short name stays in the results and on the command line
+NAMES = {
+    "prior-table": "random table, 20 columns",
+    "prior-1": "random database, 3 tables",
+    "prior-0": "random database, 15 tables",
+    "prior-2": "random database, 20 tables",
+    "narrow": "5 columns, short causal chain",
+    "columns-10": "10 columns, 3 causes each",
+    "wide": "51 columns, 3 causes each",
+    "dense": "40 columns, all earlier as causes",
+    "columns-200": "200 columns, 3 causes each",
+    "tables-2": "chain of 2 tables",
+    "tables-8": "chain of 8 tables",
+    "tables-32": "chain of 32 tables",
+    "keyed": "counted, matched, unique keys",
+    "mixed": "orders around a random table",
+    "retail": "retail, with real rows",
+    "visits": "clinic visits",
+    "enrollments": "enrollments, with real rows",
+}
+
+
 def label(workload: str, tables: int) -> str:
-    return f"{workload} · {tables} tables" if tables > 1 else workload
+    if workload in NAMES:
+        return NAMES[workload]
+    return f"{workload}, {tables} tables" if tables > 1 else workload
 
 
 def rows_text(value: float, _=None) -> str:
@@ -206,7 +230,7 @@ def phases(plt, summary: dict, phase_names: tuple[str, ...], title: str, path: P
             color=INK,
             fontsize=11.5,
         )
-    axis.set_yticks(range(len(order)), [f"{w} ({rows_text(largest[w])})" for w in order])
+    axis.set_yticks(range(len(order)), [label(w, 0) for w in order])
     axis.invert_yaxis()
     axis.set_xlim(0, 1)
     axis.xaxis.set_major_formatter(lambda value, _: f"{value:.0%}")
@@ -220,8 +244,9 @@ def phases(plt, summary: dict, phase_names: tuple[str, ...], title: str, path: P
     plt.close(figure)
 
 
-def draw(summary: dict, phase_names: tuple[str, ...], machine: str, out: Path) -> list[str]:
-    """The figures beside `out`, named after it, or none without matplotlib."""
+def draw(summary: dict, phase_names: tuple[str, ...], machine: str, results: Path) -> list[Path]:
+    """The figures beside the results they are drawn from, named after them, or none without
+    matplotlib."""
     try:
         import matplotlib
 
@@ -231,9 +256,8 @@ def draw(summary: dict, phase_names: tuple[str, ...], machine: str, out: Path) -
     except ImportError:
         return []
     style(plt)
-    stem = out.stem.removeprefix("REPORT").strip("-").lower()
     names = {
-        kind: f"{stem}-{kind}.png" if stem else f"{kind}.png"
+        kind: results.with_name(f"{results.stem}-{kind}.png")
         for kind in ("time", "memory", "phases")
     }
     scaling(
@@ -243,7 +267,7 @@ def draw(summary: dict, phase_names: tuple[str, ...], machine: str, out: Path) -
         "total",
         "end-to-end time",
         f"End-to-end time against rows drawn · {machine}",
-        out.parent / names["time"],
+        names["time"],
     )
     scaling(
         plt,
@@ -252,13 +276,13 @@ def draw(summary: dict, phase_names: tuple[str, ...], machine: str, out: Path) -
         "peak",
         "peak memory",
         f"Peak memory against rows drawn · {machine}",
-        out.parent / names["memory"],
+        names["memory"],
     )
     phases(
         plt,
         summary,
         phase_names,
         f"Where the time goes, two workloads of each kind at their largest size · {machine}",
-        out.parent / names["phases"],
+        names["phases"],
     )
     return list(names.values())

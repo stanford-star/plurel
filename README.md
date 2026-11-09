@@ -735,7 +735,7 @@ the saved database back, and a random prior adds about 0.45 s to realize, which 
 4,096 rows per table. Saving takes at most 1.4 s on the M4 and 4.2 s on the runner, 395 MiB on
 disk for the 51M-cell table. No run failed or ran out of memory on either machine.
 
-<img src="benchmarks/time.png" alt="End-to-end time against rows drawn on the Apple M4, one panel per kind of schema"/>
+<img src="benchmarks/results/2026-11-08-apple-m4-7241cbc-time.png" alt="End-to-end time against rows drawn on the Apple M4, one panel per kind of schema"/>
 
 These numbers hold for those machines. [benchmarks/](benchmarks/) has the harness and every
 workload at 1k, 10k, 100k and 1M rows with each phase timed apart: the reports for the
