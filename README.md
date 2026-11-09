@@ -64,7 +64,7 @@ prior = SchemaPrior()
 database = prior.realize(seed=0)                              # tables, keys and mechanisms
 frames = database.sample(prior.rows(database, seed=0), seed=0)  # a dict of DataFrames
 db = create_database(database, frames)                        # the relbench form
-write_database(db, "~/.cache/relbench/plurel-0", name="plurel-0", overwrite=True,
+write_database(db, "~/.cache/relbench/quickstart", name="quickstart", overwrite=True,
                **dict(zip(("val_timestamp", "test_timestamp"), split_timestamps(db))))
 ```
 
@@ -131,12 +131,16 @@ A `Table` is a dict of columns:
 | `("age", "tenure"): 0.8` | A weight on the product of two causes |
 | `Recorded("price"): 2.0` | A weight on what `price` records, in its units |
 
-A column is its causes' effects added up plus `noise` (0.5 by default), and its rows then take
-the marginal's values in that order: a column always holds its marginal, and a weight says how
-closely it follows its causes, not how many units it moves per unit. With one cause and the default
-noise, weights of 0.25, 0.5, 1 and 2 give rank correlations of about 0.4, 0.7, 0.9 and 0.97. To
-compute in units, read a cause `Recorded`, or use `Derived`;
+A column is its causes' effects added up plus `noise` (0.5 by default). With a marginal, its rows
+then take the marginal's values in that order, so the column holds its marginal exactly; a
+`Numeric` without one records the sum itself. Either way a weight says how closely a column
+follows its causes, not how many units it moves per unit. With one cause and the default noise,
+weights of 0.25, 0.5, 1 and 2 give rank correlations of about 0.4, 0.7, 0.9 and 0.97. To compute in
+units, read a cause `Recorded`, or use `Derived`;
 [`02_latent_and_recorded.py`](examples/concepts/02_latent_and_recorded.py) shows both.
+`sample_with_latents(rows, seed=..., held={"x": values})` also returns every node's latent values,
+and with `held` sets a node's latents to the given ones: an intervention, seen in the columns that
+read it.
 
 `round=1` gives whole numbers and `round=0.01` cents, `clip=(lo, hi)` caps values, `zeros=0.2`
 records a share of rows at 0, and `missing=0.1` blanks a share; columns reading a blanked column
@@ -182,7 +186,9 @@ A key chooses its parent at random by default. Its options:
 | `nullable=0.02, fill=0.0` | A random share of rows point at nothing; `fill` is what reads across them see |
 
 `Summary("staff", "team_id")` reads the rows pointing back: their count, or with a column and `sum`,
-`mean`, `max` or `min` their aggregate. A table counted by a key needs no row count of its own:
+`mean`, `max` or `min` their aggregate; all but a count and a sum need a `fill` for rows nothing
+points at, and a summary of a `Recorded` column skips blanks. A table counted by a key needs no row
+count of its own:
 
 ```python
 from plurel import Counts
@@ -259,7 +265,8 @@ others = [family.realize(seed).sample(1000, seed=10) for seed in range(3)]  # th
 | `Noise(kind, std)` | Noise: `gaussian`, `laplace`, `student_t`, `skewed` or `gumbel` |
 | `ByLevel(column, {level: (low, high)})` | A marginal with its own range per level of a categorical column |
 
-`Schema.realize` does the same for a database. A table without ranges samples directly.
+`Schema.realize` does the same for a database. A table with neither ranges nor categorical
+`scores` samples directly; one with `scores` is realized first, to fit them.
 [`03_realization.py`](examples/concepts/03_realization.py) through
 [`07_calibration_sizes.py`](examples/concepts/07_calibration_sizes.py) explain what realizing fits
 and when it matters.
@@ -307,8 +314,8 @@ print(schema.explain())
 
 ## Reproducibility
 
-The same seeds and row counts give the same frames, byte for byte, on one platform; across
-platforms the last bits of some numbers differ.
+The same seeds and row counts give the same frames, byte for byte, on one platform and processor
+type; across them the last bits of some numbers differ.
 [COMPATIBILITY.md](COMPATIBILITY.md) says exactly what repeats, and [CHANGELOG.md](CHANGELOG.md)
 lists changes that move draws. A draw is one dataset, not rows streamed from a population, so
 `sample(200, seed=0).head(100)` is not `sample(100, seed=0)`; to build a larger dataset, draw parts
