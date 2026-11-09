@@ -71,7 +71,16 @@ class Range:
         return replace(self, low=-self.high, high=-self.low)
 
     def warp(self, rng: np.random.Generator) -> "Range":
-        location, concentration = _open_unit(rng), META_CONCENTRATION.draw(rng)
+        """A preference within the range. Warping a warped range draws the new preference near
+        the old one, so preferences nest, a table's within its database's: from the old shape,
+        made at least as concentrated as a uniform, which never pushes them to the range's ends."""
+        if self.shape is None:
+            location = _open_unit(rng)
+        else:
+            a, b = self.shape
+            location = float(rng.beta(*np.asarray(self.shape) * max(1.0, 2.0 / (a + b))))
+            location = min(max(location, 2**-53), 1 - 2**-53)  # a beta draw may land on 0 or 1
+        concentration = META_CONCENTRATION.draw(rng)
         shape = (location * concentration, (1.0 - location) * concentration)
         return replace(self, shape=shape)
 

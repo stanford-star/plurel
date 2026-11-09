@@ -261,6 +261,21 @@ def test_warping_gives_each_realization_its_own_style():
     assert np.var(meta) > 1.5 * np.var(flat)
 
 
+def test_warps_nest_so_tables_follow_their_database():
+    rng = np.random.default_rng(0)
+    database = Range(0.0, 1.0, shape=(9000.0, 1000.0))  # prefers 0.9
+    locations = [(lambda s: s[0] / sum(s))(database.warp(rng).shape) for _ in range(200)]
+    assert abs(np.median(locations) - 0.9) < 0.02
+    edge = Range(0.0, 1.0, shape=(1e-9, 1.0))  # a preference all at 0
+    assert all(0.0 < edge.warp(rng).shape[0] for _ in range(50))
+    loose = Range(0.0, 1.0, shape=(0.05, 0.05))  # a database with a weak preference
+    nested = [(lambda s: s[0] / sum(s))(loose.warp(rng).shape) for _ in range(400)]
+    assert np.mean([min(x, 1 - x) < 0.05 for x in nested]) < 0.2, "tables pushed to the ends"
+    database = SchemaPrior().warp(rng)
+    assert database.table_prior.edge_families.weights is not None
+    assert database.table_prior.node_count.shape is not None
+
+
 SMALL = dict(
     entity_row_count=IntegersRange(60, 120),
     activity_row_count=IntegersRange(300, 600),

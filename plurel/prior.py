@@ -147,11 +147,11 @@ FITS = {
 
 
 def _warped[P](prior: P, rng: np.random.Generator) -> P:
-    """A copy of the prior with every range and choice warped."""
+    """A copy of the prior with every range, choice and nested prior warped."""
     knobs = {
         field.name: getattr(prior, field.name).warp(rng)
         for field in fields(prior)
-        if isinstance(getattr(prior, field.name), Range | Choices)
+        if hasattr(getattr(prior, field.name), "warp")
     }
     return replace(prior, **knobs)
 
@@ -479,9 +479,10 @@ def _downstream(scm: Table, readers: list[str]) -> set[str]:
 class SchemaPrior:
     """Random multi-table schema prior.
 
-    Ranges and choices are warped once per database, then drawn per use. A table's parents in
-    the table graph are the tables it references, some through two keys. Each table is a fresh
-    warp of `table_prior`, built as a local plan first. The crossing edges are then decided on
+    Ranges and choices are warped once per database, then drawn per use, the table prior's too.
+    A table's parents in the table graph are the tables it references, some through two keys.
+    Each table warps the database's table prior once more, so its knobs vary around the
+    database's preferences, and is built as a local plan first. The crossing edges are then decided on
     the built tables and given to the Schema: across each key, a drawn share of the child's
     nodes read drawn parent nodes; across a drawn share of the keys between static tables, a
     drawn share of the parent's nodes read summaries of drawn child nodes. Summaries are wired
@@ -558,6 +559,8 @@ class SchemaPrior:
             raise ValueError(f"row counts must allow {clusters} link clusters")
 
     def warp(self, rng: np.random.Generator) -> "SchemaPrior":
+        """Every range and choice warped, the table prior's too: its tables then warp around this
+        database's preferences, so databases differ as wholes and their tables stay related."""
         return _warped(self, rng)
 
     def realize(self, seed: Seed = None) -> Schema:
