@@ -1,0 +1,1228 @@
+{
+ "environment": {
+  "when": "2026-11-09T00:43:30+00:00",
+  "commit": "1c546a1",
+  "dirty": false,
+  "platform": "Linux-7.0.0-1019-azure-x86_64-with-glibc2.43",
+  "machine": "x86_64",
+  "cpu": "AMD EPYC 7763 64-Core Processor",
+  "cores": 4,
+  "memory_gib": 15.6,
+  "python": "3.12.0",
+  "packages": {
+   "plurel": "2.0.0.dev0",
+   "numpy": "2.5.1",
+   "pandas": "3.0.5",
+   "pyarrow": "25.0.0",
+   "scipy": "1.17.0",
+   "relbench": "3.0.1"
+  },
+  "threads": {
+   "OMP_NUM_THREADS": null,
+   "OPENBLAS_NUM_THREADS": null,
+   "MKL_NUM_THREADS": null
+  }
+ },
+ "runs": [
+  {
+   "workload": "table",
+   "size": 100000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0049,
+    "realize": 0.0561,
+    "sample": 0.8299,
+    "database": 0.0002,
+    "write": 0.0968,
+    "read": 0.0372
+   },
+   "total_seconds": 1.0251,
+   "rows": 100000,
+   "cells": 2100000,
+   "tables": 1,
+   "disk_mib": 12.19,
+   "peak_mib": 438.0
+  },
+  {
+   "workload": "table",
+   "size": 100000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0046,
+    "realize": 0.0484,
+    "sample": 0.8127,
+    "database": 0.0002,
+    "write": 0.0889,
+    "read": 0.0275
+   },
+   "total_seconds": 0.9823,
+   "rows": 100000,
+   "cells": 2100000,
+   "tables": 1,
+   "disk_mib": 12.19,
+   "peak_mib": 434.4
+  },
+  {
+   "workload": "table",
+   "size": 100000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0045,
+    "realize": 0.0451,
+    "sample": 0.7896,
+    "database": 0.0002,
+    "write": 0.0895,
+    "read": 0.0284
+   },
+   "total_seconds": 0.9573,
+   "rows": 100000,
+   "cells": 2100000,
+   "tables": 1,
+   "disk_mib": 12.19,
+   "peak_mib": 430.1
+  },
+  {
+   "workload": "table",
+   "size": 250000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0049,
+    "realize": 0.0489,
+    "sample": 1.9733,
+    "database": 0.0002,
+    "write": 0.2262,
+    "read": 0.0457
+   },
+   "total_seconds": 2.2992,
+   "rows": 250000,
+   "cells": 5250000,
+   "tables": 1,
+   "disk_mib": 28.04,
+   "peak_mib": 643.7
+  },
+  {
+   "workload": "table",
+   "size": 250000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0045,
+    "realize": 0.0476,
+    "sample": 1.9976,
+    "database": 0.0002,
+    "write": 0.2177,
+    "read": 0.0461
+   },
+   "total_seconds": 2.3137,
+   "rows": 250000,
+   "cells": 5250000,
+   "tables": 1,
+   "disk_mib": 28.04,
+   "peak_mib": 645.9
+  },
+  {
+   "workload": "table",
+   "size": 250000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0046,
+    "realize": 0.0465,
+    "sample": 1.9591,
+    "database": 0.0002,
+    "write": 0.2347,
+    "read": 0.0453
+   },
+   "total_seconds": 2.2904,
+   "rows": 250000,
+   "cells": 5250000,
+   "tables": 1,
+   "disk_mib": 28.04,
+   "peak_mib": 644.4
+  },
+  {
+   "workload": "table",
+   "size": 500000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0046,
+    "realize": 0.0444,
+    "sample": 3.8984,
+    "database": 0.0002,
+    "write": 0.3105,
+    "read": 0.081
+   },
+   "total_seconds": 4.3391,
+   "rows": 500000,
+   "cells": 10500000,
+   "tables": 1,
+   "disk_mib": 52.37,
+   "peak_mib": 705.3
+  },
+  {
+   "workload": "table",
+   "size": 500000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0047,
+    "realize": 0.0444,
+    "sample": 4.0983,
+    "database": 0.0002,
+    "write": 0.3103,
+    "read": 0.0806
+   },
+   "total_seconds": 4.5385,
+   "rows": 500000,
+   "cells": 10500000,
+   "tables": 1,
+   "disk_mib": 52.37,
+   "peak_mib": 704.9
+  },
+  {
+   "workload": "table",
+   "size": 500000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0046,
+    "realize": 0.0456,
+    "sample": 3.9289,
+    "database": 0.0002,
+    "write": 0.3129,
+    "read": 0.0787
+   },
+   "total_seconds": 4.3709,
+   "rows": 500000,
+   "cells": 10500000,
+   "tables": 1,
+   "disk_mib": 52.37,
+   "peak_mib": 705.1
+  },
+  {
+   "workload": "table",
+   "size": 1000000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0047,
+    "realize": 0.0463,
+    "sample": 7.839,
+    "database": 0.0002,
+    "write": 0.4812,
+    "read": 0.1352
+   },
+   "total_seconds": 8.5066,
+   "rows": 1000000,
+   "cells": 21000000,
+   "tables": 1,
+   "disk_mib": 101.09,
+   "peak_mib": 1227.7
+  },
+  {
+   "workload": "table",
+   "size": 1000000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0046,
+    "realize": 0.046,
+    "sample": 7.7963,
+    "database": 0.0002,
+    "write": 0.4759,
+    "read": 0.1296
+   },
+   "total_seconds": 8.4526,
+   "rows": 1000000,
+   "cells": 21000000,
+   "tables": 1,
+   "disk_mib": 101.09,
+   "peak_mib": 1222.7
+  },
+  {
+   "workload": "table",
+   "size": 1000000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0047,
+    "realize": 0.0498,
+    "sample": 7.7743,
+    "database": 0.0002,
+    "write": 0.4835,
+    "read": 0.1319
+   },
+   "total_seconds": 8.4444,
+   "rows": 1000000,
+   "cells": 21000000,
+   "tables": 1,
+   "disk_mib": 101.09,
+   "peak_mib": 1235.5
+  },
+  {
+   "workload": "database-2",
+   "size": 100000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0109,
+    "realize": 0.0004,
+    "sample": 0.6211,
+    "database": 0.0011,
+    "write": 0.0511,
+    "read": 0.0247
+   },
+   "total_seconds": 0.7093,
+   "rows": 100000,
+   "cells": 1088456,
+   "tables": 2,
+   "disk_mib": 5.67,
+   "peak_mib": 344.1
+  },
+  {
+   "workload": "database-2",
+   "size": 100000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0112,
+    "realize": 0.0004,
+    "sample": 0.5817,
+    "database": 0.001,
+    "write": 0.0526,
+    "read": 0.0254
+   },
+   "total_seconds": 0.6723,
+   "rows": 100000,
+   "cells": 1088456,
+   "tables": 2,
+   "disk_mib": 5.67,
+   "peak_mib": 344.7
+  },
+  {
+   "workload": "database-2",
+   "size": 100000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0109,
+    "realize": 0.0004,
+    "sample": 0.5794,
+    "database": 0.001,
+    "write": 0.0537,
+    "read": 0.0248
+   },
+   "total_seconds": 0.6702,
+   "rows": 100000,
+   "cells": 1088456,
+   "tables": 2,
+   "disk_mib": 5.67,
+   "peak_mib": 344.5
+  },
+  {
+   "workload": "database-2",
+   "size": 250000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0117,
+    "realize": 0.0004,
+    "sample": 1.348,
+    "database": 0.0018,
+    "write": 0.1083,
+    "read": 0.0337
+   },
+   "total_seconds": 1.5039,
+   "rows": 250000,
+   "cells": 2721138,
+   "tables": 2,
+   "disk_mib": 13.05,
+   "peak_mib": 461.8
+  },
+  {
+   "workload": "database-2",
+   "size": 250000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0112,
+    "realize": 0.0004,
+    "sample": 1.3908,
+    "database": 0.0017,
+    "write": 0.1068,
+    "read": 0.0338
+   },
+   "total_seconds": 1.5447,
+   "rows": 250000,
+   "cells": 2721138,
+   "tables": 2,
+   "disk_mib": 13.05,
+   "peak_mib": 463.5
+  },
+  {
+   "workload": "database-2",
+   "size": 250000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0114,
+    "realize": 0.0004,
+    "sample": 1.3623,
+    "database": 0.0017,
+    "write": 0.1114,
+    "read": 0.035
+   },
+   "total_seconds": 1.5222,
+   "rows": 250000,
+   "cells": 2721138,
+   "tables": 2,
+   "disk_mib": 13.05,
+   "peak_mib": 468.5
+  },
+  {
+   "workload": "database-2",
+   "size": 500000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0112,
+    "realize": 0.0004,
+    "sample": 2.5785,
+    "database": 0.003,
+    "write": 0.1563,
+    "read": 0.0526
+   },
+   "total_seconds": 2.802,
+   "rows": 500000,
+   "cells": 5442276,
+   "tables": 2,
+   "disk_mib": 24.67,
+   "peak_mib": 572.0
+  },
+  {
+   "workload": "database-2",
+   "size": 500000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.011,
+    "realize": 0.0004,
+    "sample": 2.6376,
+    "database": 0.0029,
+    "write": 0.1598,
+    "read": 0.0556
+   },
+   "total_seconds": 2.8673,
+   "rows": 500000,
+   "cells": 5442276,
+   "tables": 2,
+   "disk_mib": 24.67,
+   "peak_mib": 571.4
+  },
+  {
+   "workload": "database-2",
+   "size": 500000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0115,
+    "realize": 0.0004,
+    "sample": 2.6202,
+    "database": 0.0028,
+    "write": 0.1457,
+    "read": 0.0527
+   },
+   "total_seconds": 2.8333,
+   "rows": 500000,
+   "cells": 5442276,
+   "tables": 2,
+   "disk_mib": 24.67,
+   "peak_mib": 576.0
+  },
+  {
+   "workload": "database-2",
+   "size": 1000000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.012,
+    "realize": 0.0004,
+    "sample": 5.0502,
+    "database": 0.0053,
+    "write": 0.2355,
+    "read": 0.0826
+   },
+   "total_seconds": 5.386,
+   "rows": 1000000,
+   "cells": 10884552,
+   "tables": 2,
+   "disk_mib": 48.05,
+   "peak_mib": 878.6
+  },
+  {
+   "workload": "database-2",
+   "size": 1000000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.011,
+    "realize": 0.0004,
+    "sample": 5.0072,
+    "database": 0.0053,
+    "write": 0.2386,
+    "read": 0.0837
+   },
+   "total_seconds": 5.3462,
+   "rows": 1000000,
+   "cells": 10884552,
+   "tables": 2,
+   "disk_mib": 48.05,
+   "peak_mib": 910.7
+  },
+  {
+   "workload": "database-2",
+   "size": 1000000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0114,
+    "realize": 0.0004,
+    "sample": 5.0674,
+    "database": 0.0052,
+    "write": 0.238,
+    "read": 0.0823
+   },
+   "total_seconds": 5.4047,
+   "rows": 1000000,
+   "cells": 10884552,
+   "tables": 2,
+   "disk_mib": 48.05,
+   "peak_mib": 884.8
+  },
+  {
+   "workload": "database-8",
+   "size": 100000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0366,
+    "realize": 0.4643,
+    "sample": 1.7057,
+    "database": 0.0016,
+    "write": 0.0994,
+    "read": 0.0439
+   },
+   "total_seconds": 2.3515,
+   "rows": 100000,
+   "cells": 1356606,
+   "tables": 8,
+   "disk_mib": 8.46,
+   "peak_mib": 397.3
+  },
+  {
+   "workload": "database-8",
+   "size": 100000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0373,
+    "realize": 0.5242,
+    "sample": 1.7134,
+    "database": 0.0016,
+    "write": 0.0986,
+    "read": 0.0436
+   },
+   "total_seconds": 2.4187,
+   "rows": 100000,
+   "cells": 1356606,
+   "tables": 8,
+   "disk_mib": 8.46,
+   "peak_mib": 397.0
+  },
+  {
+   "workload": "database-8",
+   "size": 100000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0369,
+    "realize": 0.4742,
+    "sample": 1.7143,
+    "database": 0.0016,
+    "write": 0.0996,
+    "read": 0.0425
+   },
+   "total_seconds": 2.3691,
+   "rows": 100000,
+   "cells": 1356606,
+   "tables": 8,
+   "disk_mib": 8.46,
+   "peak_mib": 396.6
+  },
+  {
+   "workload": "database-8",
+   "size": 250000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0369,
+    "realize": 0.4663,
+    "sample": 4.2373,
+    "database": 0.0019,
+    "write": 0.1704,
+    "read": 0.0528
+   },
+   "total_seconds": 4.9656,
+   "rows": 250000,
+   "cells": 3391518,
+   "tables": 8,
+   "disk_mib": 19.97,
+   "peak_mib": 645.1
+  },
+  {
+   "workload": "database-8",
+   "size": 250000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0379,
+    "realize": 0.4889,
+    "sample": 4.2579,
+    "database": 0.0019,
+    "write": 0.1716,
+    "read": 0.0534
+   },
+   "total_seconds": 5.0116,
+   "rows": 250000,
+   "cells": 3391518,
+   "tables": 8,
+   "disk_mib": 19.97,
+   "peak_mib": 644.3
+  },
+  {
+   "workload": "database-8",
+   "size": 250000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0398,
+    "realize": 0.4622,
+    "sample": 4.1945,
+    "database": 0.0019,
+    "write": 0.1753,
+    "read": 0.0534
+   },
+   "total_seconds": 4.9271,
+   "rows": 250000,
+   "cells": 3391518,
+   "tables": 8,
+   "disk_mib": 19.97,
+   "peak_mib": 645.0
+  },
+  {
+   "workload": "database-8",
+   "size": 500000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0369,
+    "realize": 0.4655,
+    "sample": 8.3672,
+    "database": 0.0029,
+    "write": 0.2292,
+    "read": 0.0704
+   },
+   "total_seconds": 9.1721,
+   "rows": 500000,
+   "cells": 6783034,
+   "tables": 8,
+   "disk_mib": 37.55,
+   "peak_mib": 1134.0
+  },
+  {
+   "workload": "database-8",
+   "size": 500000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0367,
+    "realize": 0.4635,
+    "sample": 8.2413,
+    "database": 0.0027,
+    "write": 0.2247,
+    "read": 0.071
+   },
+   "total_seconds": 9.0399,
+   "rows": 500000,
+   "cells": 6783034,
+   "tables": 8,
+   "disk_mib": 37.55,
+   "peak_mib": 1138.1
+  },
+  {
+   "workload": "database-8",
+   "size": 500000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0378,
+    "realize": 0.4638,
+    "sample": 8.2025,
+    "database": 0.0029,
+    "write": 0.2193,
+    "read": 0.073
+   },
+   "total_seconds": 8.9993,
+   "rows": 500000,
+   "cells": 6783034,
+   "tables": 8,
+   "disk_mib": 37.55,
+   "peak_mib": 1076.4
+  },
+  {
+   "workload": "database-8",
+   "size": 1000000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0383,
+    "realize": 0.4617,
+    "sample": 16.0934,
+    "database": 0.0046,
+    "write": 0.3132,
+    "read": 0.1132
+   },
+   "total_seconds": 17.0244,
+   "rows": 1000000,
+   "cells": 13566076,
+   "tables": 8,
+   "disk_mib": 72.9,
+   "peak_mib": 1874.3
+  },
+  {
+   "workload": "database-8",
+   "size": 1000000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0371,
+    "realize": 0.5141,
+    "sample": 16.124,
+    "database": 0.005,
+    "write": 0.3279,
+    "read": 0.1119
+   },
+   "total_seconds": 17.12,
+   "rows": 1000000,
+   "cells": 13566076,
+   "tables": 8,
+   "disk_mib": 72.9,
+   "peak_mib": 1873.9
+  },
+  {
+   "workload": "database-8",
+   "size": 1000000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.0373,
+    "realize": 0.4746,
+    "sample": 16.0729,
+    "database": 0.0045,
+    "write": 0.3149,
+    "read": 0.1158
+   },
+   "total_seconds": 17.02,
+   "rows": 1000000,
+   "cells": 13566076,
+   "tables": 8,
+   "disk_mib": 72.9,
+   "peak_mib": 1874.3
+  },
+  {
+   "workload": "database-32",
+   "size": 100000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.1406,
+    "realize": 1.4348,
+    "sample": 0.9442,
+    "database": 0.0022,
+    "write": 0.1449,
+    "read": 0.1083
+   },
+   "total_seconds": 2.775,
+   "rows": 100000,
+   "cells": 925407,
+   "tables": 32,
+   "disk_mib": 4.35,
+   "peak_mib": 383.1
+  },
+  {
+   "workload": "database-32",
+   "size": 100000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.1433,
+    "realize": 1.4182,
+    "sample": 0.9518,
+    "database": 0.0022,
+    "write": 0.1444,
+    "read": 0.1079
+   },
+   "total_seconds": 2.7678,
+   "rows": 100000,
+   "cells": 925407,
+   "tables": 32,
+   "disk_mib": 4.35,
+   "peak_mib": 373.4
+  },
+  {
+   "workload": "database-32",
+   "size": 100000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.1436,
+    "realize": 1.3907,
+    "sample": 0.9404,
+    "database": 0.0022,
+    "write": 0.1446,
+    "read": 0.1074
+   },
+   "total_seconds": 2.7289,
+   "rows": 100000,
+   "cells": 925407,
+   "tables": 32,
+   "disk_mib": 4.35,
+   "peak_mib": 371.9
+  },
+  {
+   "workload": "database-32",
+   "size": 250000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.139,
+    "realize": 1.3751,
+    "sample": 2.0347,
+    "database": 0.0027,
+    "write": 0.1951,
+    "read": 0.1124
+   },
+   "total_seconds": 3.859,
+   "rows": 250000,
+   "cells": 2313553,
+   "tables": 32,
+   "disk_mib": 10.83,
+   "peak_mib": 421.7
+  },
+  {
+   "workload": "database-32",
+   "size": 250000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.141,
+    "realize": 1.3974,
+    "sample": 2.0482,
+    "database": 0.0027,
+    "write": 0.1955,
+    "read": 0.1131
+   },
+   "total_seconds": 3.8979,
+   "rows": 250000,
+   "cells": 2313553,
+   "tables": 32,
+   "disk_mib": 10.83,
+   "peak_mib": 427.4
+  },
+  {
+   "workload": "database-32",
+   "size": 250000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.1382,
+    "realize": 1.4282,
+    "sample": 2.0032,
+    "database": 0.0026,
+    "write": 0.1913,
+    "read": 0.1124
+   },
+   "total_seconds": 3.8759,
+   "rows": 250000,
+   "cells": 2313553,
+   "tables": 32,
+   "disk_mib": 10.83,
+   "peak_mib": 422.8
+  },
+  {
+   "workload": "database-32",
+   "size": 500000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.1377,
+    "realize": 1.4022,
+    "sample": 3.851,
+    "database": 0.0032,
+    "write": 0.2747,
+    "read": 0.1247
+   },
+   "total_seconds": 5.7935,
+   "rows": 500000,
+   "cells": 4627092,
+   "tables": 32,
+   "disk_mib": 20.77,
+   "peak_mib": 600.4
+  },
+  {
+   "workload": "database-32",
+   "size": 500000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.1368,
+    "realize": 1.4014,
+    "sample": 4.03,
+    "database": 0.0035,
+    "write": 0.3129,
+    "read": 0.1366
+   },
+   "total_seconds": 6.0212,
+   "rows": 500000,
+   "cells": 4627092,
+   "tables": 32,
+   "disk_mib": 20.77,
+   "peak_mib": 601.4
+  },
+  {
+   "workload": "database-32",
+   "size": 500000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.1413,
+    "realize": 1.3816,
+    "sample": 3.8336,
+    "database": 0.0033,
+    "write": 0.2795,
+    "read": 0.1243
+   },
+   "total_seconds": 5.7636,
+   "rows": 500000,
+   "cells": 4627092,
+   "tables": 32,
+   "disk_mib": 20.77,
+   "peak_mib": 602.1
+  },
+  {
+   "workload": "database-32",
+   "size": 1000000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.1368,
+    "realize": 1.4298,
+    "sample": 7.7215,
+    "database": 0.0047,
+    "write": 0.4046,
+    "read": 0.1496
+   },
+   "total_seconds": 9.847,
+   "rows": 1000000,
+   "cells": 9254176,
+   "tables": 32,
+   "disk_mib": 40.91,
+   "peak_mib": 834.8
+  },
+  {
+   "workload": "database-32",
+   "size": 1000000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.1411,
+    "realize": 1.3935,
+    "sample": 7.5741,
+    "database": 0.0049,
+    "write": 0.3988,
+    "read": 0.1532
+   },
+   "total_seconds": 9.6656,
+   "rows": 1000000,
+   "cells": 9254176,
+   "tables": 32,
+   "disk_mib": 40.91,
+   "peak_mib": 841.0
+  },
+  {
+   "workload": "database-32",
+   "size": 1000000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.139,
+    "realize": 1.3846,
+    "sample": 7.5798,
+    "database": 0.0046,
+    "write": 0.3955,
+    "read": 0.1539
+   },
+   "total_seconds": 9.6574,
+   "rows": 1000000,
+   "cells": 9254176,
+   "tables": 32,
+   "disk_mib": 40.91,
+   "peak_mib": 844.2
+  },
+  {
+   "workload": "database-128",
+   "size": 100000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.6308,
+    "realize": 6.3837,
+    "sample": 1.9415,
+    "database": 0.0067,
+    "write": 0.3842,
+    "read": 0.3804
+   },
+   "total_seconds": 9.7273,
+   "rows": 100000,
+   "cells": 1020378,
+   "tables": 128,
+   "disk_mib": 6.13,
+   "peak_mib": 557.8
+  },
+  {
+   "workload": "database-128",
+   "size": 100000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.6432,
+    "realize": 6.4908,
+    "sample": 1.9725,
+    "database": 0.0059,
+    "write": 0.3824,
+    "read": 0.3799
+   },
+   "total_seconds": 9.8747,
+   "rows": 100000,
+   "cells": 1020378,
+   "tables": 128,
+   "disk_mib": 6.13,
+   "peak_mib": 554.1
+  },
+  {
+   "workload": "database-128",
+   "size": 100000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.639,
+    "realize": 6.3821,
+    "sample": 1.942,
+    "database": 0.006,
+    "write": 0.3857,
+    "read": 0.3814
+   },
+   "total_seconds": 9.7362,
+   "rows": 100000,
+   "cells": 1020378,
+   "tables": 128,
+   "disk_mib": 6.13,
+   "peak_mib": 558.4
+  },
+  {
+   "workload": "database-128",
+   "size": 250000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.6395,
+    "realize": 6.4565,
+    "sample": 3.2818,
+    "database": 0.0074,
+    "write": 0.5839,
+    "read": 0.393
+   },
+   "total_seconds": 11.3621,
+   "rows": 250000,
+   "cells": 2550946,
+   "tables": 128,
+   "disk_mib": 14.41,
+   "peak_mib": 641.4
+  },
+  {
+   "workload": "database-128",
+   "size": 250000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.6316,
+    "realize": 6.4099,
+    "sample": 3.2777,
+    "database": 0.007,
+    "write": 0.5796,
+    "read": 0.3832
+   },
+   "total_seconds": 11.289,
+   "rows": 250000,
+   "cells": 2550946,
+   "tables": 128,
+   "disk_mib": 14.41,
+   "peak_mib": 643.0
+  },
+  {
+   "workload": "database-128",
+   "size": 250000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.6261,
+    "realize": 6.3873,
+    "sample": 3.2617,
+    "database": 0.0074,
+    "write": 0.5723,
+    "read": 0.3886
+   },
+   "total_seconds": 11.2434,
+   "rows": 250000,
+   "cells": 2550946,
+   "tables": 128,
+   "disk_mib": 14.41,
+   "peak_mib": 638.6
+  },
+  {
+   "workload": "database-128",
+   "size": 500000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.6199,
+    "realize": 6.2644,
+    "sample": 5.2865,
+    "database": 0.0071,
+    "write": 0.6903,
+    "read": 0.401
+   },
+   "total_seconds": 13.2692,
+   "rows": 500000,
+   "cells": 5101890,
+   "tables": 128,
+   "disk_mib": 28.4,
+   "peak_mib": 690.4
+  },
+  {
+   "workload": "database-128",
+   "size": 500000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.6193,
+    "realize": 6.2313,
+    "sample": 5.2576,
+    "database": 0.0077,
+    "write": 0.6941,
+    "read": 0.4031
+   },
+   "total_seconds": 13.2131,
+   "rows": 500000,
+   "cells": 5101890,
+   "tables": 128,
+   "disk_mib": 28.4,
+   "peak_mib": 686.0
+  },
+  {
+   "workload": "database-128",
+   "size": 500000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.6204,
+    "realize": 6.3905,
+    "sample": 5.3239,
+    "database": 0.0065,
+    "write": 0.6811,
+    "read": 0.3938
+   },
+   "total_seconds": 13.4162,
+   "rows": 500000,
+   "cells": 5101890,
+   "tables": 128,
+   "disk_mib": 28.4,
+   "peak_mib": 687.3
+  },
+  {
+   "workload": "database-128",
+   "size": 1000000,
+   "repeat": 0,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.6322,
+    "realize": 6.2394,
+    "sample": 9.6228,
+    "database": 0.0071,
+    "write": 0.9353,
+    "read": 0.4273
+   },
+   "total_seconds": 17.8641,
+   "rows": 1000000,
+   "cells": 10203772,
+   "tables": 128,
+   "disk_mib": 56.34,
+   "peak_mib": 915.5
+  },
+  {
+   "workload": "database-128",
+   "size": 1000000,
+   "repeat": 1,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.6301,
+    "realize": 6.7752,
+    "sample": 9.8104,
+    "database": 0.0073,
+    "write": 0.9174,
+    "read": 0.4238
+   },
+   "total_seconds": 18.5642,
+   "rows": 1000000,
+   "cells": 10203772,
+   "tables": 128,
+   "disk_mib": 56.34,
+   "peak_mib": 931.0
+  },
+  {
+   "workload": "database-128",
+   "size": 1000000,
+   "repeat": 2,
+   "seed": 0,
+   "seconds": {
+    "construct": 0.622,
+    "realize": 6.3737,
+    "sample": 9.7045,
+    "database": 0.0073,
+    "write": 0.9225,
+    "read": 0.4304
+   },
+   "total_seconds": 18.0604,
+   "rows": 1000000,
+   "cells": 10203772,
+   "tables": 128,
+   "disk_mib": 56.34,
+   "peak_mib": 929.6
+  }
+ ]
+}

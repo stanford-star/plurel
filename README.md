@@ -703,44 +703,31 @@ key keeps its shares exactly in every draw instead, since rows sharing a parent 
 
 ## Latency and memory
 
-End to end, from declaring the schema to reading the saved database back, on two machines at
-commit `7241cbc`: an Apple M4 with 16 GiB, and a GitHub `ubuntu-latest` runner, 4 cores of an AMD
-EPYC 9V74 with 16 GiB. Each is the median of three seeds, each run twice in a fresh process, with
-library thread defaults; peak memory includes the interpreter and imports, about 195 MiB.
+Drawing a random table or database and saving it, end to end: draw the structure from its prior,
+realize it, sample the rows, build the relbench database, write it to parquet and read it back.
+Every run uses seed 0, so it draws the same structure, with the rows split across tables the same
+way. Measured at commit `1c546a1` on an Apple M4 with 16 GiB and on GitHub's `ubuntu-latest`
+runner (4 cores of an AMD EPYC 7763, 16 GiB), the median of three runs, each a fresh process; peak
+memory includes about 195 MiB for the interpreter and imports.
 
-| Source | Workload | Tables | Rows | Cells | M4 | Linux runner |
-|---|---|---:|---:|---:|---:|---:|
-| Purely synthetic | `TablePrior` table, 20 columns | 1 | 1.0M | 21M | 4.7 s, 1.7 GiB | 6.1 s, 1.2 GiB |
-| | `SchemaPrior` database | 3 | 1.1M | 8.2M | 2.6 s, 1.2 GiB | 3.1 s, 731 MiB |
-| | `SchemaPrior` database | 15 | 2.0M | 24M | 16 s, 1.8 GiB | 17 s, 1.6 GiB |
-| | `SchemaPrior` database | 20 | 6.0M | 65M | 35 s, 2.6 GiB | 35 s, 3.3 GiB |
-| Hand-authored | five columns, a short chain of causes | 1 | 1.0M | 5.0M | 0.45 s, 593 MiB | 0.75 s, 409 MiB |
-| | 50 numbers, three causes each, and a categorical | 1 | 1.0M | 51M | 7.9 s, 1.9 GiB | 13 s, 1.5 GiB |
-| | 40 numbers, each caused by every one before | 1 | 1.0M | 40M | 6.3 s, 1.9 GiB | 11 s, 1.4 GiB |
-| | a chain of keyed tables | 8 | 1.0M | 5.9M | 0.65 s, 409 MiB | 1.1 s, 437 MiB |
-| | a chain of keyed tables | 32 | 1.0M | 6.0M | 0.65 s, 380 MiB | 1.0 s, 431 MiB |
-| | counted, matched, preferred and unique keys | 3 | 1.3M | 4.7M | 1.8 s, 599 MiB | 2.0 s, 444 MiB |
-| Hand-authored and synthetic | customers and orders around a `TablePrior` product table | 3 | 1.0M | 5.1M | 0.99 s, 696 MiB | 1.3 s, 516 MiB |
-| Hand-authored around real rows | [retail](examples/generation/retail.py), 105k real rows kept | 4 | 1.2M | 5.7M | 1.7 s, 586 MiB | 1.9 s, 504 MiB |
-| | [visits](examples/generation/visits.py) | 4 | 0.97M | 4.9M | 0.73 s, 495 MiB | 1.1 s, 453 MiB |
-| | [enrollments](examples/generation/enrollments.py), 349k real rows kept | 3 | 1.3M | 6.0M | 1.9 s, 684 MiB | 2.4 s, 478 MiB |
+| Workload | Tables | 100k rows, M4 | 100k rows, Linux | 1M rows, M4 | 1M rows, Linux |
+|---|---:|---:|---:|---:|---:|
+| random table, 20 columns | 1 | 0.73 s, 478 MiB | 0.98 s, 434 MiB | 7.1 s, 1.5 GiB | 8.5 s, 1.2 GiB |
+| random database | 2 | 0.59 s, 414 MiB | 0.67 s, 344 MiB | 4.8 s, 1.3 GiB | 5.4 s, 885 MiB |
+| random database | 8 | 2.0 s, 639 MiB | 2.4 s, 397 MiB | 15 s, 2.1 GiB | 17 s, 1.8 GiB |
+| random database | 32 | 1.9 s, 414 MiB | 2.8 s, 373 MiB | 8.0 s, 1.3 GiB | 9.7 s, 841 MiB |
+| random database | 128 | 5.8 s, 589 MiB | 9.7 s, 558 MiB | 12 s, 1.2 GiB | 18 s, 930 MiB |
 
-Sampling takes most of that time at this size, and grows about linearly in rows from 100k up. On
-the M4, hand-authored tables sample 7 to 16M cells a second, and 3 to 4M where keys are counted,
-matched or unique; random priors sample 1.6 to 4.9M, likely because their nodes carry nonlinear
-edges (Fourier, quadratic, MLP and tree) where authored causes are linear. Memory grows by about
-35 to 130 bytes per cell over the interpreter, the least for wide tables and long chains. Small
-draws are bound by fixed costs: 1,000 rows take about 0.05 s on either machine, most of it reading
-the saved database back, and a random prior adds about 0.45 s to realize, which calibrates on
-4,096 rows per table. Saving takes at most 1.4 s on the M4 and 4.2 s on the runner, 395 MiB on
-disk for the 51M-cell table. No run failed or ran out of memory on either machine.
+<img src="benchmarks/results/2026-11-09-apple-m4-time.png" alt="Time against rows drawn on the Apple M4, one line per workload"/>
 
-<img src="benchmarks/results/2026-11-08-apple-m4-7241cbc-time.png" alt="End-to-end time against rows drawn on the Apple M4, one panel per kind of schema"/>
-
-These numbers hold for those machines. [benchmarks/](benchmarks/) has the harness and every
-workload at 1k, 10k, 100k and 1M rows with each phase timed apart: the reports for the
-[M4](benchmarks/REPORT.md) and the [Linux runner](benchmarks/REPORT-linux.md), each with figures of
-time, memory and where the time goes, and their raw results.
+Time grows linearly with rows, and sampling takes most of it. How fast a database samples depends
+on the structure drawn more than on its table count: the 8-table database draws 13.6M cells at 1M
+rows, more than the other databases, through costlier mechanisms. Realizing adds a cost that does not grow
+with rows, since it calibrates on 4,096 rows per table: about 4 s on the M4 for 128 tables, which
+is why that database is the slowest at 100k rows. [benchmarks/](benchmarks/) has the harness, and
+the reports for the [M4](benchmarks/REPORT.md) and the [Linux runner](benchmarks/REPORT-linux.md)
+time every phase at 100k, 250k, 500k and 1M rows, with figures of time, memory and where the time
+goes.
 
 ## Compatibility
 
@@ -768,7 +755,7 @@ pixi run wheel       # a wheel in dist/
 CI runs the same on every pull request to `main` and `v2`: lint, types and the README on Linux,
 the suite on Linux and macOS, and the wheel installed clean into Python 3.12 and 3.13 and run by
 `scripts/smoke.py` from outside the checkout, which also checks that importing plurel leaves
-relbench unloaded. Of the benchmarks only a 1k smoke run is in CI; corpus generation and full
+relbench unloaded. Of the benchmarks only a 100k smoke run is in CI; corpus generation and full
 performance runs stay out of it.
 
 The v1 generator, the paper-exact code, remains at the
