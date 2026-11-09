@@ -54,27 +54,28 @@ causes; the other six, which use log-normal marginals, `exp`/`log` transforms or
 matrix and tree edges, differed. So exact repeatability is a within-platform promise, and the
 digests are stored per platform.
 
-How far they differ was measured at commit `7241cbc`: every fingerprinted draw saved on the Apple
-M4 and on a GitHub `ubuntu-latest` runner (AMD EPYC 9V74), with `test/fingerprints.py --save`, then
-set side by side with `scripts/compare_draws.py`:
+How far they differ was measured at commit `e7c4421`: every fingerprinted draw saved on the Apple
+M4 and on a GitHub `ubuntu-latest` runner with an AMD EPYC 7763, with `test/fingerprints.py --save`, then set side by
+side with `scripts/compare_draws.py`:
 
-| Draws | Cells that differ | Largest difference | Categorical cells changed | Marginal and correlation shift |
+| Draws | Cells that differ | Largest difference | Blank on one side, categoricals changed, cells reranked | Marginal and correlation shift |
 |---|---:|---:|---:|---:|
-| the four prior databases, two seeds each | 1.7 to 5.0% | under 3e-14 standard deviations | none | under 1e-15 |
+| the four prior databases, two seeds each | 1.7 to 4.7% | under 3e-14 standard deviations | none | under 1e-15 |
 | shop and teams, two seeds each | 0.1 to 0.6% | under 6e-14 standard deviations | none | none |
 | school, two seeds | none | none | none | none |
 
-Every table drew as many rows on both, every categorical and every key took the same value, and
-the rank order of every number held: the differences are in the last bits of numbers and change
-nothing a model could see. Within this measurement the distributional promise holds and is close
-to exact. It is one pair of machines; another processor may differ more.
+Every table drew as many rows on both, every key and categorical took the same value, no cell went
+blank on one side only, and no number changed its rank in its column: the differences are in the
+last bits of numbers. Within this measurement the distributional promise holds and is close to
+exact. It is one pair of machines; another processor may differ more.
 
-One CI run on Linux has failed the fingerprints for six prior draws and passed on rerun without a
-change ([#155](https://github.com/stanford-star/plurel/pull/155)): GitHub's Linux runners are not
-all one processor, and the run above matched the stored `linux-x86_64` digests for every draw it
-could check (12 of 14; the teams draws change in the parquet round trip), so exact bytes may
-depend on the processor and not only on the platform name. CI now logs the processor beside the
-suite, so the next such failure names it.
+**Linux digests depend on the processor.** GitHub's `ubuntu-latest` runners are not all one
+processor. One with an AMD EPYC 9V74 matched the stored `linux-x86_64` digests; one with an AMD
+EPYC 7763 differed on six of them, the prior databases 0, 2 and 3, by the last bits as above. The
+same six failed once in CI and passed on rerun ([#155](https://github.com/stanford-star/plurel/pull/155)),
+so the Linux fingerprint test passes or fails with the runner it lands on. CI logs the processor
+before the suite. A likely cause, not established, is NumPy choosing different vector code for
+`exp`, `log` and `cos` by the processor's instruction set.
 
 ## Tested environments
 
@@ -82,7 +83,8 @@ suite, so the next such failure names it.
 |---|---|---|---|
 | macOS 26.1, Apple M4 (osx-arm64), locally | pixi lock: Python 3.12.0, numpy 2.5.1, pandas 3.0.5, pyarrow 25.0.0, scipy 1.17.0, relbench 3.0.1 | match the `darwin-arm64` digests, which it wrote | passes |
 | GitHub Actions `macos-latest` (osx-arm64) | the same pixi lock | match the `darwin-arm64` digests written locally: exact across these two Apple silicon machines | passes |
-| GitHub Actions `ubuntu-latest` (linux-64) | the same pixi lock | match its own `linux-x86_64` digests; 12 of 14 differ from `darwin-arm64` | passes |
+| GitHub Actions `ubuntu-latest` (linux-64), AMD EPYC 9V74 | the same pixi lock | match the `linux-x86_64` digests; 12 of 14 differ from `darwin-arm64` | passes |
+| GitHub Actions `ubuntu-latest` (linux-64), AMD EPYC 7763 | the same pixi lock | 6 of 14 differ from `linux-x86_64`, by the last bits | fails the fingerprint test, passes the rest |
 | GitHub Actions `ubuntu-latest`, wheel installed clean | Python 3.12 and 3.13, latest released dependencies | not checked: the smoke test and the recipes run, which promise no bytes | smoke and recipes pass |
 
 No other platform, Python version or dependency set is claimed. Windows is untested. On a platform
