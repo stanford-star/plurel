@@ -2,7 +2,8 @@
 rows drawn, one panel per kind of schema, and where the time goes at each workload's largest size.
 
 Colors follow a validated categorical order, assigned by position within a panel and never cycled;
-three of them sit below 3:1 contrast on the surface, so every line also carries a direct label."""
+three of them sit below 3:1 contrast on the surface, so every line is named in its panel's legend
+and the report's tables give every number."""
 
 import math
 import statistics
@@ -16,7 +17,7 @@ GROUPS = {
     "Purely synthetic": ("prior-table", "prior-1", "prior-0", "prior-2"),
     "Hand-authored, one table": ("narrow", "columns-10", "dense", "wide", "columns-200"),
     "Hand-authored, many tables": ("tables-2", "tables-8", "tables-32", "keyed"),
-    "Hand-authored with synthetic or real tables": ("mixed", "retail", "visits", "enrollments"),
+    "Authored around random or real tables": ("mixed", "retail", "visits", "enrollments"),
 }
 
 # two workloads of each kind, the smaller and the larger, for where the time goes
@@ -103,26 +104,17 @@ def memory_text(value: float, _=None) -> str:
     return f"{value / 1024:g} GiB" if value >= 1024 else f"{value:g} MiB"
 
 
-def spaced(heights: list[float], gap: float) -> list[float]:
-    """Label heights in log10 space, moved apart by at least `gap`, in their order."""
-    order = sorted(range(len(heights)), key=heights.__getitem__)
-    placed = list(heights)
-    for previous, current in zip(order, order[1:]):
-        placed[current] = max(placed[current], placed[previous] + gap)
-    return placed
-
-
 def scaling(plt, ticker, summary: dict, field: str, axis_label: str, title: str, path: Path):
+    """One row of panels, one per kind of schema, sharing both axes; under each a legend listing
+    its lines in the order they end, top first."""
     groups = panels({w for w, _ in summary})
-    columns = 2
-    lines = math.ceil(len(groups) / columns)
     figure, axes = plt.subplots(
-        lines, columns, figsize=(13, 4.6 * lines + 1.2), sharex=True, sharey=True, squeeze=False
+        1, len(groups), figsize=(5.2 * len(groups), 7.2), sharex=True, sharey=True, squeeze=False
     )
+    axes = axes[0]
     floor = min(statistics.median(s["peak"]) for s in summary.values())
     values = [statistics.median(s[field]) for s in summary.values()]
-    gap = 0.07 * math.log10(max(values) / min(values))  # labels a fourteenth of the span apart
-    for axis, (panel, workloads) in zip(axes.flat, groups.items()):
+    for axis, (panel, workloads) in zip(axes, groups.items()):
         ends = []
         for color, workload in zip(SERIES, workloads):
             points = sorted(
@@ -131,11 +123,11 @@ def scaling(plt, ticker, summary: dict, field: str, axis_label: str, title: str,
                 if w == workload
             )
             x, y, tables = zip(*points)
-            axis.plot(
+            (line,) = axis.plot(
                 x,
                 y,
                 color=color,
-                linewidth=1.8,
+                linewidth=2.0,
                 marker="o",
                 markersize=5.5,
                 markeredgecolor=SURFACE,
@@ -143,32 +135,28 @@ def scaling(plt, ticker, summary: dict, field: str, axis_label: str, title: str,
                 label=label(workload, tables[-1]),
                 zorder=3,
             )
-            ends.append((x[-1], y[-1], label(workload, tables[-1])))
-        heights = spaced([math.log10(y) for _, y, _ in ends], gap)
-        column = max(x for x, _, _ in ends) * 1.6  # labels in one column right of the data
-        for (x, y, text), height in zip(ends, heights):
-            axis.annotate(
-                text,
-                (x, y),
-                xytext=(column, 10**height),
-                color=INK,
-                fontsize=11,
-                va="center",
-                arrowprops={"arrowstyle": "-", "color": AXIS, "linewidth": 0.8, "shrinkA": 0},
-                zorder=4,
-            )
+            ends.append((y[-1], line))
         if field == "peak":
             axis.axhline(floor, color=AXIS, linewidth=0.9, linestyle=(0, (4, 3)), zorder=1)
+        handles = [line for _, line in sorted(ends, key=lambda end: -end[0])]
+        axis.legend(
+            handles=handles,
+            loc="upper left",
+            bbox_to_anchor=(0, -0.14),
+            handlelength=1.6,
+            borderaxespad=0,
+            labelcolor=INK,
+        )
         axis.set_title(panel)
+        axis.set_xlabel("rows drawn")
         axis.grid(True, which="major")
         axis.set_axisbelow(True)
-    for axis in axes.flat[len(groups) :]:
-        axis.set_visible(False)
-    first = axes.flat[0]
+    first = axes[0]
     first.set(xscale="log", yscale="log")
+    lowest = min(s["rows"] for s in summary.values())
     widest = max(s["rows"] for s in summary.values())
     first.set_xticks([10**k for k in range(3, math.floor(math.log10(widest)) + 1)])
-    first.set_xlim(right=widest * 30)  # room for the direct labels, no ticks past the data
+    first.set_xlim(lowest / 1.6, widest * 1.6)
     first.xaxis.set_major_formatter(ticker.FuncFormatter(rows_text))
     first.xaxis.set_minor_locator(ticker.NullLocator())
     if field == "peak":
@@ -178,20 +166,17 @@ def scaling(plt, ticker, summary: dict, field: str, axis_label: str, title: str,
         ticker.FuncFormatter(memory_text if field == "peak" else seconds_text)
     )
     first.yaxis.set_minor_formatter(ticker.NullFormatter())
-    for axis in axes[-1]:
-        axis.set_xlabel("rows drawn")
-    for axis in axes[:, 0]:
-        axis.set_ylabel(axis_label)
-    figure.suptitle(title, x=0.01, ha="left", fontsize=17, fontweight="bold")
+    first.set_ylabel(axis_label)
+    figure.suptitle(title, x=0.005, ha="left", fontsize=17, fontweight="bold")
     if field == "peak":
         figure.text(
-            0.01,
             0.005,
+            0.01,
             f"Dashed: {memory_text(round(floor))}, the interpreter and imports alone.",
             color=INK,
             fontsize=11.5,
         )
-    figure.tight_layout(rect=(0, 0.02, 1, 0.97))
+    figure.subplots_adjust(left=0.05, right=0.99, top=0.86, bottom=0.36, wspace=0.08)
     figure.savefig(path, dpi=200)
     plt.close(figure)
 
