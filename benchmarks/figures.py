@@ -8,7 +8,7 @@ import math
 import statistics
 from pathlib import Path
 
-SURFACE, INK, MUTED, GRID, AXIS = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e1", "#b9b8b2"
+SURFACE, INK, MUTED, GRID, AXIS = "#fcfcfb", "#0b0b0b", "#3d3c39", "#e6e5e1", "#a8a7a1"
 SERIES = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#6250d6")
 
 # panels in reading order, each a kind of schema and its workloads in color order
@@ -18,6 +18,9 @@ GROUPS = {
     "Hand-authored, many tables": ("tables-2", "tables-8", "tables-32", "keyed"),
     "Hand-authored with synthetic or real tables": ("mixed", "retail", "visits", "enrollments"),
 }
+
+# two workloads of each kind, the smaller and the larger, for where the time goes
+SHOWN = ("prior-table", "prior-2", "narrow", "wide", "tables-32", "keyed", "mixed", "retail")
 
 
 def panels(workloads: set[str]) -> dict[str, list[str]]:
@@ -34,25 +37,25 @@ def style(plt) -> None:
             "figure.facecolor": SURFACE,
             "axes.facecolor": SURFACE,
             "savefig.facecolor": SURFACE,
-            "font.size": 9,
+            "font.size": 12,
             "text.color": INK,
-            "axes.labelcolor": MUTED,
+            "axes.labelcolor": INK,
             "axes.edgecolor": AXIS,
             "axes.linewidth": 0.8,
             "axes.spines.top": False,
             "axes.spines.right": False,
-            "axes.titlesize": 10,
+            "axes.titlesize": 14,
             "axes.titleweight": "bold",
             "axes.titlelocation": "left",
             "axes.titlepad": 8,
             "xtick.color": MUTED,
             "ytick.color": MUTED,
-            "xtick.labelsize": 8,
-            "ytick.labelsize": 8,
+            "xtick.labelsize": 11.5,
+            "ytick.labelsize": 11.5,
             "grid.color": GRID,
             "grid.linewidth": 0.6,
             "legend.frameon": False,
-            "legend.fontsize": 8,
+            "legend.fontsize": 11.5,
         }
     )
 
@@ -90,11 +93,11 @@ def scaling(plt, ticker, summary: dict, field: str, axis_label: str, title: str,
     columns = 2
     lines = math.ceil(len(groups) / columns)
     figure, axes = plt.subplots(
-        lines, columns, figsize=(10, 3.6 * lines + 0.8), sharex=True, sharey=True, squeeze=False
+        lines, columns, figsize=(13, 4.6 * lines + 1.2), sharex=True, sharey=True, squeeze=False
     )
     floor = min(statistics.median(s["peak"]) for s in summary.values())
     values = [statistics.median(s[field]) for s in summary.values()]
-    gap = 0.05 * math.log10(max(values) / min(values))  # labels a twentieth of the span apart
+    gap = 0.07 * math.log10(max(values) / min(values))  # labels a fourteenth of the span apart
     for axis, (panel, workloads) in zip(axes.flat, groups.items()):
         ends = []
         for color, workload in zip(SERIES, workloads):
@@ -110,7 +113,7 @@ def scaling(plt, ticker, summary: dict, field: str, axis_label: str, title: str,
                 color=color,
                 linewidth=1.8,
                 marker="o",
-                markersize=4.5,
+                markersize=5.5,
                 markeredgecolor=SURFACE,
                 markeredgewidth=1.0,
                 label=label(workload, tables[-1]),
@@ -118,15 +121,17 @@ def scaling(plt, ticker, summary: dict, field: str, axis_label: str, title: str,
             )
             ends.append((x[-1], y[-1], label(workload, tables[-1])))
         heights = spaced([math.log10(y) for _, y, _ in ends], gap)
+        column = max(x for x, _, _ in ends) * 1.6  # labels in one column right of the data
         for (x, y, text), height in zip(ends, heights):
             axis.annotate(
                 text,
                 (x, y),
-                xytext=(x * 1.3, 10**height),
-                color=MUTED,
-                fontsize=7.5,
+                xytext=(column, 10**height),
+                color=INK,
+                fontsize=11,
                 va="center",
-                arrowprops={"arrowstyle": "-", "color": GRID, "linewidth": 0.6, "shrinkA": 0},
+                arrowprops={"arrowstyle": "-", "color": AXIS, "linewidth": 0.8, "shrinkA": 0},
+                zorder=4,
             )
         if field == "peak":
             axis.axhline(floor, color=AXIS, linewidth=0.9, linestyle=(0, (4, 3)), zorder=1)
@@ -139,7 +144,7 @@ def scaling(plt, ticker, summary: dict, field: str, axis_label: str, title: str,
     first.set(xscale="log", yscale="log")
     widest = max(s["rows"] for s in summary.values())
     first.set_xticks([10**k for k in range(3, math.floor(math.log10(widest)) + 1)])
-    first.set_xlim(right=widest * 9)  # room for the direct labels, no ticks past the data
+    first.set_xlim(right=widest * 30)  # room for the direct labels, no ticks past the data
     first.xaxis.set_major_formatter(ticker.FuncFormatter(rows_text))
     first.xaxis.set_minor_locator(ticker.NullLocator())
     if field == "peak":
@@ -153,14 +158,14 @@ def scaling(plt, ticker, summary: dict, field: str, axis_label: str, title: str,
         axis.set_xlabel("rows drawn")
     for axis in axes[:, 0]:
         axis.set_ylabel(axis_label)
-    figure.suptitle(title, x=0.01, ha="left", fontsize=12, fontweight="bold")
+    figure.suptitle(title, x=0.01, ha="left", fontsize=17, fontweight="bold")
     if field == "peak":
         figure.text(
             0.01,
             0.005,
             f"Dashed: {memory_text(round(floor))}, the interpreter and imports alone.",
-            color=MUTED,
-            fontsize=8,
+            color=INK,
+            fontsize=11.5,
         )
     figure.tight_layout(rect=(0, 0.02, 1, 0.97))
     figure.savefig(path, dpi=200)
@@ -168,10 +173,14 @@ def scaling(plt, ticker, summary: dict, field: str, axis_label: str, title: str,
 
 
 def phases(plt, summary: dict, phase_names: tuple[str, ...], title: str, path: Path):
-    """Each workload's time at its largest size, split by phase, as shares of its total."""
-    order = [w for names in panels({w for w, _ in summary}).values() for w in names]
+    """Two workloads of each kind at their largest size, their time split by phase as shares of
+    the total; every workload if none of those was measured."""
+    measured = {w for w, _ in summary}
+    order = [w for w in SHOWN if w in measured] or [
+        w for names in panels(measured).values() for w in names
+    ]
     largest = {w: max(n for v, n in summary if v == w) for w in order}
-    figure, axis = plt.subplots(figsize=(10, 0.36 * len(order) + 1.6))
+    figure, axis = plt.subplots(figsize=(13, 0.62 * len(order) + 2.2))
     for row, workload in enumerate(order):
         s = summary[workload, largest[workload]]
         times = [statistics.median(s["phases"][p]) for p in phase_names]
@@ -194,8 +203,8 @@ def phases(plt, summary: dict, phase_names: tuple[str, ...], title: str, path: P
             row,
             f"{seconds_text(float(f'{total:.2g}'))} · {rows_text(float(f'{s["rows"]:.2g}'))} rows",
             va="center",
-            color=MUTED,
-            fontsize=8,
+            color=INK,
+            fontsize=11.5,
         )
     axis.set_yticks(range(len(order)), [f"{w} ({rows_text(largest[w])})" for w in order])
     axis.invert_yaxis()
@@ -205,7 +214,7 @@ def phases(plt, summary: dict, phase_names: tuple[str, ...], title: str, path: P
     axis.tick_params(axis="y", length=0)
     axis.spines["left"].set_visible(False)
     axis.legend(ncol=len(phase_names), loc="lower left", bbox_to_anchor=(0, 1.0), handlelength=1)
-    figure.suptitle(title, x=0.01, ha="left", fontsize=12, fontweight="bold")
+    figure.suptitle(title, x=0.01, ha="left", fontsize=17, fontweight="bold")
     figure.tight_layout(rect=(0, 0, 0.9, 0.98))
     figure.savefig(path, dpi=200)
     plt.close(figure)
@@ -249,7 +258,7 @@ def draw(summary: dict, phase_names: tuple[str, ...], machine: str, out: Path) -
         plt,
         summary,
         phase_names,
-        f"Where the time goes at each workload's largest size · {machine}",
+        f"Where the time goes, two workloads of each kind at their largest size · {machine}",
         out.parent / names["phases"],
     )
     return list(names.values())
