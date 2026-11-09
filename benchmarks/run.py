@@ -2,12 +2,12 @@
 memory is its own. Phases are timed apart: construct (declare and check the schema), realize (draw
 ranges and fit cuts), sample, database (relbench form), write (to parquet) and read (load back).
 
-    python benchmarks/run.py --out a.json                     # the full ladder: 3 seeds, 2 repeats each
-    python benchmarks/run.py --sizes 1000 --seeds 0 --repeats 1 --out /tmp/smoke.json   # a smoke run
+    python benchmarks/run.py --out a.json                                  # every workload and size, 3 runs
+    python benchmarks/run.py --sizes 100000 --repeats 1 --out /tmp/smoke.json   # a smoke run
 
-Seeds vary the draw, repeats rerun one seed, so their spreads tell draws from timing noise apart.
-There is no warm-up: every run is a cold process, and imports are not timed. Results go to one
-JSON file: the environment, then one record per run, failures and skipped sizes included."""
+Every run draws with seed 0, so repeats differ only in timing. There is no warm-up: every run is a
+cold process, and imports are not timed. Results go to one JSON file: the environment, then one
+record per run, failures included."""
 
 import argparse
 import json
@@ -23,7 +23,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SIZES = (1_000, 10_000, 100_000, 1_000_000)
+SIZES = (100_000, 250_000, 500_000, 1_000_000)  # rows drawn, in total
 
 
 def environment() -> dict[str, object]:
@@ -52,10 +52,8 @@ def environment() -> dict[str, object]:
     return {
         "when": datetime.now(UTC).isoformat(timespec="seconds"),
         "commit": run("git", "-C", str(HERE), "rev-parse", "--short", "HEAD"),
-        # changes to what is measured: the library and the recipes, not the harness itself
-        "dirty": bool(
-            run("git", "-C", str(HERE.parent), "status", "--porcelain", "--", "plurel", "examples")
-        ),
+        # changes to what is measured: the library, not the harness itself
+        "dirty": bool(run("git", "-C", str(HERE.parent), "status", "--porcelain", "--", "plurel")),
         "platform": platform.platform(),
         "machine": platform.machine(),
         "cpu": cpu,
@@ -75,18 +73,6 @@ def environment() -> dict[str, object]:
 def peak_mib() -> float:
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return round(peak / 2**20 if sys.platform == "darwin" else peak / 2**10, 1)  # bytes vs KiB
-
-
-def copied_cells(generator, frames) -> int:
-    """Cells holding given values, copied rather than drawn: real columns and given keys."""
-    copied = 0
-    for name, scm in generator.tables.items():
-        given = [
-            c for c, entry in scm.columns.items() if getattr(entry, "values", None) is not None
-        ]
-        given += [c for c, fk in scm.fkeys.items() if fk.values is not None]
-        copied += len(frames[name]) * len(given)
-    return copied
 
 
 def one(workload: str, rows: int, seed: int) -> dict[str, object]:
@@ -120,18 +106,11 @@ def one(workload: str, rows: int, seed: int) -> dict[str, object]:
         )
         disk = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
         timed("read", lambda: read_database(path))
-    given = [t for t, scm in generator.tables.items() if scm.size is not None]
-    retained = sum(len(frames[t]) for t in given)
-    total = sum(len(frame) for frame in frames.values())
-    cells = int(sum(frame.size for frame in frames.values()))
     return {
         "seconds": seconds,
         "total_seconds": round(sum(seconds.values()), 4),
-        "rows": total,
-        "generated_rows": total - retained,
-        "retained_rows": retained,
-        "cells": cells,
-        "generated_cells": cells - copied_cells(generator, frames),
+        "rows": sum(len(frame) for frame in frames.values()),
+        "cells": int(sum(frame.size for frame in frames.values())),
         "tables": len(frames),
         "disk_mib": round(disk / 2**20, 2),
         "peak_mib": peak_mib(),
@@ -144,8 +123,8 @@ def main() -> None:
         "--workloads", nargs="*", help="names from benchmarks/workloads.py; all by default"
     )
     parser.add_argument("--sizes", nargs="*", type=int, default=list(SIZES))
-    parser.add_argument("--seeds", nargs="*", type=int, default=[0, 1, 2])
-    parser.add_argument("--repeats", type=int, default=2, help="runs of each seed")
+    parser.add_argument("--seeds", nargs="*", type=int, default=[0], help="data seeds")
+    parser.add_argument("--repeats", type=int, default=3, help="runs of each seed")
     parser.add_argument("--timeout", type=float, default=900.0, help="seconds per run")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
@@ -156,7 +135,7 @@ def main() -> None:
         print(json.dumps(one(args.one[0], int(args.one[1]), int(args.one[2]))))
         return
     sys.path.insert(0, str(HERE))
-    from workloads import LARGEST, WORKLOADS
+    from workloads import WORKLOADS
 
     names = args.workloads or list(WORKLOADS)
     if unknown := sorted(set(names) - set(WORKLOADS)):
@@ -165,11 +144,6 @@ def main() -> None:
     records = []
     for name in names:
         for rows in args.sizes:
-            if rows > LARGEST.get(name, rows):
-                records.append(
-                    {"workload": name, "size": rows, "skipped": f"above {LARGEST[name]:,} rows"}
-                )
-                continue
             for seed, repeat in ((s, r) for s in args.seeds for r in range(args.repeats)):
                 record = {"workload": name, "size": rows, "repeat": repeat, "seed": seed}
                 command = [

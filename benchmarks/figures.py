@@ -1,35 +1,26 @@
-"""The benchmark report's figures, drawn from its summary with matplotlib: time and memory against
-rows drawn, one panel per kind of schema, and where the time goes at each workload's largest size.
+"""The benchmark report's figures, drawn from its summary with matplotlib: time and peak memory
+against rows drawn, one line per workload, and where the time goes at the largest size.
 
-Colors follow a validated categorical order, assigned by position within a panel and never cycled;
-three of them sit below 3:1 contrast on the surface, so every line is named in its panel's legend
-and the report's tables give every number."""
+Colors follow a validated categorical order, assigned to workloads in a fixed order and never
+cycled; three of them sit below 3:1 contrast on the surface, so the legend names every line and the
+report's tables give every number."""
 
-import math
 import statistics
 from pathlib import Path
 
 SURFACE, INK, MUTED, GRID, AXIS = "#fcfcfb", "#0b0b0b", "#3d3c39", "#e6e5e1", "#a8a7a1"
 SERIES = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#6250d6")
-
-# panels in reading order, each a kind of schema and its workloads in color order
-GROUPS = {
-    "Purely synthetic": ("prior-table", "prior-1", "prior-0", "prior-2"),
-    "Hand-authored, one table": ("narrow", "columns-10", "dense", "wide", "columns-200"),
-    "Hand-authored, many tables": ("tables-2", "tables-8", "tables-32", "keyed"),
-    "Authored around random or real tables": ("mixed", "retail", "visits", "enrollments"),
-}
-
-# two workloads of each kind, the smaller and the larger, for where the time goes
-SHOWN = ("prior-table", "prior-2", "narrow", "wide", "tables-32", "keyed", "mixed", "retail")
+ORDER = ("table", "database-2", "database-8", "database-32", "database-128")
+KINDS = ("time", "memory", "phases")
 
 
-def panels(workloads: set[str]) -> dict[str, list[str]]:
-    """GROUPS restricted to the workloads measured, and any others in a last panel."""
-    grouped = {title: [w for w in names if w in workloads] for title, names in GROUPS.items()}
-    known = {w for names in GROUPS.values() for w in names}
-    grouped["Other"] = sorted(workloads - known)
-    return {title: names for title, names in grouped.items() if names}
+def label(workload: str) -> str:
+    """What a workload is, for readers; its short name stays in the results."""
+    if workload == "table":
+        return "random table, 20 columns"
+    if workload.startswith("database-"):
+        return f"random database, {workload.split('-')[1]} tables"
+    return workload
 
 
 def style(plt) -> None:
@@ -48,7 +39,7 @@ def style(plt) -> None:
             "axes.titlesize": 14,
             "axes.titleweight": "bold",
             "axes.titlelocation": "left",
-            "axes.titlepad": 8,
+            "axes.titlepad": 10,
             "xtick.color": MUTED,
             "ytick.color": MUTED,
             "xtick.labelsize": 11.5,
@@ -61,43 +52,15 @@ def style(plt) -> None:
     )
 
 
-# what each workload is, for readers; its short name stays in the results and on the command line
-NAMES = {
-    "prior-table": "random table, 20 columns",
-    "prior-1": "random database, 3 tables",
-    "prior-0": "random database, 15 tables",
-    "prior-2": "random database, 20 tables",
-    "narrow": "5 columns, short causal chain",
-    "columns-10": "10 columns, 3 causes each",
-    "wide": "51 columns, 3 causes each",
-    "dense": "40 columns, all earlier as causes",
-    "columns-200": "200 columns, 3 causes each",
-    "tables-2": "chain of 2 tables",
-    "tables-8": "chain of 8 tables",
-    "tables-32": "chain of 32 tables",
-    "keyed": "counted, matched, unique keys",
-    "mixed": "orders around a random table",
-    "retail": "retail, with real rows",
-    "visits": "clinic visits",
-    "enrollments": "enrollments, with real rows",
-}
-
-
-def label(workload: str, tables: int) -> str:
-    if workload in NAMES:
-        return NAMES[workload]
-    return f"{workload}, {tables} tables" if tables > 1 else workload
+def ordered(summary: dict) -> list[str]:
+    measured = {w for w, _ in summary}
+    return [w for w in ORDER if w in measured] + sorted(measured - set(ORDER))
 
 
 def rows_text(value: float, _=None) -> str:
-    for unit, scale in (("M", 1e6), ("k", 1e3)):
-        if value >= scale:
-            return f"{value / scale:g}{unit}"
-    return f"{value:g}"
-
-
-def seconds_text(value: float, _=None) -> str:
-    return f"{value:g} s"
+    if value >= 1e6:
+        return f"{value / 1e6:g}M"
+    return f"{value / 1e3:g}k" if value else "0"
 
 
 def memory_text(value: float, _=None) -> str:
@@ -105,93 +68,49 @@ def memory_text(value: float, _=None) -> str:
 
 
 def scaling(plt, ticker, summary: dict, field: str, axis_label: str, title: str, path: Path):
-    """One row of panels, one per kind of schema, sharing both axes; under each a legend listing
-    its lines in the order they end, top first."""
-    groups = panels({w for w, _ in summary})
-    figure, axes = plt.subplots(
-        1, len(groups), figsize=(5.2 * len(groups), 7.2), sharex=True, sharey=True, squeeze=False
-    )
-    axes = axes[0]
-    floor = min(statistics.median(s["peak"]) for s in summary.values())
-    values = [statistics.median(s[field]) for s in summary.values()]
-    for axis, (panel, workloads) in zip(axes, groups.items()):
-        ends = []
-        for color, workload in zip(SERIES, workloads):
-            points = sorted(
-                (s["rows"], statistics.median(s[field]), s["tables"])
-                for (w, _), s in summary.items()
-                if w == workload
-            )
-            x, y, tables = zip(*points)
-            (line,) = axis.plot(
-                x,
-                y,
-                color=color,
-                linewidth=2.0,
-                marker="o",
-                markersize=5.5,
-                markeredgecolor=SURFACE,
-                markeredgewidth=1.0,
-                label=label(workload, tables[-1]),
-                zorder=3,
-            )
-            ends.append((y[-1], line))
-        if field == "peak":
-            axis.axhline(floor, color=AXIS, linewidth=0.9, linestyle=(0, (4, 3)), zorder=1)
-        handles = [line for _, line in sorted(ends, key=lambda end: -end[0])]
-        axis.legend(
-            handles=handles,
-            loc="upper left",
-            bbox_to_anchor=(0, -0.14),
-            handlelength=1.6,
-            borderaxespad=0,
-            labelcolor=INK,
+    figure, axis = plt.subplots(figsize=(9, 5.6))
+    for color, workload in zip(SERIES, ordered(summary)):
+        points = sorted(
+            (s["rows"], statistics.median(s[field]))
+            for (w, _), s in summary.items()
+            if w == workload
         )
-        axis.set_title(panel)
-        axis.set_xlabel("rows drawn")
-        axis.grid(True, which="major")
-        axis.set_axisbelow(True)
-    first = axes[0]
-    first.set(xscale="log", yscale="log")
-    lowest = min(s["rows"] for s in summary.values())
-    widest = max(s["rows"] for s in summary.values())
-    first.set_xticks([10**k for k in range(3, math.floor(math.log10(widest)) + 1)])
-    first.set_xlim(lowest / 1.6, widest * 1.6)
-    first.xaxis.set_major_formatter(ticker.FuncFormatter(rows_text))
-    first.xaxis.set_minor_locator(ticker.NullLocator())
-    if field == "peak":
-        steps = [100, 200, 300, 500, 1024, 2048, 3072, 5120, 10240, 20480]
-        first.set_yticks([v for v in steps if min(values) / 1.2 <= v <= max(values) * 1.2])
-    first.yaxis.set_major_formatter(
-        ticker.FuncFormatter(memory_text if field == "peak" else seconds_text)
-    )
-    first.yaxis.set_minor_formatter(ticker.NullFormatter())
-    first.set_ylabel(axis_label)
-    figure.suptitle(title, x=0.005, ha="left", fontsize=17, fontweight="bold")
-    if field == "peak":
-        figure.text(
-            0.005,
-            0.01,
-            f"Dashed: {memory_text(round(floor))}, the interpreter and imports alone.",
-            color=INK,
-            fontsize=11.5,
+        axis.plot(
+            *zip(*points),
+            color=color,
+            linewidth=2.2,
+            marker="o",
+            markersize=6,
+            markeredgecolor=SURFACE,
+            markeredgewidth=1.0,
+            label=label(workload),
         )
-    figure.subplots_adjust(left=0.05, right=0.99, top=0.86, bottom=0.36, wspace=0.08)
+    axis.set_xlim(0, None)
+    axis.set_ylim(0, None)
+    axis.xaxis.set_major_formatter(ticker.FuncFormatter(rows_text))
+    if field == "peak":
+        axis.yaxis.set_major_locator(ticker.MultipleLocator(512))
+        axis.yaxis.set_major_formatter(ticker.FuncFormatter(memory_text))
+    else:
+        axis.yaxis.set_major_formatter(ticker.FuncFormatter(lambda value, _: f"{value:g} s"))
+    axis.set_xlabel("rows drawn")
+    axis.set_ylabel(axis_label)
+    axis.grid(True)
+    axis.set_axisbelow(True)
+    axis.legend(loc="upper left")
+    axis.set_title(title)
+    figure.tight_layout()
     figure.savefig(path, dpi=200)
     plt.close(figure)
 
 
 def phases(plt, summary: dict, phase_names: tuple[str, ...], title: str, path: Path):
-    """Two workloads of each kind at their largest size, their time split by phase as shares of
-    the total; every workload if none of those was measured."""
-    measured = {w for w, _ in summary}
-    order = [w for w in SHOWN if w in measured] or [
-        w for names in panels(measured).values() for w in names
-    ]
-    largest = {w: max(n for v, n in summary if v == w) for w in order}
-    figure, axis = plt.subplots(figsize=(13, 0.62 * len(order) + 2.2))
+    """Each workload at the largest size, its time split by phase as shares of the total."""
+    largest = max(n for _, n in summary)
+    order = [w for w in ordered(summary) if (w, largest) in summary]
+    figure, axis = plt.subplots(figsize=(12, 0.62 * len(order) + 2.2))
     for row, workload in enumerate(order):
-        s = summary[workload, largest[workload]]
+        s = summary[workload, largest]
         times = [statistics.median(s["phases"][p]) for p in phase_names]
         total = sum(times)
         start = 0.0
@@ -207,24 +126,17 @@ def phases(plt, summary: dict, phase_names: tuple[str, ...], title: str, path: P
                 label=phase if row == 0 else None,
             )
             start += time / total
-        axis.text(
-            1.01,
-            row,
-            f"{seconds_text(float(f'{total:.2g}'))} · {rows_text(float(f'{s["rows"]:.2g}'))} rows",
-            va="center",
-            color=INK,
-            fontsize=11.5,
-        )
-    axis.set_yticks(range(len(order)), [label(w, 0) for w in order])
+        axis.text(1.01, row, f"{total:.2g} s", va="center", color=INK, fontsize=11.5)
+    axis.set_yticks(range(len(order)), [label(w) for w in order])
     axis.invert_yaxis()
     axis.set_xlim(0, 1)
     axis.xaxis.set_major_formatter(lambda value, _: f"{value:.0%}")
-    axis.set_xlabel("share of end-to-end time")
+    axis.set_xlabel(f"share of the time to draw, save and read back {rows_text(largest)} rows")
     axis.tick_params(axis="y", length=0)
     axis.spines["left"].set_visible(False)
     axis.legend(ncol=len(phase_names), loc="lower left", bbox_to_anchor=(0, 1.0), handlelength=1)
-    figure.suptitle(title, x=0.01, ha="left", fontsize=17, fontweight="bold")
-    figure.tight_layout(rect=(0, 0, 0.9, 0.98))
+    figure.suptitle(title, x=0.01, ha="left", fontsize=14, fontweight="bold")
+    figure.tight_layout(rect=(0, 0, 0.94, 0.98))
     figure.savefig(path, dpi=200)
     plt.close(figure)
 
@@ -241,18 +153,15 @@ def draw(summary: dict, phase_names: tuple[str, ...], machine: str, results: Pat
     except ImportError:
         return []
     style(plt)
-    names = {
-        kind: results.with_name(f"{results.stem}-{kind}.png")
-        for kind in ("time", "memory", "phases")
-    }
+    paths = {kind: results.with_name(f"{results.stem}-{kind}.png") for kind in KINDS}
     scaling(
         plt,
         ticker,
         summary,
         "total",
-        "end-to-end time",
-        f"End-to-end time against rows drawn · {machine}",
-        names["time"],
+        "seconds, end to end",
+        f"Time against rows drawn · {machine}",
+        paths["time"],
     )
     scaling(
         plt,
@@ -261,13 +170,7 @@ def draw(summary: dict, phase_names: tuple[str, ...], machine: str, results: Pat
         "peak",
         "peak memory",
         f"Peak memory against rows drawn · {machine}",
-        names["memory"],
+        paths["memory"],
     )
-    phases(
-        plt,
-        summary,
-        phase_names,
-        f"Where the time goes, two workloads of each kind at their largest size · {machine}",
-        names["phases"],
-    )
-    return list(names.values())
+    phases(plt, summary, phase_names, f"Where the time goes · {machine}", paths["phases"])
+    return list(paths.values())
