@@ -1,50 +1,28 @@
-"""The benchmark's workloads: one random table, and random databases of 2, 8, 32 and 128 tables,
-each drawn once from a fixed seed. A workload at `rows` draws exactly that many rows; a database
-splits them across its tables in the shares its prior drew, so its structure and the split are the
-same in every run."""
+"""What the benchmark draws: tables and databases from the default priors, one per seed, as a corpus
+is generated. Database `seed` is `SchemaPrior().realize(seed)` at the row counts
+`prior.rows(database, seed)` draws for its tables; table `seed` is `TablePrior().realize(seed)` at a
+row count drawn the way the database prior draws an event table's: warped, then drawn."""
 
 from collections.abc import Callable
 
 import numpy as np
 
-from plurel import IntegersRange, Schema
+from plurel import Schema
 from plurel.prior import SchemaPrior, TablePrior
 
-SEED = 0  # the structure's seed: every run draws the same table and databases
-
-Build = Callable[[int], tuple[Schema, dict[str, int]]]
+Draw = Callable[[int], tuple[Schema, dict[str, int]]]
 
 
-def split(shares: dict[str, int], total: int) -> dict[str, int]:
-    """`total` rows across the tables in proportion to `shares`, rounded to sum to `total`."""
-    raw = np.asarray(list(shares.values()), dtype=float) / sum(shares.values()) * total
-    counts = np.floor(raw).astype(int)
-    counts[np.argsort(counts - raw)[: total - counts.sum()]] += 1
-    return dict(zip(shares, counts.tolist()))
+def database(seed: int) -> tuple[Schema, dict[str, int]]:
+    prior = SchemaPrior()
+    schema = prior.realize(seed)
+    return schema, prior.rows(schema, seed)
 
 
-def table(rows: int) -> tuple[Schema, dict[str, int]]:
-    """A random table of 20 columns."""
-    return Schema({"table": TablePrior(column_count=IntegersRange(20, 20)).realize(SEED)}), {
-        "table": rows
-    }
+def table(seed: int) -> tuple[Schema, dict[str, int]]:
+    rng = np.random.default_rng(seed)
+    rows = int(SchemaPrior().activity_row_count.warp(rng).draw(rng))
+    return Schema({"table": TablePrior().realize(seed)}), {"table": rows}
 
 
-def database(tables: int) -> Build:
-    """A random database of `tables` tables."""
-
-    def build(rows: int) -> tuple[Schema, dict[str, int]]:
-        prior = SchemaPrior(table_count=IntegersRange(tables, tables))
-        schema = prior.realize(SEED)
-        return schema, split(prior.rows(schema, SEED), rows)
-
-    return build
-
-
-WORKLOADS: dict[str, Build] = {
-    "table": table,
-    "database-2": database(2),
-    "database-8": database(8),
-    "database-32": database(32),
-    "database-128": database(128),
-}
+KINDS: dict[str, Draw] = {"table": table, "database": database}
