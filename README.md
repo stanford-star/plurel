@@ -727,7 +727,9 @@ causal graph, mostly nonlinear edges (MLP, Fourier, quadratic), and the column a
 graph's width over all rows drawn. The 8-table database is slow because its largest table, which
 takes 80% of the rows, drew a graph 90 values wide; the 32-table database's largest table takes
 52% of the rows with a width of 15. Both the split of rows and the widths are drawn by the seed, so
-another 8-table database could be among the fastest. [benchmarks/](benchmarks/) has the harness, and the
+another 8-table database could be among the fastest. At 100k rows the costs that come per table,
+drawing its structure and saving it, also show: on Linux they make the 128-table database the
+slowest there. [benchmarks/](benchmarks/) has the harness, and the
 reports for the [M4](benchmarks/REPORT.md) and the [Linux runner](benchmarks/REPORT-linux.md) time
 every phase at 100k, 250k, 500k and 1M rows, with figures of time, memory and where the time goes.
 
