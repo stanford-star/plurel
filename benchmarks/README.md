@@ -19,12 +19,12 @@ Each runs at 100k, 250k, 500k and 1M rows. That is the number of rows drawn in t
 splits it across its tables in the same shares at every size, rounded to add up exactly. Below
 100k rows, the 128 tables would be too small for the links between them.
 
-Each run is a fresh process with no warm-up, timed in phases:
+Each run is a fresh process with no warm-up, timed in the phases the README's random-database example
+and `scripts/synthetic_gen.py` run:
 
 | Phase | What it times |
 |---|---|
-| construct | drawing the table or database from its prior |
-| realize | `realize(seed)`: fitting level cuts and scores to a calibration draw of 4,096 rows per table |
+| draw | drawing the table or database from its prior: `prior.realize(0)` |
 | sample | `sample(rows, seed=0)` |
 | database | `create_database`: time order and positional keys |
 | write | `write_database` to parquet |

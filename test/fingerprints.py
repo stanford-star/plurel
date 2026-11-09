@@ -17,7 +17,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pandas as pd
-from numpy.lib.introspect import opt_func_info
 
 from plurel import (
     ByLevel,
@@ -52,6 +51,10 @@ def vector_level() -> str:
     X86_V4 (AVX-512) or X86_V3 (AVX2), or nothing. NumPy's and OpenBLAS's kernels both move the
     draws' last bits, and left alone both choose by the same instruction set, which this names;
     see COMPATIBILITY.md."""
+    try:
+        from numpy.lib.introspect import opt_func_info
+    except ImportError:  # NumPy before 2.1 cannot say: the platform alone names the digests
+        return ""
     info = opt_func_info(signature="float64")
     chosen = {v["current"] for signatures in info.values() for v in signatures.values()}
     return max((level for level in chosen if not level.startswith("baseline")), default="")
@@ -175,11 +178,11 @@ def draw() -> dict[str, str]:
 
 
 def save(directory: Path) -> None:
-    """Every draw's tables as parquet, `<directory>/<draw>/<table>.parquet`, for
+    """Every draw's tables as parquet, `<directory>/<platform>/<draw>/<table>.parquet`, for
     scripts/compare_draws.py to set beside another platform's, with `draw.json` beside them: the
     draw's digest and its categorical columns' levels, which parquet keeps only for strings."""
     for name, frames in draws():
-        folder = directory / name.replace("/", "-").replace(" ", "")
+        folder = directory / PLATFORM / name.replace("/", "-").replace(" ", "")
         folder.mkdir(parents=True, exist_ok=True)
         categoricals = {}
         for table, frame in frames.items():

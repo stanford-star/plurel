@@ -1,6 +1,7 @@
 """Measure generation: each workload at each size, repeated, every run in a fresh process so its peak
-memory is its own. Phases are timed apart: construct (declare and check the schema), realize (draw
-ranges and fit cuts), sample, database (relbench form), write (to parquet) and read (load back).
+memory is its own. Phases are timed apart, in the order a user of the priors runs them: draw (the
+structure from its prior), sample, database (relbench form), write (to parquet) and read (load
+back).
 
     python benchmarks/run.py --out a.json                                  # every workload and size, 3 runs
     python benchmarks/run.py --sizes 100000 --repeats 1 --out /tmp/smoke.json   # a smoke run
@@ -90,10 +91,9 @@ def one(workload: str, rows: int, seed: int) -> dict[str, object]:
         seconds[phase] = round(time.perf_counter() - start, 4)
         return out
 
-    schema, counts = timed("construct", lambda: WORKLOADS[workload](rows))
-    generator = timed("realize", lambda: schema.realize(seed))
-    frames = timed("sample", lambda: generator.sample(counts, seed=seed))
-    db = timed("database", lambda: create_database(generator, frames))
+    schema, counts = timed("draw", lambda: WORKLOADS[workload](rows))
+    frames = timed("sample", lambda: schema.sample(counts, seed=seed))
+    db = timed("database", lambda: create_database(schema, frames))
     with tempfile.TemporaryDirectory() as scratch:
         timed_tables = any(table.time_col for table in db.table_dict.values())
         split = (

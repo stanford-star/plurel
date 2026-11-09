@@ -5,6 +5,7 @@ Colors follow a validated categorical order, assigned to workloads in a fixed or
 cycled; three of them sit below 3:1 contrast on the surface, so the legend names every line and the
 report's tables give every number."""
 
+import math
 import statistics
 from pathlib import Path
 
@@ -89,7 +90,9 @@ def scaling(plt, ticker, summary: dict, field: str, axis_label: str, title: str,
     axis.set_ylim(0, None)
     axis.xaxis.set_major_formatter(ticker.FuncFormatter(rows_text))
     if field == "peak":
-        axis.yaxis.set_major_locator(ticker.MultipleLocator(512))
+        # in steps of a power of two MiB, about six of them whatever the peak
+        top = max(statistics.median(s["peak"]) for s in summary.values())
+        axis.yaxis.set_major_locator(ticker.MultipleLocator(2 ** round(math.log2(top / 6))))
         axis.yaxis.set_major_formatter(ticker.FuncFormatter(memory_text))
     else:
         axis.yaxis.set_major_formatter(ticker.FuncFormatter(lambda value, _: f"{value:g} s"))
@@ -105,12 +108,14 @@ def scaling(plt, ticker, summary: dict, field: str, axis_label: str, title: str,
 
 
 def phases(plt, summary: dict, phase_names: tuple[str, ...], title: str, path: Path):
-    """Each workload at the largest size, its time split by phase as shares of the total."""
+    """Each workload at its largest size with results, its time split by phase as shares of the
+    total; a workload whose largest runs failed shows the size it reached."""
     largest = max(n for _, n in summary)
-    order = [w for w in ordered(summary) if (w, largest) in summary]
+    order = ordered(summary)
+    reached = {w: max(n for v, n in summary if v == w) for w in order}
     figure, axis = plt.subplots(figsize=(12, 0.62 * len(order) + 2.2))
     for row, workload in enumerate(order):
-        s = summary[workload, largest]
+        s = summary[workload, reached[workload]]
         times = [statistics.median(s["phases"][p]) for p in phase_names]
         total = sum(times)
         start = 0.0
@@ -127,7 +132,13 @@ def phases(plt, summary: dict, phase_names: tuple[str, ...], title: str, path: P
             )
             start += time / total
         axis.text(1.01, row, f"{total:.2g} s", va="center", color=INK, fontsize=11.5)
-    axis.set_yticks(range(len(order)), [label(w) for w in order])
+    axis.set_yticks(
+        range(len(order)),
+        [
+            label(w) if reached[w] == largest else f"{label(w)}, at {rows_text(reached[w])}"
+            for w in order
+        ],
+    )
     axis.invert_yaxis()
     axis.set_xlim(0, 1)
     axis.xaxis.set_major_formatter(lambda value, _: f"{value:.0%}")

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from figures import draw, label
 
-PHASES = ("construct", "realize", "sample", "database", "write", "read")
+PHASES = ("draw", "sample", "database", "write", "read")
 ALT = {
     "time": "Time against rows drawn",
     "memory": "Peak memory against rows drawn",
