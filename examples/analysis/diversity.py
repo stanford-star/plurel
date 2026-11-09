@@ -2,9 +2,9 @@
 
 Draws 40 generators from `SchemaPrior` (mechanism seeds 0 to 39) and samples each once; samples the
 first 8 of them 5 times more (data seeds 1 to 5). Every dataset gets a profile: its structure
-(tables, columns, kinds, keys, causes, edge kinds, the share of causes through the most used
-kind) and its data (shape of the numbers, missingness,
-class balance, dependence, how unevenly children spread over parents). Then:
+(tables, columns, kinds, keys, causes, edge kinds, the share of causes through the most used kind)
+and its data (shape of the numbers, missingness, class balance, dependence, how unevenly children
+spread over parents). Then:
 
 1. Mechanism seeds against data seeds: how much each measure moves across generators, against
    across datasets of one generator, pooled over the 8. Structure cannot move with the data seed.

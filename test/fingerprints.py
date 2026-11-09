@@ -41,7 +41,7 @@ from plurel import (
     TreeLink,
     Uniform,
 )
-from plurel.prior import SchemaPrior
+from plurel.prior import SchemaPrior, TablePrior
 
 STORED = Path(__file__).with_name("fingerprints.json")
 
@@ -160,6 +160,8 @@ def workloads() -> Iterator[tuple[str, Schema, dict[str, int]]]:
     yield "shop", shop().realize(0), {"customers": 300, "orders": 2000}
     yield "teams", teams().realize(0), {"teams": 8, "staff": 200}
     yield "school", school().realize(1), {"students": 200}
+    for seed in range(2):
+        yield f"table prior/{seed}", Schema({"t": TablePrior().realize(seed)}), {"t": 2000}
     prior = SchemaPrior()
     for seed in range(4):
         generator = prior.realize(seed)
