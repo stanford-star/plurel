@@ -723,7 +723,7 @@ includes about 195 MiB for the interpreter and imports.
 
 Time grows linearly with rows, and sampling takes most of it. The table count does not set the
 cost: each structure the prior draws has its own mechanisms, and the 8-table database drawn here
-is the slowest at every size on both machines. [benchmarks/](benchmarks/) has the harness, and the
+is the slowest at 1M rows on both machines, while at 100k rows on Linux the 128-table one is. [benchmarks/](benchmarks/) has the harness, and the
 reports for the [M4](benchmarks/REPORT.md) and the [Linux runner](benchmarks/REPORT-linux.md) time
 every phase at 100k, 250k, 500k and 1M rows, with figures of time, memory and where the time goes.
 
