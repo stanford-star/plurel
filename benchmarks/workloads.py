@@ -1,5 +1,5 @@
 """The benchmark's workloads: one random table, and random databases of 2, 8, 32 and 128 tables,
-each drawn once from a fixed seed. A workload at `rows` draws exactly that many rows; a database
+each drawn once from a fixed seed, 1. A workload at `rows` draws exactly that many rows; a database
 splits them across its tables in the shares its prior drew, so its structure and the split are the
 same in every run."""
 
@@ -10,7 +10,10 @@ import numpy as np
 from plurel import IntegersRange, Schema
 from plurel.prior import SchemaPrior, TablePrior
 
-SEED = 0  # the structure's seed: every run draws the same table and databases
+# the structure's seed: every run draws the same table and databases. Seed 0 drew a 128-table
+# database whose smallest tables are too small for their links below 500k rows; 1 is the first
+# seed whose workloads all sample at every size
+SEED = 1
 
 Build = Callable[[int], tuple[Schema, dict[str, int]]]
 

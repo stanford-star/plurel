@@ -4,7 +4,9 @@ How long PluRel takes, and how much memory it uses, to draw a random table or da
 
 ## What is measured
 
-Five workloads, each drawn once from seed 0, so every run draws the same structure:
+Five workloads, each drawn once from seed 1, so every run draws the same structure. Seed 1 is the
+first whose workloads all sample at every size; at seed 0 the 128-table database's smallest tables
+were too small for their links below 500k rows:
 
 | Workload | Tables | How the rows are split |
 |---|---:|---|
