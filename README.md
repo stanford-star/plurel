@@ -703,31 +703,29 @@ key keeps its shares exactly in every draw instead, since rows sharing a parent 
 
 ## Latency and memory
 
-Drawing a random table or database and saving it, end to end: draw the structure from its prior,
-realize it, sample the rows, build the relbench database, write it to parquet and read it back.
-Every run uses seed 0, so it draws the same structure, with the rows split across tables the same
-way. Measured at commit `1c546a1` on an Apple M4 with 16 GiB and on GitHub's `ubuntu-latest`
-runner (4 cores of an AMD EPYC 7763, 16 GiB), the median of three runs, each a fresh process; peak
-memory includes about 195 MiB for the interpreter and imports.
+Drawing a random table or database and saving it, end to end, as the
+[random-database example](#draw-random-tables-and-databases) does: draw the structure from its
+prior, sample the rows, build the relbench database, write it to parquet and read it back. Every
+run uses seed 0, so it draws the same structure, with the rows split across tables the same way.
+Measured at commit `7a426e9` on an Apple M4 with 16 GiB and on GitHub's `ubuntu-latest` runner
+(4 cores of an AMD EPYC 7763, 16 GiB), the median of three runs, each a fresh process; peak memory
+includes about 195 MiB for the interpreter and imports.
 
 | Workload | Tables | 100k rows, M4 | 100k rows, Linux | 1M rows, M4 | 1M rows, Linux |
 |---|---:|---:|---:|---:|---:|
-| random table, 20 columns | 1 | 0.73 s, 478 MiB | 0.98 s, 434 MiB | 7.1 s, 1.5 GiB | 8.5 s, 1.2 GiB |
-| random database | 2 | 0.59 s, 414 MiB | 0.67 s, 344 MiB | 4.8 s, 1.3 GiB | 5.4 s, 885 MiB |
-| random database | 8 | 2.0 s, 639 MiB | 2.4 s, 397 MiB | 15 s, 2.1 GiB | 17 s, 1.8 GiB |
-| random database | 32 | 1.9 s, 414 MiB | 2.8 s, 373 MiB | 8.0 s, 1.3 GiB | 9.7 s, 841 MiB |
-| random database | 128 | 5.8 s, 589 MiB | 9.7 s, 558 MiB | 12 s, 1.2 GiB | 18 s, 930 MiB |
+| random table, 20 columns | 1 | 0.75 s, 476 MiB | 0.94 s, 432 MiB | 6.5 s, 1.6 GiB | 8.3 s, 1.2 GiB |
+| random database | 2 | 0.57 s, 412 MiB | 0.64 s, 350 MiB | 4.4 s, 1.3 GiB | 5.2 s, 884 MiB |
+| random database | 8 | 1.7 s, 627 MiB | 2.0 s, 447 MiB | 14 s, 2.1 GiB | 16 s, 1.8 GiB |
+| random database | 32 | 0.97 s, 379 MiB | 1.4 s, 355 MiB | 5.6 s, 1.3 GiB | 8.2 s, 825 MiB |
+| random database | 128 | 1.5 s, 313 MiB | 3.3 s, 335 MiB | 6.8 s, 1.1 GiB | 12 s, 936 MiB |
 
 <img src="benchmarks/results/2026-11-09-apple-m4-time.png" alt="Time against rows drawn on the Apple M4, one line per workload"/>
 
-Time grows linearly with rows, and sampling takes most of it. How fast a database samples depends
-on the structure drawn more than on its table count: the 8-table database draws 13.6M cells at 1M
-rows, more than the other databases, through costlier mechanisms. Realizing adds a cost that does not grow
-with rows, since it calibrates on 4,096 rows per table: about 4 s on the M4 for 128 tables, which
-is why that database is the slowest at 100k rows. [benchmarks/](benchmarks/) has the harness, and
-the reports for the [M4](benchmarks/REPORT.md) and the [Linux runner](benchmarks/REPORT-linux.md)
-time every phase at 100k, 250k, 500k and 1M rows, with figures of time, memory and where the time
-goes.
+Time grows linearly with rows, and sampling takes most of it. The table count does not set the
+cost: each structure the prior draws has its own mechanisms, and the 8-table database drawn here
+is the slowest at every size on both machines. [benchmarks/](benchmarks/) has the harness, and the
+reports for the [M4](benchmarks/REPORT.md) and the [Linux runner](benchmarks/REPORT-linux.md) time
+every phase at 100k, 250k, 500k and 1M rows, with figures of time, memory and where the time goes.
 
 ## Compatibility
 
