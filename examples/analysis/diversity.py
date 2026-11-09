@@ -2,7 +2,8 @@
 
 Draws 40 generators from `SchemaPrior` (mechanism seeds 0 to 39) and samples each once; samples the
 first 8 of them 5 times more (data seeds 1 to 5). Every dataset gets a profile: its structure
-(tables, columns, kinds, keys, causes, edge kinds) and its data (shape of the numbers, missingness,
+(tables, columns, kinds, keys, causes, edge kinds, the share of causes through the most used
+kind) and its data (shape of the numbers, missingness,
 class balance, dependence, how unevenly children spread over parents). Then:
 
 1. Mechanism seeds against data seeds: how much each measure moves across generators, against
@@ -30,7 +31,16 @@ PRIOR = SchemaPrior(
     entity_row_count=LogIntegersRange(250, 500), activity_row_count=LogIntegersRange(1000, 3000)
 )
 RECORDED = ("numeric", "categorical", "timestamp")
-STRUCTURE = ("tables", "columns", "categorical share", "time share", "keys", "causes", "edge kinds")
+STRUCTURE = (
+    "tables",
+    "columns",
+    "categorical share",
+    "time share",
+    "keys",
+    "causes",
+    "edge kinds",
+    "top edge share",
+)
 DATA = ("numeric skew", "missing share", "class balance", "dependence", "children skew")
 
 
@@ -59,6 +69,7 @@ def structure(described: dict) -> dict[str, float]:
         "keys": len(described["keys"]),
         "causes": len(edges),
         "edge kinds": len(set(edges)),
+        "top edge share": max(map(edges.count, set(edges))) / len(edges) if edges else np.nan,
     }
 
 

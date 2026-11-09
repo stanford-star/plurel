@@ -558,7 +558,9 @@ class SchemaPrior:
             raise ValueError(f"row counts must allow {clusters} link clusters")
 
     def warp(self, rng: np.random.Generator) -> "SchemaPrior":
-        return _warped(self, rng)
+        """Every range and choice warped, the table prior's too: its tables then warp around this
+        database's preferences, so databases differ as wholes and their tables stay related."""
+        return replace(_warped(self, rng), table_prior=self.table_prior.warp(rng))
 
     def realize(self, seed: Seed = None) -> Schema:
         rng, _ = generator(seed).spawn(2)
