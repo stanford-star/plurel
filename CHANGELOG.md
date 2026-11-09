@@ -7,6 +7,10 @@ here.
 
 ## v2, unreleased (the `v2` branch)
 
+- **Moves draws** of `SchemaPrior`: it warps its table prior once per database, and each table
+  warps around that, since warping a warped `Range` now centres the new preference on a draw from
+  the old one. Databases differ more as wholes, in their mechanism mix, missingness and kinds,
+  while their tables stay related. Hand-authored schemas and `TablePrior` alone draw as before.
 - **Moves draws** of realized schemas with a real table of more than 4096 rows: realizing
   calibrates on a random 4096 of them, its real children keeping the rows that point at kept
   parents, instead of drawing the whole database. Realizing 1M real customers falls from about 7 s
