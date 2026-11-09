@@ -12,31 +12,12 @@ Kind = Literal["numeric", "categorical", "timestamp"]
 DEFAULT_CALENDAR = Calendar(pd.Timestamp("1990-01-01"), pd.Timestamp("2025-01-01"))
 
 
-def ranked(latent: np.ndarray, tiebreak: np.ndarray) -> np.ndarray:
-    """The rows in the latent's order, tied rows in the tiebreak's: `np.lexsort((tiebreak,
-    latent))`, sorting by both keys only the rows that tie, or every row when most do."""
-    order = np.argsort(latent, kind="stable")
-    ordered = latent[order]
-    same = ordered[1:] == ordered[:-1]
-    if not same.any():
-        return order
-    tied = np.zeros(len(latent), dtype=bool)
-    tied[1:] |= same
-    tied[:-1] |= same
-    if 2 * tied.sum() > len(latent):
-        return np.lexsort((tiebreak, latent))
-    rows = np.flatnonzero(tied)
-    runs = np.cumsum(np.concatenate([[True], ~same]))[rows]
-    order[rows] = order[rows][np.lexsort((tiebreak[order[rows]], runs))]
-    return order
-
-
 def rank_map(latent: np.ndarray, marginal: Distribution, rng: np.random.Generator) -> np.ndarray:
     """The marginal's values in the latent's order, ties broken at random, so a column holds
     exactly its draw of the marginal."""
     out = np.empty(len(latent))
     reference = np.sort(marginal.sample(len(latent), rng))
-    out[ranked(latent, rng.random(len(latent)))] = reference
+    out[np.lexsort((rng.random(len(latent)), latent))] = reference
     return out
 
 
