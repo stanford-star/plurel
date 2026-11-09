@@ -14,18 +14,25 @@ Each target is predicted by a linear model (logistic or ridge regression) and a 
 tree, and by baselines: the training majority class or mean and, for a child table, the majority
 or mean per parent. Loss is the error rate, or the squared error of a numeric target's normal
 scores in the training distribution, so a few outliers do not decide. The lift is the share of
-the best baseline's test loss the better learner removes, with a paired bootstrap interval over
-the test rows. Bands: no signal (the interval reaches 0), hard (lift below 0.1), moderate (below
+the best baseline's test loss the better learner removes, with a paired bootstrap interval that
+resamples dependent test rows together: blocks of consecutive times in an event table, a parent's
+children in a static child table, single rows otherwise. Bands: no signal (the interval reaches 0), hard (lift below 0.1), moderate (below
 0.4), easy (below 0.8) and trivial. Easy and trivial targets are kept and reported.
 
-A learner within 2% of perfect is flagged as leakage-like. A column reading the same node and slot
-as the target is a copy of it, which the prior makes once a table has more columns than its nodes
-offer; a flagged target without a copy gets the best lift one feature reaches alone. A control
-refits a sample of the targets on shuffled training labels: it must find no signal.
+A learner within 2% of perfect is flagged as leakage-like. An exact copy is a column of the row
+the target is a function of (one category per category, a monotone map, a binning), which the
+prior makes once a table has more columns than its nodes offer. A flagged target without one
+gets the best lift one feature reaches alone; a near-copy is a feature that alone is near-perfect,
+such as a column reading a node through very little noise. A control refits a sample of the
+targets on shuffled training labels. The checks assert only the analysis: no target among its
+features, training times before test times, and no signal in the control; what the prior draws
+is printed, not asserted.
 
-Row counts are small, as in `diversity.py`, so this runs in under a minute single-threaded; the
-bands are those of these row counts, not of the prior's defaults."""
+Row counts are small, as in `diversity.py`, so this runs in about a minute single-threaded; the
+bands are those of these row counts, not of the prior's defaults. With PLUREL_QUICK=1, as
+`scripts/run_recipes.py` sets, it draws 1 database and 4 tables, with 40 boosting rounds instead of 100."""
 
+import os
 import warnings
 from collections.abc import Callable
 
@@ -48,12 +55,14 @@ if not __debug__:
     raise SystemExit("the checks are assert statements, which python -O drops: run without -O")
 
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
-DATABASES, TABLES, TABLE_ROWS = 8, 12, 1000
+QUICK = os.environ.get("PLUREL_QUICK") == "1"  # scripts/run_recipes.py sets it
+DATABASES, TABLES = (1, 4) if QUICK else (8, 12)
+TABLE_ROWS, BLOCKS, ROUNDS = 1000, 20, 40 if QUICK else 100
 PRIOR = SchemaPrior(
     entity_row_count=LogIntegersRange(250, 500), activity_row_count=LogIntegersRange(1000, 3000)
 )
 RECORDED = ("numeric", "categorical", "timestamp")
-TRAIN, RESAMPLES, CONTROLS = 0.7, 300, 30
+TRAIN, RESAMPLES, CONTROLS = 0.7, 300, 10 if QUICK else 30
 BANDS = ("no signal", "hard", "moderate", "easy", "trivial")
 EDGES = (0.1, 0.4, 0.8)
 NEAR_PERFECT = 0.02  # learner loss under this share of the constant baseline's
@@ -90,15 +99,35 @@ def recorded(frame: pd.DataFrame, columns: dict) -> pd.DataFrame:
     return pd.DataFrame(out, index=frame.index)
 
 
-def read(table, column: str) -> tuple:
-    """The node and slot a recorded column reads: two columns with the same read are copies."""
-    return tuple((edge.parent, edge.slot) for edge in table.columns[column].node.edges)
+def determines(feature: pd.Series, target: pd.Series) -> bool:
+    """Whether the target is exactly a function of the feature where both are recorded: one
+    category per feature category, a monotone map of a number, or a binning of one."""
+    both = feature.notna() & target.notna()
+    feature, target = feature[both], target[both]
+    if feature.nunique() < 2:
+        return False
+    if isinstance(feature.dtype, pd.CategoricalDtype):
+        return bool(target.groupby(feature, observed=True).nunique().max() == 1)
+    if isinstance(target.dtype, pd.CategoricalDtype):
+        ordered = target.cat.codes.to_numpy()[np.lexsort((target.cat.codes, feature))]
+        return int((np.diff(ordered) != 0).sum()) + 1 == target.nunique()
+    return bool(abs(feature.corr(target.astype(float), method="spearman")) > 1 - 1e-9)
 
 
-def tasks(name: str, tables: dict, described: dict, rng: np.random.Generator) -> list[dict]:
-    """Up to one classification and one regression per table, with features and a split, from
-    `tables`, each a generator and its sampled frame."""
-    frames = {table: frame for table, (_, frame) in tables.items()}
+def clusters(frame: pd.DataFrame, time: str | None, keys: list[dict]) -> np.ndarray:
+    """Bootstrap units: blocks of consecutive times for an event table, the parent for a child
+    table (a row without one on its own), the row otherwise."""
+    if time is not None:
+        order = frame[time].rank(method="first").to_numpy() - 1
+        return (order * BLOCKS // len(frame)).astype(int)
+    if keys:
+        parent = frame[keys[0]["column"]].astype("float64").to_numpy()
+        return np.where(np.isnan(parent), -1.0 - np.arange(len(frame)), parent)
+    return np.arange(len(frame))
+
+
+def tasks(name: str, frames: dict, described: dict, rng: np.random.Generator) -> list[dict]:
+    """Up to one classification and one regression per table, with features and a split."""
     summarized = informed(described)
     out = []
     for table, frame in frames.items():
@@ -129,6 +158,7 @@ def tasks(name: str, tables: dict, described: dict, rng: np.random.Generator) ->
             if not candidates:
                 continue
             target = candidates[rng.integers(len(candidates))]
+            units = clusters(frame, time, keys)
             features = pd.concat([own.drop(columns=target), *joined], axis=1)
             labelled = frame[target].notna().to_numpy()
             if time is None:
@@ -150,18 +180,14 @@ def tasks(name: str, tables: dict, described: dict, rng: np.random.Generator) ->
                     "groups": [frame[k["column"]][labelled] for k in keys],
                     "train": train[labelled],
                     "withheld": (withheld, offered),
-                    "copies": [
-                        c
-                        for c in own
-                        if c != target
-                        and read(tables[table][0], c) == read(tables[table][0], target)
-                    ],
+                    "clusters": units[labelled],
+                    "copies": [c for c in own if c != target and determines(own[c], own[target])],
                 }
             )
     return out
 
 
-def learners(task: str, iterations: int = 100) -> dict:
+def learners(task: str, rounds: int) -> dict:
     linear = make_column_transformer(
         (
             make_pipeline(SimpleImputer(add_indicator=True), StandardScaler()),
@@ -174,7 +200,7 @@ def learners(task: str, iterations: int = 100) -> dict:
             make_column_selector(dtype_include="category"),
         ),
     )
-    tree = dict(max_iter=iterations, categorical_features="from_dtype", random_state=0)
+    tree = dict(max_iter=rounds, categorical_features="from_dtype", random_state=0)
     if task == "classification":
         return {
             "linear": make_pipeline(linear, LogisticRegression(max_iter=300)),
@@ -203,11 +229,13 @@ def baselines(task: str, y_train: pd.Series, y_test: pd.Series, groups) -> dict:
     return out
 
 
-def fit(item: dict, y_train: pd.Series, only: list[str] | None = None) -> dict[str, np.ndarray]:
+def fit(
+    item: dict, y_train: pd.Series, only: list[str] | None = None, rounds: int = ROUNDS
+) -> dict[str, np.ndarray]:
     train = item["train"]
     x = item["x"] if only is None else item["x"][only]
     cast = str if item["task"] == "classification" else float
-    models = learners(item["task"], 100 if only is None else 30)
+    models = learners(item["task"], rounds)
     if only is not None:
         models = {"tree": models["tree"]}
     out = {}
@@ -217,14 +245,20 @@ def fit(item: dict, y_train: pd.Series, only: list[str] | None = None) -> dict[s
     return out
 
 
-def lift(learned: dict, base: np.ndarray, rng: np.random.Generator) -> tuple[float, float, float]:
-    """The better learner's share of the baseline loss removed, and its bootstrap interval."""
-    stacked = np.stack(list(learned.values()))
-    point = 1 - stacked.mean(axis=1).min() / max(base.mean(), 1e-12)
-    rows = rng.integers(len(base), size=(RESAMPLES, len(base)))
-    resampled = 1 - stacked[:, rows].mean(axis=2).min(axis=0) / np.maximum(
-        base[rows].mean(axis=1), 1e-12
-    )
+def lift(
+    learned: dict, base: np.ndarray, units: np.ndarray, rng: np.random.Generator
+) -> tuple[float, float, float]:
+    """The better learner's share of the baseline loss removed, and its bootstrap interval over
+    resampled units of test rows."""
+    stacked = np.stack([*learned.values(), base])
+    point = 1 - stacked[:-1].mean(axis=1).min() / max(base.mean(), 1e-12)
+    _, unit = np.unique(units, return_inverse=True)
+    k = unit.max() + 1
+    sums = np.stack([np.bincount(unit, weights=values, minlength=k) for values in stacked])
+    sizes = np.bincount(unit, minlength=k)
+    drawn = np.stack([np.bincount(d, minlength=k) for d in rng.integers(k, size=(RESAMPLES, k))])
+    means = (drawn @ sums.T) / (drawn @ sizes)[:, None]
+    resampled = 1 - means[:, :-1].min(axis=1) / np.maximum(means[:, -1], 1e-12)
     low, high = np.quantile(resampled, [0.025, 0.975])
     return point, low, high
 
@@ -239,9 +273,12 @@ def single(item: dict) -> tuple[str, float]:
     """The feature whose tree alone removes the most of the constant baseline's loss."""
     train, y = item["train"], item["y"]
     constant = baselines(item["task"], y[train], y[~train], [])["constant"].mean()
-    scores = {
-        c: 1 - fit(item, y[train], [c])["tree"].mean() / max(constant, 1e-12) for c in item["x"]
-    }
+
+    def score(feature: str, rounds: int) -> float:
+        return 1 - fit(item, y[train], [feature], rounds)["tree"].mean() / max(constant, 1e-12)
+
+    screened = sorted(item["x"], key=lambda c: score(c, ROUNDS // 4), reverse=True)[:3]
+    scores = {c: score(c, ROUNDS) for c in screened}
     best = max(scores, key=scores.get)
     return best, scores[best]
 
@@ -266,7 +303,7 @@ def evaluate(item: dict, rng: np.random.Generator, shuffle: bool = False) -> dic
     base = baselines(item["task"], y_train, y[~train], groups)
     best = min(base, key=lambda b: base[b].mean())
     learned = fit(item, y_train)
-    point, low, high = lift(learned, base[best], rng)
+    point, low, high = lift(learned, base[best], item["clusters"][~train], rng)
     record = {
         "source": item["source"],
         "table": item["table"],
@@ -292,36 +329,38 @@ items = []
 for seed in range(DATABASES):
     schema = PRIOR.realize(seed)
     frames = schema.sample(PRIOR.rows(schema, seed), seed=0)
-    tables = {t: (schema.tables[t], frame) for t, frame in frames.items()}
-    items += tasks(f"schema {seed}", tables, schema.describe(), rng)
+    items += tasks(f"schema {seed}", frames, schema.describe(), rng)
 for seed in range(TABLES):
     table = TablePrior().realize(seed, time=seed % 2 == 1)
-    tables = {"t0": (table, table.sample(TABLE_ROWS, seed=0))}
-    items += tasks(f"table {seed}", tables, {"tables": {"t0": table.describe()}, "keys": []}, rng)
+    frames = {"t0": table.sample(TABLE_ROWS, seed=0)}
+    items += tasks(f"table {seed}", frames, {"tables": {"t0": table.describe()}, "keys": []}, rng)
 for item in items:
     assert item["target"] not in item["x"], "a target is among its own features"
     assert item["train"].any() and (~item["train"]).any()
 with threadpool_limits(1):  # small fits: threads only contend
     results = pd.DataFrame([evaluate(item, rng) for item in items])
     controls = pd.DataFrame(
-        [evaluate(item, rng, shuffle=True) for item in items[:: len(items) // CONTROLS][:CONTROLS]]
+        [
+            evaluate(item, rng, shuffle=True)
+            for item in items[:: max(1, len(items) // CONTROLS)][:CONTROLS]
+        ]
     )
     flagged = results.index[results["near perfect"]]
     alone = {i: single(items[i]) for i in flagged if not items[i]["copies"]}
+near = [i for i, (_, best) in alone.items() if best > 1 - NEAR_PERFECT]
 
 # 1. difficulty bands
 results["group"] = results["task"] + ", " + results["split"] + " split"
 counts = pd.crosstab(results["group"], results["band"]).reindex(columns=list(BANDS), fill_value=0)
 counts.loc["all"] = counts.sum()
 copied = results.index[[bool(item["copies"]) for item in items]]
-counts.loc["all without a copy"] = (
+counts.loc["all without an exact copy"] = (
     results.drop(copied)["band"].value_counts().reindex(BANDS, fill_value=0)
 )
 print(f"1. Difficulty of {len(results)} targets from {DATABASES} databases and {TABLES} tables:")
 print("   lift = share of the best baseline's test loss the better learner removes\n")
 print(counts.to_string(), "\n")
 print(results.groupby("group")["lift"].describe()[["25%", "50%", "75%"]].round(2).to_string(), "\n")
-assert (counts.loc["all"] > 0).all(), "a difficulty band is empty"
 
 # 2. learners and baselines
 child = results[results["child"]]
@@ -337,25 +376,25 @@ joins = pd.DataFrame(joins.values(), columns=["split", "withheld", "offered"])
 withheld = joins.groupby("split")[["withheld", "offered"]].sum()
 print("   parent columns withheld as summaries of the child, and offered, by split:")
 print(withheld.to_string().replace("\n", "\n   ").join(["   ", "\n"]))
-assert withheld.loc["time", "withheld"] == 0, "a parent summarizes an event table"
 
 # 3. leakage-like results
-copies = len(flagged.intersection(copied))
-print(f"3. Near-perfect targets: {len(flagged)}, {copies} of them with a copy among the features;")
-print(f"   {len(copied)} targets have a copy. The others, and the best lift one feature reaches:")
-for i in flagged.difference(copied):
-    row, (feature, best) = results.loc[i], alone[i]
+copies = flagged.intersection(copied)
+print(f"3. Near-perfect targets: {len(flagged)}; with an exact copy among the features (a column")
+print(f"   the target is a function of): {len(copies)}, of {len(copied)} targets that have one;")
+print(
+    f"   with a near-copy instead (one feature alone near-perfect): {len(near)}. Those without an"
+)
+print("   exact copy, and the best lift one feature reaches alone:")
+for i, (feature, best) in alone.items():
+    row = results.loc[i]
     print(
         f"   {items[i]['source']} {row['table']}.{row['target']} ({row['task']}):"
-        f" lift {row['lift']:.3f}; {feature} alone {best:.3f}"
+        f" lift {row['lift']:.3f}; {feature} alone {best:.3f}{' (near-copy)' if i in near else ''}"
     )
 print()
-assert copies > len(flagged) / 2, "most near-perfect targets are not copies"
 
 # 4. shuffled control
 false = int((controls["band"] != "no signal").sum())
 print(f"4. Control, shuffled training targets: signal found on {false} of {len(controls)}\n")
 assert false <= 0.1 * len(controls), "the harness finds signal in shuffled targets"
-print(
-    "difficulty: every band is reached, near-perfect targets are mostly copies, shuffles show no signal"
-)
+print(f"difficulty: {len(results)} targets banded; shuffled targets show no signal")

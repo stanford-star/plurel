@@ -11,9 +11,10 @@
   [`difficulty.py`](analysis/difficulty.py) picks classification and regression targets in 8
   databases and 12 tables, splits event tables by time and static ones by row, and measures how
   much a linear model and a gradient-boosted tree beat constant and per-parent baselines, with
-  bootstrap intervals, difficulty bands, near-perfect targets explained by copied columns, and a
-  shuffled-label control. It uses scikit-learn, which relbench already requires, and runs in
-  under a minute.
+  bootstrap intervals over parents or time blocks, difficulty bands, near-perfect targets
+  explained by exact and near copies, and a shuffled-label control. It uses scikit-learn, which
+  relbench already requires, and runs in under a minute; `pixi run recipes` runs a quick
+  configuration (`PLUREL_QUICK=1`).
 - [`generation/`](generation/): standalone v2 recipes that compose the generation API around a
   domain, each checking the relationships it declares. Each runs on its own from the installed
   package with embedded synthetic fixtures, no data or network:
