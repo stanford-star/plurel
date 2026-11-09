@@ -4,6 +4,10 @@
   recorded values, realization, sampling, calibration, synthetic and semi-synthetic authoring,
   relational constraints, missingness, time, export, priors and edge cases. Start here to learn
   one concept at a time; `pixi run recipes` checks these scripts as well as the domain recipes.
+- [`analysis/`](analysis/): what the random priors generate. [`diversity.py`](analysis/diversity.py)
+  draws 40 databases from `SchemaPrior`, samples 8 of them 5 more times, and measures how far
+  structure and data vary with the mechanism seed against the data seed, which generators come
+  close to duplicating each other, and which output is degenerate. It runs in about ten seconds.
 - [`generation/`](generation/): standalone v2 recipes that compose the generation API around a
   domain, each checking the relationships it declares. Each runs on its own from the installed
   package with embedded synthetic fixtures, no data or network:
