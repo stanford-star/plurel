@@ -4,7 +4,9 @@ Digests are stored per platform, since exact bytes hold within a platform only: 
 functions and matrix products differ in their last bits across operating systems and processors.
 `python test/fingerprints.py` prints whether this platform's stored digests in fingerprints.json
 still match; `--update` rewrites them, which a change that moves draws on purpose does on every
-tested platform, and its PR says so. See COMPATIBILITY.md for what is promised exactly and what not.
+tested platform, and its PR says so; `--save DIR` writes the draws themselves as parquet, to compare
+platforms with scripts/compare_draws.py. See COMPATIBILITY.md for what is promised exactly and what
+not.
 """
 
 import hashlib
@@ -42,7 +44,24 @@ from plurel import (
 from plurel.prior import SchemaPrior
 
 STORED = Path(__file__).with_name("fingerprints.json")
-PLATFORM = f"{sys.platform}-{platform.machine()}"  # e.g. darwin-arm64, linux-x86_64
+
+
+def vector_level() -> str:
+    """The highest instruction set NumPy dispatches float64 math to beyond its baseline, such as
+    X86_V4 (AVX-512) or X86_V3 (AVX2), or nothing. NumPy's and OpenBLAS's kernels both move the
+    draws' last bits, and left alone both choose by the same instruction set, which this names;
+    see COMPATIBILITY.md."""
+    try:
+        from numpy.lib.introspect import opt_func_info
+    except ImportError:  # NumPy before 2.1 cannot say: the platform alone names the digests
+        return ""
+    info = opt_func_info(signature="float64")
+    chosen = {v["current"] for signatures in info.values() for v in signatures.values()}
+    return max((level for level in chosen if not level.startswith("baseline")), default="")
+
+
+# e.g. darwin-arm64, linux-x86_64-X86_V4
+PLATFORM = "-".join(filter(None, (sys.platform, platform.machine(), vector_level())))
 
 
 def digest(frames: dict[str, pd.DataFrame]) -> str:
@@ -148,12 +167,33 @@ def workloads() -> Iterator[tuple[str, Schema, dict[str, int]]]:
         yield f"prior/{seed}", generator, rows
 
 
+def draws() -> Iterator[tuple[str, dict[str, pd.DataFrame]]]:
+    for name, generator, rows in workloads():
+        for seed in (0, 1):
+            yield f"{name}/seed {seed}", generator.sample(rows, seed=seed)
+
+
 def draw() -> dict[str, str]:
-    return {
-        f"{name}/seed {seed}": digest(generator.sample(rows, seed=seed))
-        for name, generator, rows in workloads()
-        for seed in (0, 1)
-    }
+    return {name: digest(frames) for name, frames in draws()}
+
+
+def save(directory: Path) -> None:
+    """Every draw's tables as parquet, `<directory>/<platform>/<draw>/<table>.parquet`, for
+    scripts/compare_draws.py to set beside another platform's, with `draw.json` beside them: the
+    draw's digest and its categorical columns' levels, which parquet keeps only for strings."""
+    for name, frames in draws():
+        folder = directory / PLATFORM / name.replace("/", "-").replace(" ", "")
+        folder.mkdir(parents=True, exist_ok=True)
+        categoricals = {}
+        for table, frame in frames.items():
+            frame.to_parquet(folder / f"{table}.parquet")
+            categoricals[table] = {
+                column: {"levels": series.cat.categories.tolist(), "ordered": series.cat.ordered}
+                for column, series in frame.items()
+                if isinstance(series.dtype, pd.CategoricalDtype)
+            }
+        record = {"draw": name, "digest": digest(frames), "categoricals": categoricals}
+        (folder / "draw.json").write_text(json.dumps(record, indent=1, default=str) + "\n")
 
 
 def stored() -> dict[str, dict[str, str]]:
@@ -161,6 +201,9 @@ def stored() -> dict[str, dict[str, str]]:
 
 
 if __name__ == "__main__":
+    if "--save" in sys.argv:
+        save(Path(sys.argv[sys.argv.index("--save") + 1]))
+        sys.exit(0)
     drawn = draw()
     if "--update" in sys.argv:
         STORED.write_text(json.dumps(stored() | {PLATFORM: drawn}, indent=1, sort_keys=True) + "\n")

@@ -51,9 +51,37 @@ for the breaking changes the changelog lists, each with its migration.
 The same pixi lock on macOS (osx-arm64) and Linux (linux-64) drew the same bytes for one of the
 seven fingerprinted workloads, the school schema, whose numbers pass through marginals and linear
 causes; the other six, which use log-normal marginals, `exp`/`log` transforms or the prior's
-matrix and tree edges, differed. The size of the differences has not been measured; the likely
-cause is floating point in those functions differing between the platforms' math libraries. So
-exact repeatability is a within-platform promise, and the digests are stored per platform.
+matrix and tree edges, differed. So exact repeatability is a within-platform promise, and the
+digests are stored per platform.
+
+How far they differ was measured at commit `e7c4421`: every fingerprinted draw saved on the Apple
+M4 and on a GitHub `ubuntu-latest` runner with an AMD EPYC 7763, with `test/fingerprints.py --save`, then set side by
+side with `scripts/compare_draws.py`:
+
+| Draws | Cells that differ | Largest difference | Blank on one side, categoricals changed, cells reranked | Marginal and correlation shift |
+|---|---:|---:|---:|---:|
+| the four prior databases, two seeds each | 1.7 to 4.7% | under 3e-14 standard deviations | none | under 1e-15 |
+| shop and teams, two seeds each | 0.1 to 0.6% | under 6e-14 standard deviations | none | none |
+| school, two seeds | none | none | none | none |
+
+Every table drew as many rows on both, every key and categorical took the same value, no cell went
+blank on one side only, and no number changed its rank in its column: the differences are in the
+last bits of numbers. Within this measurement the distributional promise holds and is close to
+exact. It is one pair of machines; another processor may differ more.
+
+**Linux digests depend on the processor's vector instructions.** GitHub's `ubuntu-latest`
+runners are not all one processor. Eight runners sampled at once drew one set of bytes on the four
+with AVX-512 (AMD EPYC 9V45, 9V74 and an Intel Xeon 6973P), where NumPy dispatches float64 math to
+`X86_V4` and OpenBLAS to its SkylakeX kernels, and another, six prior draws moved by the last bits,
+on the four without (AMD EPYC 7763: `X86_V3`, Haswell kernels). The digests are therefore stored by
+platform and that level, `linux-x86_64-X86_V4` and `linux-x86_64-X86_V3`; `darwin-arm64` has no
+level beyond NumPy's baseline. Both libraries move the bits: on an AVX-512
+Intel Xeon 8370C, turning off NumPy's AVX-512 code (`NPY_DISABLE_CPU_FEATURES=X86_V4`) and
+OpenBLAS's SkylakeX kernels (`OPENBLAS_CORETYPE=Haswell`) together drew exactly the `X86_V3` bytes,
+and turning off OpenBLAS's alone drew a third set. Left alone, both choose from the same
+instruction set, so NumPy's level names the set; forcing either library past its default may draw
+bytes no key stores. Before this, the Linux fingerprint test passed or failed with the runner it
+landed on ([#155](https://github.com/stanford-star/plurel/pull/155)). CI logs the processor before the suite.
 
 ## Tested environments
 
@@ -61,7 +89,8 @@ exact repeatability is a within-platform promise, and the digests are stored per
 |---|---|---|---|
 | macOS 26.1, Apple M4 (osx-arm64), locally | pixi lock: Python 3.12.0, numpy 2.5.1, pandas 3.0.5, pyarrow 25.0.0, scipy 1.17.0, relbench 3.0.1 | match the `darwin-arm64` digests, which it wrote | passes |
 | GitHub Actions `macos-latest` (osx-arm64) | the same pixi lock | match the `darwin-arm64` digests written locally: exact across these two Apple silicon machines | passes |
-| GitHub Actions `ubuntu-latest` (linux-64) | the same pixi lock | match its own `linux-x86_64` digests; 12 of 14 differ from `darwin-arm64` | passes |
+| GitHub Actions `ubuntu-latest` (linux-64) with AVX-512: AMD EPYC 9V45 and 9V74, Intel Xeon 6973P | the same pixi lock | match the `linux-x86_64-X86_V4` digests; 12 of 14 differ from `darwin-arm64` | passes |
+| GitHub Actions `ubuntu-latest` (linux-64) without: AMD EPYC 7763 | the same pixi lock | match the `linux-x86_64-X86_V3` digests, which differ from `X86_V4` in 6 of 14 by the last bits | passes |
 | GitHub Actions `ubuntu-latest`, wheel installed clean | Python 3.12 and 3.13, latest released dependencies | not checked: the smoke test and the recipes run, which promise no bytes | smoke and recipes pass |
 
 No other platform, Python version or dependency set is claimed. Windows is untested. On a platform

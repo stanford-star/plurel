@@ -701,6 +701,38 @@ of cutting a rank. Realizing fits these scores and the level cuts to one draw of
 realized table's shares follow its rows and it can be sampled at any size. A column that depends on a
 key keeps its shares exactly in every draw instead, since rows sharing a parent are not independent.
 
+## Latency and memory
+
+Drawing a random table or database and saving it, end to end, as the
+[random-database example](#draw-random-tables-and-databases) does: draw the structure from its
+prior, sample the rows, build the relbench database, write it to parquet and read it back. Every
+run uses seed 0, so it draws the same structure, with the rows split across tables the same way.
+Measured at commit `7a426e9` on an Apple M4 with 16 GiB and on GitHub's `ubuntu-latest` runner
+(4 cores of an AMD EPYC 7763, 16 GiB), the median of three runs, each a fresh process; peak memory
+includes about 195 MiB for the interpreter and imports.
+
+| Workload | Tables | Hidden values per row | 100k rows, M4 | 100k rows, Linux | 1M rows, M4 | 1M rows, Linux |
+|---|---:|---:|---:|---:|---:|---:|
+| random table, 20 columns | 1 | 58 | 0.75 s, 476 MiB | 0.94 s, 432 MiB | 6.5 s, 1.6 GiB | 8.3 s, 1.2 GiB |
+| random database | 2 | 25 | 0.57 s, 412 MiB | 0.64 s, 350 MiB | 4.4 s, 1.3 GiB | 5.2 s, 884 MiB |
+| random database | 8 | 87 | 1.7 s, 627 MiB | 2.0 s, 447 MiB | 14 s, 2.1 GiB | 16 s, 1.8 GiB |
+| random database | 32 | 30 | 0.97 s, 379 MiB | 1.4 s, 355 MiB | 5.6 s, 1.3 GiB | 8.2 s, 825 MiB |
+| random database | 128 | 43 | 1.5 s, 313 MiB | 3.3 s, 335 MiB | 6.8 s, 1.1 GiB | 12 s, 936 MiB |
+
+<img src="benchmarks/results/2026-11-09-apple-m4-time.png" alt="Time against rows drawn on the Apple M4, one line per workload"/>
+
+Time grows linearly with rows, and sampling takes most of it. What sets the cost is not the
+table count but how many hidden values each row computes: every row evaluates its table's hidden
+causal graph, mostly nonlinear edges (MLP, Fourier, quadratic), and the column above averages that
+graph's width over all rows drawn. The 8-table database is slow because its largest table, which
+takes 80% of the rows, drew a graph 90 values wide; the 32-table database's largest table takes
+52% of the rows with a width of 15. Both the split of rows and the widths are drawn by the seed, so
+another 8-table database could be among the fastest. At 100k rows the costs that come per table,
+drawing its structure, saving it and reading it back, also show: on Linux they add 1.4 s and make the 128-table database the
+slowest there. [benchmarks/](benchmarks/) has the harness, and the
+reports for the [M4](benchmarks/REPORT.md) and the [Linux runner](benchmarks/REPORT-linux.md) time
+every phase at 100k, 250k, 500k and 1M rows, with figures of time, memory and where the time goes.
+
 ## Compatibility
 
 [COMPATIBILITY.md](COMPATIBILITY.md) says what the API and its seeded draws promise, exactly and
@@ -727,7 +759,7 @@ pixi run wheel       # a wheel in dist/
 CI runs the same on every pull request to `main` and `v2`: lint, types and the README on Linux,
 the suite on Linux and macOS, and the wheel installed clean into Python 3.12 and 3.13 and run by
 `scripts/smoke.py` from outside the checkout, which also checks that importing plurel leaves
-relbench unloaded. Of the benchmarks only a 1k smoke run is in CI; corpus generation and full
+relbench unloaded. Of the benchmarks only a 100k smoke run is in CI; corpus generation and full
 performance runs stay out of it.
 
 The v1 generator, the paper-exact code, remains at the

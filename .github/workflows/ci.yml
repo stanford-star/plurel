@@ -41,6 +41,8 @@ jobs:
           pixi-version: v0.73.0
           locked: true
           cache: true
+      # the processor, since exact draws can depend on it beyond the platform name
+      - run: grep -m1 "model name" /proc/cpuinfo 2>/dev/null || sysctl -n machdep.cpu.brand_string
       - run: pixi run test
 
   package:

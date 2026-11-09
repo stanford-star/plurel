@@ -1,11 +1,14 @@
 """Measure generation: each workload at each size, repeated, every run in a fresh process so its peak
-memory is its own. Phases are timed apart: construct (declare and check the schema), realize (draw
-ranges and fit cuts), sample, database (relbench form), write (to parquet) and read (load back).
+memory is its own. Phases are timed apart, in the order a user of the priors runs them: draw (the
+structure from its prior), sample, database (relbench form), write (to parquet) and read (load
+back).
 
-    python benchmarks/run.py                                  # the full ladder, 3 repeats
-    python benchmarks/run.py --sizes 1000 --repeats 1 --out /tmp/smoke.json   # a smoke run
+    python benchmarks/run.py --out a.json                                  # every workload and size, 3 runs
+    python benchmarks/run.py --sizes 100000 --repeats 1 --out /tmp/smoke.json   # a smoke run
 
-Results go to one JSON file: the environment, then one record per run, failures included."""
+Every run draws with seed 0, so repeats differ only in timing. There is no warm-up: every run is a
+cold process, and imports are not timed. Results go to one JSON file: the environment, then one
+record per run, failures included."""
 
 import argparse
 import json
@@ -21,7 +24,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SIZES = (1_000, 10_000, 100_000, 1_000_000)
+SIZES = (100_000, 250_000, 500_000, 1_000_000)  # rows drawn, in total
 
 
 def environment() -> dict[str, object]:
@@ -50,10 +53,8 @@ def environment() -> dict[str, object]:
     return {
         "when": datetime.now(UTC).isoformat(timespec="seconds"),
         "commit": run("git", "-C", str(HERE), "rev-parse", "--short", "HEAD"),
-        # changes to what is measured: the library and the recipes, not the harness itself
-        "dirty": bool(
-            run("git", "-C", str(HERE.parent), "status", "--porcelain", "--", "plurel", "examples")
-        ),
+        # changes to what is measured: the library, not the harness itself
+        "dirty": bool(run("git", "-C", str(HERE.parent), "status", "--porcelain", "--", "plurel")),
         "platform": platform.platform(),
         "machine": platform.machine(),
         "cpu": cpu,
@@ -75,18 +76,6 @@ def peak_mib() -> float:
     return round(peak / 2**20 if sys.platform == "darwin" else peak / 2**10, 1)  # bytes vs KiB
 
 
-def copied_cells(generator, frames) -> int:
-    """Cells holding given values, copied rather than drawn: real columns and given keys."""
-    copied = 0
-    for name, scm in generator.tables.items():
-        given = [
-            c for c, entry in scm.columns.items() if getattr(entry, "values", None) is not None
-        ]
-        given += [c for c, fk in scm.fkeys.items() if fk.values is not None]
-        copied += len(frames[name]) * len(given)
-    return copied
-
-
 def one(workload: str, rows: int, seed: int) -> dict[str, object]:
     """One run, in this process: every phase timed, sizes and peak memory recorded."""
     sys.path.insert(0, str(HERE))
@@ -102,10 +91,9 @@ def one(workload: str, rows: int, seed: int) -> dict[str, object]:
         seconds[phase] = round(time.perf_counter() - start, 4)
         return out
 
-    schema, counts = timed("construct", lambda: WORKLOADS[workload](rows))
-    generator = timed("realize", lambda: schema.realize(seed))
-    frames = timed("sample", lambda: generator.sample(counts, seed=seed))
-    db = timed("database", lambda: create_database(generator, frames))
+    schema, counts = timed("draw", lambda: WORKLOADS[workload](rows))
+    frames = timed("sample", lambda: schema.sample(counts, seed=seed))
+    db = timed("database", lambda: create_database(schema, frames))
     with tempfile.TemporaryDirectory() as scratch:
         timed_tables = any(table.time_col for table in db.table_dict.values())
         split = (
@@ -118,18 +106,11 @@ def one(workload: str, rows: int, seed: int) -> dict[str, object]:
         )
         disk = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
         timed("read", lambda: read_database(path))
-    given = [t for t, scm in generator.tables.items() if scm.size is not None]
-    retained = sum(len(frames[t]) for t in given)
-    total = sum(len(frame) for frame in frames.values())
-    cells = int(sum(frame.size for frame in frames.values()))
     return {
         "seconds": seconds,
         "total_seconds": round(sum(seconds.values()), 4),
-        "rows": total,
-        "generated_rows": total - retained,
-        "retained_rows": retained,
-        "cells": cells,
-        "generated_cells": cells - copied_cells(generator, frames),
+        "rows": sum(len(frame) for frame in frames.values()),
+        "cells": int(sum(frame.size for frame in frames.values())),
         "tables": len(frames),
         "disk_mib": round(disk / 2**20, 2),
         "peak_mib": peak_mib(),
@@ -142,7 +123,8 @@ def main() -> None:
         "--workloads", nargs="*", help="names from benchmarks/workloads.py; all by default"
     )
     parser.add_argument("--sizes", nargs="*", type=int, default=list(SIZES))
-    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--seeds", nargs="*", type=int, default=[0], help="data seeds")
+    parser.add_argument("--repeats", type=int, default=3, help="runs of each seed")
     parser.add_argument("--timeout", type=float, default=900.0, help="seconds per run")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
@@ -162,8 +144,8 @@ def main() -> None:
     records = []
     for name in names:
         for rows in args.sizes:
-            for repeat in range(args.repeats):
-                record = {"workload": name, "size": rows, "repeat": repeat, "seed": repeat}
+            for seed, repeat in ((s, r) for s in args.seeds for r in range(args.repeats)):
+                record = {"workload": name, "size": rows, "repeat": repeat, "seed": seed}
                 command = [
                     sys.executable,
                     "-I",
@@ -173,7 +155,7 @@ def main() -> None:
                     "--one",
                     name,
                     str(rows),
-                    str(repeat),
+                    str(seed),
                 ]
                 try:
                     done = subprocess.run(
@@ -200,7 +182,7 @@ def main() -> None:
                     record.get("failure")
                     or f"{record['total_seconds']:.2f} s, {record['peak_mib']:.0f} MiB"
                 )
-                print(f"{name:12} {rows:>9} #{repeat}: {status}", flush=True)
+                print(f"{name:12} {rows:>9} seed {seed} #{repeat}: {status}", flush=True)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     if environment()["commit"] != started["commit"]:
         started["commit_changed_during_runs"] = True
