@@ -1,6 +1,6 @@
 """How far two platforms' seeded draws differ, from what `test/fingerprints.py --save` writes.
 
-    python scripts/compare_draws.py draws/darwin-arm64 draws/linux-x86_64
+    python scripts/compare_draws.py draws/darwin-arm64 draws/linux-x86_64-X86_V3
 
 Per draw: whether its bytes are the same (the digests saved beside it), whether both drew the same
 tables and every table as many rows, the share of cells that differ, the largest numeric

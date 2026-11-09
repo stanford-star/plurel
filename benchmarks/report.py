@@ -1,7 +1,7 @@
 """Write a markdown report from saved benchmark results, never from new runs: per workload and size
 the median of every phase over its runs with their range, throughput, peak memory and size on
 disk; how much the total varies across seeds and across repeats of one seed; then every failure and
-every size not attempted. With matplotlib installed it also plots time and memory against rows;
+every size not attempted. With matplotlib installed it also draws benchmarks/figures.py's figures;
 see benchmarks/README.md.
 
     python benchmarks/report.py benchmarks/results/2026-11-08-m4.json --out benchmarks/REPORT.md
@@ -13,6 +13,8 @@ import os
 import statistics
 from collections import defaultdict
 from pathlib import Path
+
+from figures import draw
 
 PHASES = ("construct", "realize", "sample", "database", "write", "read")
 
@@ -60,6 +62,7 @@ def summarize(runs: list[dict]) -> dict[tuple[str, int], dict[str, object]]:
     for key, group in grouped.items():
         summary[key] = {
             "rows": int(statistics.median(r["rows"] for r in group)),
+            "tables": int(statistics.median(r["tables"] for r in group)),
             "generated": int(statistics.median(r["generated_rows"] for r in group)),
             "cells": int(statistics.median(r["cells"] for r in group)),
             "generated_cells": int(statistics.median(r["generated_cells"] for r in group)),
@@ -72,37 +75,6 @@ def summarize(runs: list[dict]) -> dict[tuple[str, int], dict[str, object]]:
             **spread(group),
         }
     return summary
-
-
-def plots(summary: dict, out: Path) -> list[str]:
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        return []
-    names = []
-    for field, label, file in (
-        ("total", "end-to-end seconds", "time.png"),
-        ("peak", "peak memory, MiB", "memory.png"),
-    ):
-        figure, axis = plt.subplots(figsize=(8, 5))
-        for workload in sorted({w for w, _ in summary}):
-            points = sorted(
-                (s["rows"], statistics.median(s[field]))
-                for (w, _), s in summary.items()
-                if w == workload
-            )
-            axis.plot(*zip(*points), marker="o", label=workload)
-        axis.set(xscale="log", yscale="log", xlabel="rows drawn", ylabel=label)
-        axis.grid(True, which="major", alpha=0.3)
-        axis.legend(fontsize=7, ncol=3)
-        figure.tight_layout()
-        figure.savefig(out.parent / file, dpi=120)
-        plt.close(figure)
-        names.append(file)
-    return names
 
 
 def percent(share: float | None) -> str:
@@ -178,7 +150,7 @@ def report(results: dict, summary: dict, images: list[str], source: str) -> str:
         lines += ["", "## Not attempted", "", "| Workload | Size | Why |", "|---|---:|---|"]
         lines += [f"| {r['workload']} | {r['size']:,} | {r['skipped']} |" for r in skipped]
     if images:
-        lines += ["", "## Scaling", ""] + [f"![{name}]({name})" for name in images]
+        lines += ["", "## Figures", ""] + [f"![{name}]({name})" for name in images]
     return "\n".join(lines) + "\n"
 
 
@@ -189,7 +161,9 @@ def main() -> None:
     args = parser.parse_args()
     results = json.loads(args.results.read_text())
     summary = summarize(results["runs"])
-    images = plots(summary, args.out)
+    env = results["environment"]
+    machine = f"{env['cpu']}, {env['platform'].split('-')[0]}"
+    images = draw(summary, PHASES, machine, args.out)
     source = os.path.relpath(args.results.resolve(), args.out.resolve().parent)
     args.out.write_text(report(results, summary, images, str(source)))
     print(f"wrote {args.out}" + (f" and {', '.join(images)}" if images else ""))

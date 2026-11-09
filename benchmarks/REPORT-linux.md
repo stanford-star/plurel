@@ -169,3 +169,9 @@ None: all 402 runs finished.
 | Workload | Size | Why |
 |---|---:|---|
 | columns-200 | 1,000,000 | above 100,000 rows |
+
+## Figures
+
+![linux-time.png](linux-time.png)
+![linux-memory.png](linux-memory.png)
+![linux-phases.png](linux-phases.png)

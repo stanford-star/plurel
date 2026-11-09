@@ -10,7 +10,7 @@ pixi run bench          # every workload at 1k, 10k, 100k and 1M rows, seeds 0-2
 pixi run bench-report   # REPORT.md from results/latest.json, without plots
 pixi run bench-smoke    # 1k rows, seed 0, once, as CI runs it
 pixi exec --spec python=3.12 --spec matplotlib python benchmarks/report.py \
-    benchmarks/results/latest.json --out benchmarks/REPORT.md   # with time.png and memory.png
+    benchmarks/results/latest.json --out benchmarks/REPORT.md   # with its figures, from figures.py
 python benchmarks/run.py --workloads wide retail --sizes 1000 10000 --seeds 0 --repeats 1 --out /tmp/a.json
 ```
 

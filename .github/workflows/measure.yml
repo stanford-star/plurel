@@ -24,7 +24,7 @@ jobs:
       - run: mkdir -p measured && grep -m1 "model name" /proc/cpuinfo | tee measured/cpu.txt
       # a mismatch is a finding to keep, not a failure of the run
       - run: pixi run python test/fingerprints.py | tee measured/fingerprints.txt || true
-      - run: pixi run python test/fingerprints.py --save measured/draws/linux-x86_64
+      - run: pixi run python test/fingerprints.py --save measured/draws
       - uses: actions/upload-artifact@v4
         with:
           name: draws-${{ github.sha }}

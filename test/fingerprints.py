@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pandas as pd
+from numpy.lib.introspect import opt_func_info
 
 from plurel import (
     ByLevel,
@@ -44,7 +45,20 @@ from plurel import (
 from plurel.prior import SchemaPrior
 
 STORED = Path(__file__).with_name("fingerprints.json")
-PLATFORM = f"{sys.platform}-{platform.machine()}"  # e.g. darwin-arm64, linux-x86_64
+
+
+def vector_level() -> str:
+    """The highest instruction set NumPy dispatches float64 math to beyond its baseline, such as
+    X86_V4 (AVX-512) or X86_V3 (AVX2), or nothing. NumPy's and OpenBLAS's kernels both move the
+    draws' last bits, and left alone both choose by the same instruction set, which this names;
+    see COMPATIBILITY.md."""
+    info = opt_func_info(signature="float64")
+    chosen = {v["current"] for signatures in info.values() for v in signatures.values()}
+    return max((level for level in chosen if not level.startswith("baseline")), default="")
+
+
+# e.g. darwin-arm64, linux-x86_64-X86_V4
+PLATFORM = "-".join(filter(None, (sys.platform, platform.machine(), vector_level())))
 
 
 def digest(frames: dict[str, pd.DataFrame]) -> str:

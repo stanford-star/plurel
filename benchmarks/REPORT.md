@@ -170,7 +170,8 @@ None: all 402 runs finished.
 |---|---:|---|
 | columns-200 | 1,000,000 | above 100,000 rows |
 
-## Scaling
+## Figures
 
 ![time.png](time.png)
 ![memory.png](memory.png)
+![phases.png](phases.png)
