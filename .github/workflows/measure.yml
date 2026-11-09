@@ -1,9 +1,9 @@
 name: measure
 
-# The full benchmark and the fingerprinted draws on GitHub's Linux runner, kept out of pull-request
+# The fingerprinted draws and the full benchmark on GitHub's Linux runner, kept out of pull-request
 # CI: run it by pushing a commit to a branch named measure/..., or from the Actions tab once this
-# file is on the default branch. Download the artifact, then see benchmarks/README.md and
-# COMPATIBILITY.md for what to do with it.
+# file is on the default branch. Download the artifacts, then see benchmarks/README.md and
+# COMPATIBILITY.md for what to do with them.
 
 on:
   workflow_dispatch:
@@ -11,7 +11,26 @@ on:
     branches: ["measure/**"]
 
 jobs:
-  linux:
+  draws:
+    # which processor drew, whether it matches the stored digests, and the draws themselves
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: v0.73.0
+          locked: true
+          cache: true
+      - run: mkdir -p measured && grep -m1 "model name" /proc/cpuinfo | tee measured/cpu.txt
+      # a mismatch is a finding to keep, not a failure of the run
+      - run: pixi run python test/fingerprints.py | tee measured/fingerprints.txt || true
+      - run: pixi run python test/fingerprints.py --save measured/draws/linux-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: draws-${{ github.sha }}
+          path: measured/
+
+  benchmark:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -21,10 +40,9 @@ jobs:
           pixi-version: v0.73.0
           locked: true
           cache: true
-      - run: pixi run python test/fingerprints.py --save measured/draws/linux-x86_64
       - run: pixi run python benchmarks/run.py --out measured/linux-x86_64.json
       - run: pixi run python benchmarks/report.py measured/linux-x86_64.json --out measured/REPORT.md
       - uses: actions/upload-artifact@v4
         with:
-          name: measured-${{ github.sha }}
+          name: benchmark-${{ github.sha }}
           path: measured/

@@ -46,22 +46,3 @@ here.
 
 Earlier v2 work, the redesign around one node type and the table declarations, is in the commit
 history up to #87; the v1 generator is at the `v1.1.0` and `v1.0.0` tags.
-
-## From v1
-
-v2 is a new API, not a revision of v1's, and it draws different databases: no v2 seed reproduces a
-v1 database. To regenerate a v1 corpus, install `plurel==1.1.0`. To move v1 code to v2:
-
-| v1 | v2 |
-|---|---|
-| `SyntheticDataset(seed, Config()).make_db()` | `prior = SchemaPrior()`, `schema = prior.realize(seed)`, then `create_database(schema, schema.sample(prior.rows(schema, seed), seed=seed))` |
-| `Config(database_params=DatabaseParams(...), scm_params=SCMParams(...), dag_params=DAGParams(...))` | the fields of `SchemaPrior` and its `table_prior`, a `TablePrior`, each a `Range` or `Choices` (see the README's random schemas) |
-| `Choices(kind="range", value=[a, b])`, `Choices(kind="set", value=[...])` | `Range(a, b)` for floats, `IntegersRange(a, b)`, their log-spaced `LogRange` and `LogIntegersRange`, and `Choices((...))` |
-| `val_split=0.8`, `test_split=0.9`, the cumulative shares before each split | `split_timestamps(db, val_share=0.1, test_share=0.1)`, the shares after each, passed to `write_database` |
-| `cache_dir` and relbench's caching | `write_database(db, path, name=...)` and `read_database(path)` |
-| `scripts/synthetic_gen.py --seed_offset --num_dbs --num_proc` | the same script and flags; it draws v2 databases |
-| `schema_file=...sql` | not supported: declare the tables with `Table` and `Schema` |
-| a schema's own tables | new in v2: `Table`, `Schema`, `ForeignKey`, real tables through `Table.from_frame`, then `realize(seed)` and `sample(rows, seed=...)` |
-
-The torch tensors and propagation modes (`type_eager`, `type_lazy`) of v1 are gone with no
-replacement: v2 draws with NumPy only.

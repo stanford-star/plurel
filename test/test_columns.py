@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from plurel import PrimaryKey
-from plurel.columns import DEFAULT_CALENDAR, Column, rank_map
+from plurel.columns import DEFAULT_CALENDAR, Column, rank_map, ranked
 from plurel.distributions import Calendar, Poisson, Uniform
 from plurel.graph import Node
 from plurel.schema import Table
@@ -140,3 +140,19 @@ def test_empty_one_hot_rows_observe_as_missing():
     one_hot[:5] = 0.0
     read = observe(Column(NODE, "categorical", categories=CATEGORIES), one_hot)
     assert read[:5].isna().all() and read[5:].notna().all()
+
+
+@pytest.mark.parametrize(
+    "latent",
+    [
+        np.arange(50.0),
+        np.repeat([0.0, 1.0, 2.0], [10, 30, 10]),
+        np.concatenate([np.zeros(10), np.arange(1.0, 41.0)]),
+        np.concatenate([np.arange(20.0), np.full(5, 7.0), np.arange(30.0, 50.0)]),
+        np.zeros(1),
+        np.zeros(0),
+    ],
+)
+def test_ranked_orders_as_a_two_key_sort(latent):
+    tiebreak = np.random.default_rng(0).random(len(latent))
+    np.testing.assert_array_equal(ranked(latent, tiebreak), np.lexsort((tiebreak, latent)))

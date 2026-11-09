@@ -162,12 +162,21 @@ def draw() -> dict[str, str]:
 
 def save(directory: Path) -> None:
     """Every draw's tables as parquet, `<directory>/<draw>/<table>.parquet`, for
-    scripts/compare_draws.py to set beside another platform's."""
+    scripts/compare_draws.py to set beside another platform's, with `draw.json` beside them: the
+    draw's digest and its categorical columns' levels, which parquet keeps only for strings."""
     for name, frames in draws():
         folder = directory / name.replace("/", "-").replace(" ", "")
         folder.mkdir(parents=True, exist_ok=True)
+        categoricals = {}
         for table, frame in frames.items():
             frame.to_parquet(folder / f"{table}.parquet")
+            categoricals[table] = {
+                column: {"levels": series.cat.categories.tolist(), "ordered": series.cat.ordered}
+                for column, series in frame.items()
+                if isinstance(series.dtype, pd.CategoricalDtype)
+            }
+        record = {"draw": name, "digest": digest(frames), "categoricals": categoricals}
+        (folder / "draw.json").write_text(json.dumps(record, indent=1, default=str) + "\n")
 
 
 def stored() -> dict[str, dict[str, str]]:
