@@ -25,7 +25,7 @@
   README's decision boundaries of tables from `TablePrior`, the class each cell of a grid over two
   numeric upstream nodes gets most often. It needs matplotlib, which plurel does not require but the
   pixi environment has: `pixi run python examples/figures/decision_boundaries.py --out boundaries.png`
-  runs in under two minutes, and `pixi run recipes` draws one table (`PLUREL_QUICK=1`).
+  runs in about a minute, and `pixi run recipes` draws one table (`PLUREL_QUICK=1`).
 - [`generation/`](generation/): standalone v2 recipes that compose the generation API around a
   domain, each checking the relationships it declares. Each runs on its own from the installed
   package with embedded synthetic fixtures, no data or network:

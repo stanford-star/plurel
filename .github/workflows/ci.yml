@@ -46,7 +46,8 @@ jobs:
       - run: pixi run test
 
   package:
-    # a wheel installed clean, from PyPI's dependencies and no cache, into each supported Python
+    # a wheel installed clean, from PyPI's dependencies and no cache, into each supported Python,
+    # plus matplotlib for examples/figures
     strategy:
       fail-fast: false
       matrix:

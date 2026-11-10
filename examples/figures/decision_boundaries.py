@@ -6,7 +6,7 @@ causes are held on a grid over their 2-98% quantiles and every other source node
 the map is the mechanism's own boundary, not a fitted classifier; each cell shows the class drawn
 most often over several data seeds. A categorical source is held at its most common level instead
 of a median. Pairs are searched on a coarse grid and drawn on a fine one, and the six largest
-classes of each map get colours, the rest a neutral grey. Needs matplotlib; takes under two minutes
+classes of each map get colours, the rest a neutral grey. Needs matplotlib; takes about a minute
 for the default eight seeds, and PLUREL_QUICK=1 draws one table on the coarse grid."""
 
 import argparse
@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.colors import to_rgb
+from threadpoolctl import threadpool_limits
 
 from plurel import TablePrior
 
@@ -58,12 +59,12 @@ def classes(table, column, a, b, natural, sources, grid, draws) -> np.ndarray:
     xs, ys = (np.linspace(*np.quantile(natural[n][:, 0], [0.02, 0.98]), grid) for n in (a, b))
     held = {s: np.tile(typical(table, s, natural[s]), (grid * grid, 1)) for s in sources}
     held[a], held[b] = (v.reshape(-1, 1) for v in np.meshgrid(xs, ys))
-    draws = [
+    samples = [
         table.sample_with_latents(grid * grid, seed=seed, held=held)[0][column]
         for seed in range(draws)
     ]
-    levels = sorted(set().union(*(set(d.dropna()) for d in draws)))
-    votes = np.stack([pd.Categorical(d, categories=levels).codes for d in draws])
+    levels = sorted(set().union(*(set(s.dropna()) for s in samples)))
+    votes = np.stack([pd.Categorical(s, categories=levels).codes for s in samples])
     counts = np.stack([(votes == c).sum(0) for c in range(len(levels))])
     mode = np.where(counts.max(0) > 0, counts.argmax(0), -1)
     return mode.reshape(grid, grid)
@@ -121,7 +122,8 @@ parser.add_argument("--seeds", type=int, nargs="+", default=SEEDS)
 parser.add_argument("--out", default="decision_boundaries.png")
 args = parser.parse_args()
 
-maps = [m for m in map(boundary, args.seeds) if m is not None]
+with threadpool_limits(1):
+    maps = [m for m in map(boundary, args.seeds) if m is not None]
 if not maps:
     raise ValueError(f"no table among seeds {args.seeds} has a clear boundary")
 cols = min(4, len(maps))

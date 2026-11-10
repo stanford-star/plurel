@@ -1,7 +1,8 @@
-"""Run the concept examples, domain recipes, analyses and figures, and realism.py's self-test, each in its
-own isolated process with the Python running this script, from a temporary directory: the plurel
-it imports is whichever that Python has installed, an editable checkout or a wheel. PLUREL_QUICK=1
-asks the analyses for their small configuration. Exits non-zero on the first example that fails."""
+"""Run the concept examples, domain recipes, analyses and figures, and realism.py's self-test,
+each in its own isolated process with the Python running this script, from a temporary directory:
+the plurel it imports is whichever that Python has installed, an editable checkout or a wheel.
+PLUREL_QUICK=1 asks the analyses and figures for their small configuration. Exits non-zero on the
+first example that fails."""
 
 import os
 import subprocess
