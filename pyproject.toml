@@ -69,6 +69,7 @@ platforms = ["linux-64", "osx-arm64"]
 
 [tool.pixi.pypi-dependencies]
 plurel = { path = ".", editable = true }
+matplotlib = ">=3.9,<4"
 
 [tool.pixi.dependencies]
 pytest = ">=9.0.1,<10"

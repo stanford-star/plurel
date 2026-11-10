@@ -21,6 +21,11 @@
   and more, checks the rules the generator authors, and reports where the real database falls
   among the draws, measure by measure. It downloads the dataset and runs in under a minute;
   `pixi run recipes` runs only its `--self-test`, a generated stand-in with no download.
+- [`figures/`](figures/): [`decision_boundaries.py`](figures/decision_boundaries.py) draws the
+  README's decision boundaries of tables from `TablePrior`, the class each cell of a grid over two
+  numeric upstream nodes gets most often. It needs matplotlib, which plurel does not require but the
+  pixi environment has: `pixi run python examples/figures/decision_boundaries.py --out boundaries.png`
+  runs in about a minute, and `pixi run recipes` draws one table (`PLUREL_QUICK=1`).
 - [`generation/`](generation/): standalone v2 recipes that compose the generation API around a
   domain, each checking the relationships it declares. Each runs on its own from the installed
   package with embedded synthetic fixtures, no data or network:

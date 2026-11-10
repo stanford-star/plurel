@@ -46,7 +46,8 @@ jobs:
       - run: pixi run test
 
   package:
-    # a wheel installed clean, from PyPI's dependencies and no cache, into each supported Python
+    # a wheel installed clean, from PyPI's dependencies and no cache, into each supported Python,
+    # plus matplotlib for examples/figures
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +59,7 @@ jobs:
       - run: uv build --wheel
       - run: uv venv --python ${{ matrix.python }} "$RUNNER_TEMP/smoke"
       - run: uv pip install --no-cache --python "$RUNNER_TEMP/smoke" dist/*.whl
+      - run: uv pip install --no-cache --python "$RUNNER_TEMP/smoke" matplotlib
       - working-directory: ${{ runner.temp }}
         run: "$RUNNER_TEMP/smoke/bin/python -I $GITHUB_WORKSPACE/scripts/smoke.py"
       - working-directory: ${{ runner.temp }}
