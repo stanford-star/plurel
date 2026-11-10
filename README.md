@@ -288,9 +288,9 @@ database = prior.realize(seed=0)
 frames = database.sample(prior.rows(database, seed=0), seed=0)
 ```
 
-Each drawn table is its own causal mechanism. Holding two numeric causes of a categorical column
-on a grid, with the table's other inputs at their medians, shows the class each cell gets most
-often; eight tables from `TablePrior`, drawn by
+Each drawn table is its own causal mechanism. Holding two numeric nodes upstream of a categorical
+column on a grid, with the table's other sources at typical values, shows the class each cell gets
+most often; eight tables from `TablePrior`, drawn by
 [`decision_boundaries.py`](examples/figures/decision_boundaries.py):
 
 <img src="docs/static/images/decision_boundaries.png" alt="Decision boundaries of eight tables drawn by TablePrior"/>

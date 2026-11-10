@@ -4,24 +4,31 @@ For each table seed, takes the first categorical column with two numeric scalar 
 whose map has 2 to 6 classes, none above 80%, changes along both axes and little speckle. The two
 causes are held on a grid over their 2-98% quantiles and every other source node at its median, so
 the map is the mechanism's own boundary, not a fitted classifier; each cell shows the class drawn
-most often over several data seeds. Pairs are searched on a coarse grid and drawn on a fine one.
-Needs matplotlib; takes about two minutes for the default eight seeds."""
+most often over several data seeds. A categorical source is held at its most common level instead
+of a median. Pairs are searched on a coarse grid and drawn on a fine one, and the six largest
+classes of each map get colours, the rest a neutral grey. Needs matplotlib; takes under two minutes
+for the default eight seeds, and PLUREL_QUICK=1 draws one table on the coarse grid."""
 
 import argparse
 import itertools
+import os
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from matplotlib.colors import to_rgb
 
 from plurel import TablePrior
 
 SURFACE = "#fcfcfb"
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#6250d6"]
-SEARCH, DRAW = (120, 15), (300, 25)
+OTHER = "#c9c9c4"
+QUICK = os.environ.get("PLUREL_QUICK") == "1"
+SEARCH = (120, 15)
+DRAW = SEARCH if QUICK else (300, 25)
 
 
 def majority(labels: np.ndarray, size: int) -> np.ndarray:
@@ -41,22 +48,23 @@ def ancestors(table, name: str) -> set[str]:
     return found
 
 
+def typical(table, name: str, values: np.ndarray) -> np.ndarray:
+    if table.nodes[name].onehot:
+        return np.eye(values.shape[1])[np.bincount(values.argmax(1)).argmax()]
+    return np.median(values, axis=0)
+
+
 def classes(table, column, a, b, natural, sources, grid, draws) -> np.ndarray:
     xs, ys = (np.linspace(*np.quantile(natural[n][:, 0], [0.02, 0.98]), grid) for n in (a, b))
-    held = {
-        s: np.repeat(np.median(natural[s], axis=0, keepdims=True), grid * grid, axis=0)
-        for s in sources
-    }
+    held = {s: np.tile(typical(table, s, natural[s]), (grid * grid, 1)) for s in sources}
     held[a], held[b] = (v.reshape(-1, 1) for v in np.meshgrid(xs, ys))
-    levels = None
-    votes = []
-    for seed in range(draws):
-        values = table.sample_with_latents(grid * grid, seed=seed, held=held)[0][column].astype(
-            "category"
-        )
-        levels = list(values.cat.categories) if levels is None else levels
-        votes.append(values.cat.set_categories(levels).cat.codes.to_numpy())
-    counts = np.stack([(np.stack(votes) == c).sum(0) for c in range(len(levels))])
+    draws = [
+        table.sample_with_latents(grid * grid, seed=seed, held=held)[0][column]
+        for seed in range(draws)
+    ]
+    levels = sorted(set().union(*(set(d.dropna()) for d in draws)))
+    votes = np.stack([pd.Categorical(d, categories=levels).codes for d in draws])
+    counts = np.stack([(votes == c).sum(0) for c in range(len(levels))])
     mode = np.where(counts.max(0) > 0, counts.argmax(0), -1)
     return mode.reshape(grid, grid)
 
@@ -92,10 +100,13 @@ def boundary(seed: int) -> np.ndarray | None:
 
 
 def image(labels: np.ndarray, tint: float = 0.22) -> np.ndarray:
-    palette = np.array([to_rgb(c) for c in SERIES]) * (1 - tint) + tint
     labels = majority(labels, 3)
+    known = labels >= 0
+    order = np.argsort(-np.bincount(labels[known]), kind="stable")
+    colours = [to_rgb(SERIES[r]) if r < len(SERIES) else to_rgb(OTHER) for r in np.argsort(order)]
+    palette = np.array(colours) * (1 - tint) + tint
     rgb = np.full((*labels.shape, 3), to_rgb(SURFACE))
-    rgb[labels >= 0] = palette[labels[labels >= 0] % len(SERIES)]
+    rgb[known] = palette[labels[known]]
     smooth = majority(labels, 5)
     edge = np.zeros(labels.shape, bool)
     edge[:, 1:] |= smooth[:, 1:] != smooth[:, :-1]
@@ -105,7 +116,8 @@ def image(labels: np.ndarray, tint: float = 0.22) -> np.ndarray:
 
 
 parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-parser.add_argument("--seeds", type=int, nargs="+", default=[45, 102, 225, 115, 47, 87, 123, 262])
+SEEDS = [102] if QUICK else [45, 102, 225, 115, 47, 87, 123, 262]
+parser.add_argument("--seeds", type=int, nargs="+", default=SEEDS)
 parser.add_argument("--out", default="decision_boundaries.png")
 args = parser.parse_args()
 

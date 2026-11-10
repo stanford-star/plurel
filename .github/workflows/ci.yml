@@ -58,6 +58,7 @@ jobs:
       - run: uv build --wheel
       - run: uv venv --python ${{ matrix.python }} "$RUNNER_TEMP/smoke"
       - run: uv pip install --no-cache --python "$RUNNER_TEMP/smoke" dist/*.whl
+      - run: uv pip install --no-cache --python "$RUNNER_TEMP/smoke" matplotlib
       - working-directory: ${{ runner.temp }}
         run: "$RUNNER_TEMP/smoke/bin/python -I $GITHUB_WORKSPACE/scripts/smoke.py"
       - working-directory: ${{ runner.temp }}
