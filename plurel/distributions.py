@@ -261,9 +261,9 @@ class AutoRegressive:
         """The AR(1) recursion as a scan over blocks short enough for the powers of `rho` to
         stay finite."""
         noise = rng.normal(0.0, self.scale, n)
-        if not self.rho or not n:
+        block = min(n, int(250.0 / -np.log10(self.rho))) if self.rho else 0
+        if not block:
             return noise
-        block = max(1, min(n, int(250.0 / -np.log10(self.rho))))
         powers = self.rho ** np.arange(1, block + 1)
         out, carry = np.empty(n), 0.0
         for start in range(0, n, block):

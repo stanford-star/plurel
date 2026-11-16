@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -138,12 +139,17 @@ class Column:
         """The column's values and blanks, a drawn timestamp in epoch seconds."""
         if self.values is not None:
             return self.values
-        latent = latents[name]
+        return self.blanked(self.unblanked(latents[name], rng), latents, rng)
+
+    def unblanked(self, latent: np.ndarray, rng: np.random.Generator) -> pd.Series:
         if self.kind == "categorical":
-            observed = pd.Categorical.from_codes(self.codes(latent), list(self.categories))
-        else:
-            observed = self.shaped(latent[:, 0], rng)
-        series = pd.Series(observed)
+            return pd.Series(pd.Categorical.from_codes(self.codes(latent), list(self.categories)))
+        return pd.Series(self.shaped(latent[:, 0], rng))
+
+    def blanked(
+        self, series: pd.Series, latents: Mapping[str, np.ndarray], rng: np.random.Generator
+    ) -> pd.Series:
+        """The values with the column's blanks, which never change the values left."""
         if isinstance(self.missing, str):
             return series.mask(latents[self.missing][:, 1] == 1.0)
         if self.missing_by is not None:

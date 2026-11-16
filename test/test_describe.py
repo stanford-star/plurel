@@ -131,12 +131,12 @@ def test_any_schema_describes_and_explains():
     assert "time_column when" in shop.explain() and "<- 1 * when" in shop.explain()
 
 
-def test_levels_of_any_type_and_ranged_keys_survive_json():
+def test_ordered_levels_and_ranged_keys_survive_json():
     table = Table(
         {
-            "g": Categorical((1, 2, 3), ordered=True),
+            "g": Categorical(("1", "2", "3"), ordered=True),
             "x": Numeric(),
-            "y": Numeric(causes={("g", "x"): {1: 0.5, 2: 1.0}, "g": {3: 2.0}}),
+            "y": Numeric(causes={("g", "x"): {"1": 0.5, "2": 1.0}, "g": {"3": 2.0}}),
         }
     )
     description = table.describe()

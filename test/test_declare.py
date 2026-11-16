@@ -3,7 +3,9 @@ import pandas as pd
 import pytest
 
 from plurel import (
+    ByLevel,
     Categorical,
+    Counts,
     Derived,
     ForeignKey,
     Hidden,
@@ -12,6 +14,7 @@ from plurel import (
     Numeric,
     Poisson,
     PrimaryKey,
+    Range,
     Real,
     Schema,
     Summary,
@@ -448,3 +451,62 @@ def test_derived_columns_bind_parameters_to_any_column_name():
                 "b": Derived(lambda y: y, columns={"y": "a"}),
             }
         )
+
+
+def test_blanks_leave_the_values_of_a_column_placed_by_level_unchanged():
+    def pay(missing: float) -> pd.Series:
+        table = Table(
+            {
+                "seg": Categorical(("a", "b")),
+                "pay": Numeric(ByLevel("seg", {"a": (10, 20), "b": (100, 200)}), missing=missing),
+            }
+        )
+        return table.realize(0).sample(2000, seed=0)["pay"]
+
+    full, blanked = pay(0.0), pay(0.3)
+    kept = blanked.notna()
+    assert 0.2 < 1 - kept.mean() < 0.4 and full[kept].equals(blanked[kept])
+
+
+def test_ranged_causes_draw_the_same_in_any_order():
+    def weights(order: tuple[str, str]) -> dict[str, float]:
+        causes = {name: Range(0.1, 3.0) for name in order}
+        table = Table({"a": Numeric(), "b": Numeric(), "y": Numeric(causes=causes)}).realize(0)
+        return {c["reads"]: c["weight"] for c in table.describe()["columns"]["y"]["causes"]}
+
+    assert weights(("a", "b")) == weights(("b", "a"))
+
+
+def test_a_derived_column_gives_one_value_per_row():
+    table = Table({"x": Numeric(), "y": Derived(lambda x: 1.0)})
+    with pytest.raises(ValueError, match="one value per row"):
+        table.sample(10, seed=0)
+
+
+def test_levels_are_strings():
+    with pytest.raises(ValueError, match="levels are strings"):
+        Categorical((1, 2, 3))
+    with pytest.raises(ValueError, match="levels are strings"):
+        Categorical({True: 0.5, False: 0.5})
+
+
+def test_a_key_with_given_positions_into_a_counted_table_realizes():
+    schema = Schema(
+        {
+            "g": Table({"id": PrimaryKey(), "c": Categorical(("x", "y"))}),
+            "p": Table({"id": PrimaryKey(), "g_id": ForeignKey("g", counts=Counts(3.0, least=1))}),
+            "r": Table({"id": PrimaryKey(), "p_id": ForeignKey("p", values=[0, 1, 0])}),
+        }
+    )
+    frames = schema.realize(0).sample({"g": 5}, seed=0)
+    assert frames["r"]["p_id"].tolist() == [0, 1, 0]
+
+
+def test_blanks_may_follow_a_hidden_cause():
+    frame = Table(
+        {"h": Hidden(), "x": Numeric(missing=0.2, missing_by=("h", "high"))}
+    ).sample_with_latents(4000, seed=0)
+    blank = frame[0]["x"].isna().to_numpy()
+    assert 0.17 < blank.mean() < 0.23 and frame[1]["h"][blank, 0].mean() > 0
+    with pytest.raises(ValueError, match="no numeric column or hidden node"):
+        Table({"c": Categorical(("a", "b")), "x": Numeric(missing=0.2, missing_by=("c", "high"))})

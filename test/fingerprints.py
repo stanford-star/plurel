@@ -124,7 +124,7 @@ def teams() -> Schema:
             "team_id": ForeignKey("teams"),
             "boss_id": ForeignKey("staff", TreeLink(roots=0.05), fill=0.0),
             "reports": Hidden(causes={Summary("staff", "boss_id"): 1.0}),
-            "grade": Categorical((1, 2, 3), causes={"reports": 1.0}, ordered=True),
+            "grade": Categorical(("1", "2", "3"), causes={"reports": 1.0}, ordered=True),
             "pay": Numeric(LogNormal(11, 0.3), causes={"grade": 1.0, ("grade", "reports"): 0.5}),
         }
     )

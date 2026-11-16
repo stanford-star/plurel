@@ -221,8 +221,13 @@ class Table:
         """The columns a table's records read by name."""
         for name, column in self.columns.items():
             by = getattr(column, "missing_by", None)
-            if by is not None and kinds.get(by[0]) != "numeric":
-                raise ValueError(f"{name!r} is blank by {by[0]!r}, which is no numeric column")
+            if by is None or kinds.get(by[0]) == "numeric":
+                continue
+            node = self.nodes.get(by[0])
+            if by[0] not in self.hidden or node.onehot or node.dim != 1:
+                raise ValueError(
+                    f"{name!r} is blank by {by[0]!r}, which is no numeric column or hidden node"
+                )
         for name, derived in self.derived.items():
             readable = {*self.derived, *(c for c, kind in kinds.items() if kind == "numeric")}
             if unknown := [(arg, c) for arg, c in derived.bindings if c not in readable]:
@@ -345,8 +350,9 @@ class Table:
         n: int,
     ) -> pd.Series:
         """What a column records, a drawn time in epoch seconds: a derived column computes it from
-        the records it reads, any other observes its latent, then takes its range by level. A
-        marginal over causes is taken in the order of a draw's rows, and one row has none."""
+        the records it reads, any other observes its latent, taking its range by level before its
+        blanks. A marginal over causes is taken in the order of a draw's rows, and one row has
+        none."""
         if name in self.derived:
             return pd.Series(self.derived[name].compute(records))
         column = self.columns[name]
@@ -354,6 +360,12 @@ class Table:
             return column.observe(name, latents, rng, n)
         if n == 1 and column.marginal is not None and (column.node.parents or column.node.across):
             raise ValueError("a marginal follows its causes in a draw's order: draw at least two")
+        if column.by_level is not None and column.values is None:
+            parent = column.by_level[0]
+            codes, levels = latents[parent + CODE][:, 0], self.columns[parent].categories
+            values = column.unblanked(latents[name], rng).to_numpy(dtype=float)
+            placed = pd.Series(column.placed_by_level(values, codes, levels))
+            return column.blanked(placed, latents, rng)
         recorded = column.record(name, latents, rng, n)
         if column.kind == "timestamp" and column.values is None:
             seconds = recorded.to_numpy(dtype=float)
@@ -362,11 +374,7 @@ class Table:
                     f"{name!r} records times outside {pd.Timestamp.min} to {pd.Timestamp.max}:"
                     " lower the weights or noise on the times it reads"
                 )
-        if column.by_level is None:
-            return recorded
-        parent = column.by_level[0]
-        codes, levels = latents[parent + CODE][:, 0], self.columns[parent].categories
-        return pd.Series(column.placed_by_level(recorded.to_numpy(dtype=float), codes, levels))
+        return recorded
 
     def describe(self) -> dict[str, object]:
         """This table as resolved, as plain data: see `plurel.describe`."""
@@ -478,8 +486,13 @@ class Schema:
                 raise ValueError("a tree link needs a self-referential foreign key")
         self.keys = keys
         self.eventful = {t for t, scm in self.tables.items() if scm.time_column is not None}
-        for _ in self.tables:
-            self.eventful |= {t for (t, _c), fk in keys.items() if fk.parent in self.eventful}
+        for (table, column), fk in keys.items():
+            if fk.parent in self.eventful and table not in self.eventful:
+                raise ValueError(
+                    f"{table!r} has no time column, so its key {column!r} would keep rows pointing"
+                    f" at events of {fk.parent!r} that a time cut drops: give {table!r} a"
+                    " time_column"
+                )
         self.crossings = {
             (table, name): tuple(self.bound(table, edge) for edge in node.across)
             for table, scm in self.tables.items()

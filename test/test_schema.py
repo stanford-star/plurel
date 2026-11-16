@@ -135,6 +135,19 @@ def test_a_summary_never_reads_a_table_with_a_time_column():
         Schema({"p": parent, "c": child})
 
 
+def test_a_static_table_never_points_at_events():
+    timed = Table(
+        {"id": PrimaryKey(), "t": Column(Node(noise=DEFAULT_CALENDAR), "timestamp")},
+        time_column="t",
+    )
+    static = Table({"e": ForeignKey("timed"), "x": Node()})
+    with pytest.raises(ValueError, match="no time column"):
+        Schema({"timed": timed, "static": static})
+    stamp = Column(Node(noise=DEFAULT_CALENDAR), "timestamp")
+    events = Table({"e": ForeignKey("timed"), "t": stamp, "x": Node()}, time_column="t")
+    Schema({"timed": timed, "events": events})
+
+
 def test_a_summary_never_reads_through_a_key_to_a_timed_table():
     timed = Table(
         {"id": PrimaryKey(), "t": Column(Node(noise=DEFAULT_CALENDAR), "timestamp")},
@@ -148,7 +161,7 @@ def test_a_summary_never_reads_through_a_key_to_a_timed_table():
         }
     )
     child = Table({"k": ForeignKey("p"), "m": ForeignKey("middle"), "x": Node()})
-    with pytest.raises(ValueError, match="later events"):
+    with pytest.raises(ValueError, match="no time column"):
         Schema({"p": parent, "c": child, "middle": middle, "timed": timed})
 
 

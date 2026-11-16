@@ -199,7 +199,7 @@ class TablePrior:
         tree_count: Oblivious trees in a tree edge.
         tree_depth: Depth of each oblivious tree.
         fourier_frequency_count: Random Fourier features in a Fourier edge.
-        column_count: Observed columns besides the key.
+        column_count: Observed columns besides the key, at most one per slot the nodes offer.
         column_marginals: Marginal a numeric column is rank-mapped onto; None keeps the latent,
             a mixture with a point mass gives a zero-inflated column, one with a wide component
             gives outliers.
@@ -207,8 +207,8 @@ class TablePrior:
         column_bin_count: Categories of a binned column.
         column_missing_rate: Missing rate of a column that has missingness.
         column_missing_share: Share of the columns that have missingness.
-        column_missing_structured_share: Share of those columns that are missing where an
-            indicator node says so, a two-class node reading a drawn node, instead of at random.
+        column_missing_structured_share: Share of those columns that are missing more often where
+            an indicator node, reading a drawn node, is high, instead of at random.
         time_calendars: Calendar the time column is drawn from: business hours over flat
             weekdays, a work week, evenings and weekends, or always on.
     """
@@ -301,8 +301,12 @@ class TablePrior:
     time_calendars: Choices = Choices(CALENDARS)
 
     def __post_init__(self) -> None:
-        if set(self.edge_families.values) <= set(FITS):
-            raise ValueError("edge_families needs a family that fits any widths")
+        weights = self.edge_families.weights or (1.0,) * len(self.edge_families.values)
+        weighted = {family for family, w in zip(self.edge_families.values, weights) if w > 0}
+        if weighted <= set(FITS):
+            raise ValueError(
+                "edge_families needs a family that fits any widths, with a positive weight"
+            )
 
     def warp(self, rng: np.random.Generator) -> "TablePrior":
         return _warped(self, rng)
@@ -339,15 +343,15 @@ class TablePrior:
         observed = rng.integers(1, n + 1)
         slots = self.slots(order[:observed], dims, categorical, rng)
         slots += self.slots(order[observed:], dims, categorical, rng)
-        for c in range(self.column_count.draw(rng)):
-            i, slot = slots[c % len(slots)]
-            missing: float | str = 0.0
+        for c in range(min(self.column_count.draw(rng), len(slots))):
+            i, slot = slots[c]
+            missing, by = 0.0, None
             if rng.random() < self.column_missing_share.draw(rng):
                 missing = self.column_missing_rate.draw(rng)
                 if rng.random() < self.column_missing_structured_share.draw(rng):
-                    nodes[f"m{c}"] = self.indicator(missing, dims, rng)
-                    missing = f"m{c}"
-            columns[f"col{c}"] = self.column(i, slot, dims[i], categorical[i], missing, rng)
+                    nodes[f"m{c}"] = self.indicator(dims, rng)
+                    by = f"m{c}"
+            columns[f"col{c}"] = self.column(i, slot, dims[i], categorical[i], missing, by, rng)
         if time:
             columns["time"] = Column(Node(noise=self.time_calendars.draw(rng)), "timestamp")
         return Table({**nodes, **columns}, time_column="time" if time else None)
@@ -382,12 +386,13 @@ class TablePrior:
         family = self.edge_families.without(unfit).draw(rng)
         return BUILDERS[family](self, parent, d_in, d_out, rng)
 
-    def indicator(self, rate: float, dims: list[int], rng: np.random.Generator) -> Node:
-        """A two-class node reading one drawn node, in its second class at about `rate`."""
+    def indicator(self, dims: list[int], rng: np.random.Generator) -> Node:
+        """A numeric node reading one drawn node; a column missing by it is blank more often where
+        it is high, at its missing rate overall."""
         p = int(rng.integers(len(dims)))
-        edge = self.edge(f"n{p}", dims[p], 2, True, rng)
-        bias = (0.0, float(np.log(rate / (1.0 - rate))))
-        return Node(edge, bias=bias, onehot=True, noise=Gumbel(), standardize=True)
+        edge = self.edge(f"n{p}", dims[p], 1, False, rng)
+        noise = Affine(self.node_noise_shapes.draw(rng), scale=self.node_noise_std.draw(rng))
+        return Node(edge, noise=noise, standardize=True)
 
     def series(self, rng: np.random.Generator) -> TimeSeries:
         trend = Trend(self.series_trend_alpha.draw(rng), self.series_trend_scale.draw(rng))
@@ -407,7 +412,7 @@ class TablePrior:
         rng: np.random.Generator,
     ) -> list[tuple[int, int]]:
         """What `nodes` offer to observe, shuffled: a categorical node whole, a numeric node by
-        slot. Columns take these in turn, so they repeat one only once all are taken."""
+        slot. Columns take these in turn, each its own."""
         slots = [(int(i), s) for i in nodes for s in range(1 if categorical[i] else dims[i])]
         return [slots[k] for k in rng.permutation(len(slots))]
 
@@ -417,13 +422,15 @@ class TablePrior:
         slot: int,
         dim: int,
         categorical: bool,
-        missing: float | str,
+        missing: float,
+        by: str | None,
         rng: np.random.Generator,
     ) -> Column:
+        blanks = {"missing": missing, "missing_by": None if by is None else (by, "high")}
         if categorical:
             categories = tuple(f"c{k}" for k in range(dim))
             whole = Node(ReadEdge(f"n{i}", dim=dim), noise=None)
-            return Column(whole, "categorical", categories=categories, missing=missing)
+            return Column(whole, "categorical", categories=categories, **blanks)
         node = Node(ReadEdge(f"n{i}", slot=slot), noise=None)
         if rng.random() < self.column_binned_share.draw(rng):
             k = self.column_bin_count.draw(rng)
@@ -434,9 +441,9 @@ class TablePrior:
                 "categorical",
                 categories=categories,
                 probabilities=probabilities,
-                missing=missing,
+                **blanks,
             )
-        return Column(node, marginal=self.column_marginals.draw(rng), missing=missing)
+        return Column(node, marginal=self.column_marginals.draw(rng), **blanks)
 
 
 def _wire(

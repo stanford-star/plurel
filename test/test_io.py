@@ -67,7 +67,14 @@ def test_a_key_may_be_named_self_over_a_temporal_parent():
         {"id": PrimaryKey(), "t": Column(Node(), "timestamp", marginal=DEFAULT_CALENDAR)},
         time_column="t",
     )
-    child = Table({"self": ForeignKey("parent"), "x": Column(Node())})
+    child = Table(
+        {
+            "self": ForeignKey("parent"),
+            "t": Column(Node(), "timestamp", marginal=DEFAULT_CALENDAR),
+            "x": Column(Node()),
+        },
+        time_column="t",
+    )
     schema = Schema({"parent": parent, "child": child})
     frames = schema.sample({"parent": 10, "child": 40}, seed=0)
     db = create_database(schema, frames)
