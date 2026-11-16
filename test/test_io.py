@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 from relbench.base import Database
 from relbench.base import Table as RelbenchTable
 from relbench.base.table import is_time_sorted
@@ -363,7 +364,8 @@ def test_split_timestamps_follow_the_pooled_time_columns(schema):
     db = create_database(schema, schema.sample(ROWS, seed=0))
     val, test = split_timestamps(db, 0.2, 0.1)
     when = db.table_dict["orders"].df["when"]
-    assert val < test and abs((when < val).mean() - 0.7) < 0.02
+    assert val < test and val == val.normalize() and test == test.normalize()
+    assert abs((when < val).mean() - 0.7) < 0.02
     assert abs((when < test).mean() - 0.9) < 0.02
     with pytest.raises(ValueError, match="timestamped"):
         split_timestamps(Database({"customers": db.table_dict["customers"]}))
@@ -430,3 +432,16 @@ def schema_with_events():
             ),
         }
     )
+
+
+def test_the_manifest_records_split_days_as_dates_and_other_times_in_full(schema, tmp_path):
+    db = create_database(schema, schema.sample(ROWS, seed=0))
+    val, test = split_timestamps(db)
+    path = write_database(db, tmp_path / "days", name="x", val_timestamp=val, test_timestamp=test)
+    manifest = yaml.safe_load((path / "manifest.yaml").read_text())
+    assert manifest["val_timestamp"] == val.date().isoformat()
+    assert manifest["test_timestamp"] == test.date().isoformat()
+    later = test + pd.Timedelta(hours=9, minutes=30)
+    path = write_database(db, tmp_path / "times", name="x", val_timestamp=val, test_timestamp=later)
+    manifest = yaml.safe_load((path / "manifest.yaml").read_text())
+    assert pd.Timestamp(manifest["test_timestamp"]) == later

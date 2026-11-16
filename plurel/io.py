@@ -148,6 +148,15 @@ def holds_dataset(path: Path) -> bool:
     return (path / "manifest.yaml").is_file()
 
 
+def manifest_time(timestamp: pd.Timestamp | None) -> str:
+    """A split time as the manifest records it: a date at midnight, as relbench's datasets and
+    Relational Transformer read it, else the full time."""
+    timestamp = pd.Timestamp(timestamp)
+    if timestamp is not pd.NaT and timestamp == timestamp.normalize():
+        return timestamp.date().isoformat()
+    return str(timestamp)
+
+
 def stage(
     db: Database,
     staging: Path,
@@ -161,8 +170,8 @@ def stage(
         table.df.to_parquet(staging / "db" / f"{table_name}.parquet", index=False)
     manifest = DatasetManifest(
         name=name,
-        val_timestamp=str(pd.Timestamp(val_timestamp)),
-        test_timestamp=str(pd.Timestamp(test_timestamp)),
+        val_timestamp=manifest_time(val_timestamp),
+        test_timestamp=manifest_time(test_timestamp),
         description=description,
         tables={
             table_name: TableSpec(
@@ -215,7 +224,8 @@ def read_database(path: str | Path) -> Database:
 def split_timestamps(
     db: Database, val_share: float = 0.1, test_share: float = 0.1
 ) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """Timestamps leaving `val_share` then `test_share` of the timestamped rows after them."""
+    """The days from which `val_share` then `test_share` of the timestamped rows are left, each the
+    midnight before its quantile, so the manifest records them as dates."""
     if min(val_share, test_share) <= 0.0 or val_share + test_share >= 1.0:
         raise ValueError("val_share and test_share must be positive and sum to less than one")
     times = [
@@ -224,4 +234,5 @@ def split_timestamps(
     pooled = pd.concat(times, ignore_index=True) if times else pd.Series(dtype="datetime64[ns]")
     if pooled.empty:
         raise ValueError("a time split needs timestamped rows")
-    return pooled.quantile(1.0 - val_share - test_share), pooled.quantile(1.0 - test_share)
+    val, test = pooled.quantile([1.0 - val_share - test_share, 1.0 - test_share])
+    return val.floor("D"), test.floor("D")
