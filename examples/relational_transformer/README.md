@@ -10,15 +10,25 @@ repo. This page shows how PluRel's output plugs into it.
 ## Preprocessing a generated database
 
 PluRel writes each database in the `relbench` format (`manifest.yaml` + `db/*.parquet`), which the
-relational-transformer preprocessor consumes as-is:
+relational-transformer preprocessor consumes as-is. Generate databases with PluRel:
 
 ```bash
-# generate databases with plurel
-$ pixi run python scripts/synthetic_gen.py --seed_offset 0 --num_dbs 1000 --num_proc 16
-
-# in the relational-transformer repo: preprocess one generated database
-$ pixi run preprocess --dataset ~/.cache/relbench/plurel-0 --out-dir ~/scratch/pre
+pixi run python scripts/synthetic_gen.py --seed_offset 0 --num_dbs 1000 --num_proc 16
 ```
+
+Then, in the relational-transformer repo, preprocess one of them with `pixi run python`:
+
+```python
+from rt.preprocess import one
+
+one(dataset="~/.cache/relbench/plurel-0", out_dir="~/scratch/pre",
+    embedder="all-MiniLM-L12-v2", batch_size=1024, skip_tasks=False, embed=True,
+    upload_repo=None, public=False, revision=None)
+```
+
+`embed=False` stops after the CPU stage and skips the GPU text embedding. For a whole corpus, see
+[`examples/preprocess`](https://github.com/stanford-star/relational-transformer/tree/main/examples/preprocess#run-it-on-your-own-data)
+in relational-transformer.
 
 ## Preprocessed data on the Hugging Face Hub
 
