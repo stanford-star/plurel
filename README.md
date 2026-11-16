@@ -28,12 +28,13 @@ Models pretrained on PluRel data lead public relational benchmarks (at the time 
 
 ## Overview
 
-PluRel generates synthetic relational databases from structural causal models. Every table is a
-small causal graph, foreign keys carry causal influence between tables, and a random prior draws
-thousands of different databases in the [relbench](https://github.com/stanford-star/relbench)
-format, which is what the [PluRel paper](https://arxiv.org/abs/2602.04029) pretrains on. You can
-also write your own tables and databases, partly from real rows, and draw as many datasets of them
-as you need.
+PluRel generates synthetic relational databases from structural causal models. Each table is a
+small causal graph, and foreign keys pass causal effects from one table to another. A random prior
+can draw thousands of different databases in the [relbench](https://github.com/stanford-star/relbench)
+format. The [PluRel paper](https://arxiv.org/abs/2602.04029) pretrains models on these databases.
+
+You can also write your own tables and databases, start from real rows, and draw as many datasets
+from them as you need.
 
 <img src="docs/static/images/plurel_animated.gif" alt="PluRel"/>
 
@@ -47,9 +48,10 @@ as you need.
 PluRel needs Python 3.12 or newer.
 
 > [!IMPORTANT]
-> PluRel v2 is under active development toward a **v2-alpha** release. It is not on PyPI yet and its
-> API may still change; install it from `main`, or pin a commit to reproduce a run
-> (`pip install plurel` gives 1.1.0, the [earlier API](https://github.com/stanford-star/plurel/tree/v1.1.0)):
+> PluRel v2 is under active development toward a **v2-alpha** release. It is not on PyPI yet, and
+> its API may still change. Install it from `main`, or pin a commit to reproduce a run.
+> `pip install plurel` gives version 1.1.0, which has the
+> [earlier API](https://github.com/stanford-star/plurel/tree/v1.1.0).
 
 ```bash
 pip install "git+https://github.com/stanford-star/plurel.git"
@@ -57,8 +59,8 @@ pip install "git+https://github.com/stanford-star/plurel.git"
 
 ## Quickstart
 
-Random databases, as the paper generates them. A seed draws a database's structure and
-mechanisms, and `rows` draws its table sizes:
+Generate a random database, as the paper does. The seed picks the database's tables, keys and
+causal mechanisms. `prior.rows` picks how many rows each table gets:
 
 <!-- standalone -->
 ```python
@@ -72,13 +74,14 @@ write_database(db, "~/.cache/relbench/quickstart", name="quickstart", overwrite=
                **dict(zip(("val_timestamp", "test_timestamp"), split_timestamps(db))))
 ```
 
-A corpus, one process per database, lands in `~/.cache/relbench/plurel-<seed>`:
+To generate many databases in parallel, run the script below. Each database is saved to
+`~/.cache/relbench/plurel-<seed>`:
 
 ```bash
 python scripts/synthetic_gen.py --seed_offset 0 --num_dbs 1000 --num_proc 16
 ```
 
-A table you write yourself: each column says what it holds and what causes it.
+You can also write a table yourself. Each column says what it holds and what causes it:
 
 <!-- standalone -->
 ```python
@@ -94,7 +97,7 @@ print(customers.explain())
 frame = customers.sample(500, seed=0)
 ```
 
-A database of your own, saved for relbench:
+And you can write a whole database and save it for relbench:
 
 <!-- standalone -->
 ```python
@@ -108,9 +111,9 @@ frames = schema.sample({"teams": 5, "staff": 60}, seed=0)
 write_database(create_database(schema, frames), "~/.cache/relbench/teams", name="teams", overwrite=True)
 ```
 
-[`examples/`](examples/) has more: short [concept scripts](examples/concepts/) that each explain one
-behaviour, and [domain recipes](examples/generation/) for retail orders, clinic visits and student
-enrollments.
+See [`examples/`](examples/) for more. It has short [concept scripts](examples/concepts/) that each
+explain one idea, and [domain recipes](examples/generation/) for retail orders, clinic visits and
+student enrollments.
 
 ## Build a table
 
@@ -121,41 +124,52 @@ A `Table` is a dict of columns:
 | `PrimaryKey()` | Row positions, or the given `values` |
 | `Numeric(marginal, causes, noise, missing, clip, round, zeros)` | Numbers following `marginal`, any distribution such as `Normal(50, 10)`, `Uniform(18, 80)`, `LogNormal(3, 0.5)` or `Poisson(4)` |
 | `Categorical(levels, causes, noise, missing, ordered, scores)` | String levels, as a sequence of equally common levels or a dict of level to share |
-| `Timestamp(start, end, causes, noise, missing)` | Times in the span; without one, the causes' sum in epoch seconds |
+| `Timestamp(start, end, causes, noise, missing)` | Times between `start` and `end`. Without them, the sum of the causes, in epoch seconds |
 | `Hidden(causes, noise)` | A cause that other columns read but no column records |
-| `Derived(function)` | A number computed from recorded numbers, named by the function's parameters |
+| `Derived(function)` | A number computed from other columns, which the function's parameters name |
 
-`causes` maps a column to its effect:
+`causes` maps each cause to its effect on the column:
 
 | Cause and effect | Means |
 |---|---|
-| `"age": 0.8` | A weight: higher age means higher here; a negative weight means lower |
+| `"age": 0.8` | A weight. Higher age means a higher value here, and a negative weight means a lower one |
 | `"age": (0.8, "tanh")` | A weight and a transform: `tanh`, `square`, `step`, `relu`, `abs`, `sin`, `exp`, `log` or any function |
 | `"segment": {"gold": 1.5}` | An effect per level of a categorical cause |
 | `("age", "tenure"): 0.8` | A weight on the product of two causes |
 | `Recorded("price"): 2.0` | A weight on what `price` records, in its units |
 
-A column is its causes' effects added up plus `noise` (0.5 by default). With a marginal, its rows
-then take the marginal's values in that order, so the column holds its marginal exactly; a
-`Numeric` without one records the sum itself. Either way a weight says how closely a column
-follows its causes, not how many units it moves per unit. With one cause and the default noise,
-weights of 0.25, 0.5, 1 and 2 give rank correlations of about 0.4, 0.7, 0.9 and 0.97. To compute in
-units, read a cause `Recorded`, or use `Derived`;
-[`02_latent_and_recorded.py`](examples/concepts/02_latent_and_recorded.py) shows both.
-`sample_with_latents(rows, seed=..., held={"x": values})` also returns every node's latent values,
-and with `held` sets a node's latents to the given ones: an intervention, seen in the columns that
-read it.
+Each column adds up the effects of its causes, plus some `noise` (0.5 by default).
 
-`round=1` gives whole numbers and `round=0.01` cents, `clip=(lo, hi)` caps values, `zeros=0.2`
-records a share of rows at 0, and `missing=0.1` blanks a share; columns reading a blanked column
-still see its value. [`11_missing_and_unmatched.py`](examples/concepts/11_missing_and_unmatched.py)
-covers blanks and fills.
+- With a marginal, the rows are then sorted by that sum and given the marginal's values in that
+  order. So the column follows its marginal exactly.
+- A `Numeric` without a marginal records the sum itself.
+
+Either way, a weight says how closely a column follows its causes. It does not say how many units
+the column moves. With one cause and the default noise, weights of 0.25, 0.5, 1 and 2 give rank
+correlations of about 0.4, 0.7, 0.9 and 0.97. To work in real units, read a cause with `Recorded`,
+or use `Derived`. [`02_latent_and_recorded.py`](examples/concepts/02_latent_and_recorded.py) shows
+both.
+
+`sample_with_latents(rows, seed=...)` also returns the hidden values behind every column. With
+`held={"x": values}` it fixes the hidden values of `x`. This is an intervention, and the columns
+that read `x` change to match.
+
+More options for a column:
+
+- `round=1` gives whole numbers, and `round=0.01` gives cents.
+- `clip=(lo, hi)` keeps values between `lo` and `hi`.
+- `zeros=0.2` sets 20% of rows to 0.
+- `missing=0.1` blanks 10% of rows. Columns that read a blanked column still see its value.
+
+[`11_missing_and_unmatched.py`](examples/concepts/11_missing_and_unmatched.py) covers blanks and
+fills.
 
 ## Link tables into a database
 
-A `ForeignKey` points at another table, `"key.column"` reads a column of the row it points at, and
-`time_column` names the column that orders a table's events. A table holding a key into a table
-with events has events of its own, so no key points at a row a time cut drops:
+A `ForeignKey` points at a row of another table. A cause written as `"key.column"` reads a column
+of that row. `time_column` names the column that orders a table's events. A table with a key into
+a table of events must have its own `time_column`. That way, no key points at a row that a cut in
+time removes:
 
 ```python
 from plurel import Categorical, ForeignKey, LogNormal, Numeric, PrimaryKey, Schema, Table, Timestamp, Uniform
@@ -178,22 +192,23 @@ schema = Schema({"customers": customers, "orders": orders})
 frames = schema.sample({"customers": 500, "orders": 5000}, seed=0)
 ```
 
-A key chooses its parent at random by default. Its options:
+By default, each row picks its parent at random. A key's options change that:
 
 | Option | Says |
 |---|---|
-| `link` | How rows pick parents by structure: `RandomLink()`, `HSBMLink(popularity=Pareto(2.5))` for a few popular parents, `TreeLink(roots=0.05)` for a hierarchy within one table |
+| `link` | How rows pick parents: `RandomLink()`, `HSBMLink(popularity=Pareto(2.5))` for a few popular parents, or `TreeLink(roots=0.05)` for a hierarchy within one table |
 | `match={"region": "region"}` | Child and parent columns that must agree |
-| `prefer={Recorded("beds"): 0.05}` | Weights on parents by their columns |
+| `prefer={Recorded("beds"): 0.05}` | Parents with more beds are picked more often |
 | `counts=Counts(4.0, causes=..., least=1, most=8)` | How many rows point at each parent, which sets the child table's size |
 | `unique=True` or `unique="student_id"` | No parent repeated, across the table or per group |
-| `unmatched="null"` | Rows no parent is left for point at nothing instead of raising |
-| `nullable=0.02, fill=0.0` | A random share of rows point at nothing; `fill` is what reads across them see |
+| `unmatched="null"` | A row with no parent left gets an empty key, instead of an error |
+| `nullable=0.02, fill=0.0` | 2% of rows get an empty key at random. Columns reading through an empty key see `fill` |
 
-`Summary("staff", "team_id")` reads the rows pointing back: their count, or with a column and `sum`,
-`mean`, `max` or `min` their aggregate; all but a count and a sum need a `fill` for rows nothing
-points at, and a summary of a `Recorded` column skips blanks. A table counted by a key needs no row
-count of its own:
+`Summary("staff", "team_id")` reads the rows that point back at a row. It gives their count, or,
+with a column, their `sum`, `mean`, `max` or `min`. Every summary except a count or a sum needs a
+`fill` for rows that nothing points at. A summary of a `Recorded` column skips blanks.
+
+When a key has `counts`, its table needs no row count of its own:
 
 ```python
 from plurel import Counts
@@ -210,15 +225,15 @@ school = Schema({
 frames = school.sample({"students": 200, "courses": 30}, seed=0)
 ```
 
-Which options combine, and how counts and summaries behave at the edges, is in
 [`10_relational_schema.py`](examples/concepts/10_relational_schema.py) and
-[`15_edge_cases.py`](examples/concepts/15_edge_cases.py); event order is in
-[`12_temporal_data.py`](examples/concepts/12_temporal_data.py).
+[`15_edge_cases.py`](examples/concepts/15_edge_cases.py) show which options work together, and how
+counts and summaries behave at the edges.
+[`12_temporal_data.py`](examples/concepts/12_temporal_data.py) covers the order of events.
 
 ## Start from real rows
 
-`Table.from_frame` keeps a real table's rows exactly; `extra` adds generated columns to them, and
-generated tables point at its real keys and read its columns:
+`Table.from_frame` keeps the rows of a real table exactly. `extra` adds generated columns to it.
+Generated tables can point at its real keys and read its columns:
 
 ```python
 import pandas as pd
@@ -235,19 +250,19 @@ frames = Schema({"people": people, "purchases": purchases}).sample({"purchases":
 assert frames["people"][["customer_id", "age"]].equals(real)
 ```
 
-This augments the real rows; it does not learn to draw more rows like them. See
+This adds to the real rows. It does not learn to draw new rows like them. See
 [`08_semi_synthetic_table.py`](examples/concepts/08_semi_synthetic_table.py) and
 [`09_semi_synthetic_relations.py`](examples/concepts/09_semi_synthetic_relations.py).
 
 ## Author many tables from one description
 
-Any weight, effect, noise or marginal may be a range. The table is then a family, and generating
-takes two steps, each with its own seed:
+Any weight, effect, noise or marginal can be a range. The table then describes a family of
+tables, and generating data takes two steps, each with its own seed:
 
-- `realize(seed)`, the mechanism seed, draws one generator of the family: every range drawn, and
-  categorical cuts and scores fit to a calibration draw.
-- `sample(rows, seed=...)`, the data seed, draws a dataset of that generator; sampling never changes
-  it.
+1. `realize(seed)` picks one table from the family. It draws a value for every range, then fits
+   the categorical columns to a trial draw. This seed is the mechanism seed.
+2. `sample(rows, seed=...)` draws a dataset from that table. This seed is the data seed. Sampling
+   never changes the table.
 
 ```python
 from plurel import MEDIUM, STRONG, Range, Scaled
@@ -264,23 +279,24 @@ others = [family.realize(seed).sample(1000, seed=10) for seed in range(3)]  # th
 
 | Drawable | Draws |
 |---|---|
-| `Range(low, high)`; `WEAK`, `STRONG`; `LOW`, `MEDIUM`, `HIGH` | A number wherever a weight or noise goes; the named ones are strengths and noise levels |
+| `Range(low, high)`, `WEAK`, `STRONG`, `LOW`, `MEDIUM`, `HIGH` | A number for a weight or a noise level. `WEAK` and `STRONG` are weights, and `LOW`, `MEDIUM` and `HIGH` are noise levels |
 | `Scaled(units, low, high, shape=None)` | A marginal on the range, shaped for `count`, `amount`, `duration`, `ratio`, `score`, `percent` or `signed` values |
 | `Shares(levels)` | A categorical column's shares |
 | `Noise(kind, std)` | Noise: `gaussian`, `laplace`, `student_t`, `skewed` or `gumbel` |
 | `ByLevel(column, {level: (low, high)})` | A marginal with its own range per level of a categorical column |
 
-`Schema.realize` does the same for a database. A table with neither ranges nor categorical
-`scores` samples directly; one with `scores` is realized first, to fit them.
+`Schema.realize` does the same for a database. A table with no ranges and no categorical `scores`
+can be sampled directly. A table with `scores` must be realized first, to fit them.
 [`03_realization.py`](examples/concepts/03_realization.py) through
-[`07_calibration_sizes.py`](examples/concepts/07_calibration_sizes.py) explain what realizing fits
+[`07_calibration_sizes.py`](examples/concepts/07_calibration_sizes.py) explain what realizing does
 and when it matters.
 
 ## Random tables and databases
 
-`TablePrior` and `SchemaPrior` draw whole tables and databases. Every knob is a `Range` or a
-`Choices`, listed in their docstrings. By default a database has 2 to 20 tables, 500 to 1,000 rows
-per referenced table and 10,000 to 30,000 per event table:
+`TablePrior` and `SchemaPrior` draw whole tables and databases at random. Every setting is a
+`Range` or a `Choices`, and their docstrings list them all. By default, a database has 2 to 20
+tables. Tables that others point at have 500 to 1,000 rows, and event tables have 10,000 to
+30,000:
 
 ```python
 from plurel import IntegersRange, LogIntegersRange, SchemaPrior, TablePrior
@@ -293,24 +309,27 @@ database = prior.realize(seed=0)
 frames = database.sample(prior.rows(database, seed=0), seed=0)
 ```
 
-Each drawn table is its own causal mechanism. Holding two numeric nodes upstream of a categorical
-column on a grid, with the table's other sources at typical values, shows the class each cell gets
-most often; eight tables from `TablePrior`, drawn by
-[`decision_boundaries.py`](examples/figures/decision_boundaries.py):
+Each drawn table has its own causal mechanism. The figure shows eight tables from `TablePrior`.
+For each one, two numeric values that feed into a categorical column vary over a grid, and the
+table's other inputs stay at typical values. Each cell shows the class the column takes most often there. The figure
+comes from [`decision_boundaries.py`](examples/figures/decision_boundaries.py):
 
 <img src="docs/static/images/decision_boundaries.png" alt="Decision boundaries of eight tables drawn by TablePrior"/>
 
-Every generated database keeps its keys valid under any time cut. How diverse the prior's databases
-are, how hard their columns are to predict and how one compares with a real database are measured
-in [`examples/analysis/`](examples/analysis/) and [`examples/reference/`](examples/reference/).
+Every generated database keeps its keys valid when cut at any point in time.
+[`examples/analysis/`](examples/analysis/) and [`examples/reference/`](examples/reference/) measure
+how diverse the prior's databases are, how hard their columns are to predict, and how one compares
+with a real database.
 
 ## Save and inspect
 
-`create_database` orders event tables by time and turns keys into row positions, the relbench form;
-`write_database` saves it and `read_database` loads it back. A database with events needs split
-timestamps, from `split_timestamps(db)`; one without saves as is. `describe()` gives a table or
-schema as plain JSON-ready data, every drawn weight and fitted cut included, and `explain()` as
-readable lines:
+- `create_database` puts the frames in relbench form. It sorts event tables by time and turns keys
+  into row positions.
+- `write_database` saves the database, and `read_database` loads it back. A database with events
+  needs split timestamps, which `split_timestamps(db)` gives. A database without events needs
+  none.
+- `describe()` gives a table or schema as plain data, ready for JSON, including every drawn weight
+  and fitted cut. `explain()` gives the same as readable text.
 
 ```python
 from plurel import create_database, read_database, split_timestamps, write_database
@@ -326,19 +345,22 @@ print(schema.explain())
 
 ## Reproducibility
 
-The same seeds and row counts give the same frames, byte for byte, on one platform and processor
-type; across them the last bits of some numbers differ.
+The same seeds and row counts give the same frames, byte for byte, on the same platform and type
+of processor. On a different platform or processor, the last digits of some numbers can differ.
 [COMPATIBILITY.md](COMPATIBILITY.md) says exactly what repeats, and [CHANGELOG.md](CHANGELOG.md)
-lists changes that move draws. A draw is one dataset, not rows streamed from a population, so
-`sample(200, seed=0).head(100)` is not `sample(100, seed=0)`; to build a larger dataset, draw parts
-under their own seeds ([`04_sampling.py`](examples/concepts/04_sampling.py)).
+lists the changes that alter draws.
+
+Each draw is one whole dataset, so `sample(200, seed=0).head(100)` is not the same as
+`sample(100, seed=0)`. To build a larger dataset, draw several parts, each with its own seed
+([`04_sampling.py`](examples/concepts/04_sampling.py)).
 
 ## Latency and memory
 
-A random database from the default prior, drawn, sampled, saved to parquet and read back, takes
-about a third of a second and a few hundred megabytes, so a corpus of thousands fits on a laptop.
-Measured on 100 tables and 100 databases with `plurel` at commit `287fef8`, on an Apple M4 and on
-GitHub's `ubuntu-latest` runner:
+Making one random database from the default prior takes about a third of a second and a few
+hundred megabytes of memory. That covers drawing it, sampling its rows, saving them to parquet and
+reading them back. So a corpus of thousands of databases fits on a laptop. The numbers below come
+from 100 tables and 100 databases, measured with `plurel` at commit `287fef8` on an Apple M4 and
+on GitHub's `ubuntu-latest` runner:
 
 | | Median | 90th percentile | Largest |
 |---|---:|---:|---:|
@@ -361,7 +383,7 @@ pixi run lint        # ruff check and format check
 pixi run typecheck   # pyright over the public API
 pixi run examples    # every README block, and each quickstart on its own
 pixi run recipes     # every script in examples/, small, each in its own process
-pixi run bench       # generation time and memory; see benchmarks/README.md
+pixi run bench       # generation time and memory, see benchmarks/README.md
 pixi run fingerprints  # rewrite test/fingerprints.json, for a change that moves draws on purpose
 ```
 
