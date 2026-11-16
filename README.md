@@ -21,6 +21,7 @@ Models pretrained on PluRel data lead public relational benchmarks (at the time 
 
 ## Latest Updates
 
+- [11/2026] 🚧 PluRel v2 is under active development toward a **v2-alpha** release; this README describes it.
 - [10/2026] 🥇 **RT-PluRel** takes the top spot on [RelArena-α](https://star-project.stanford.edu/relarena-alpha). Checkpoints are on [Hugging Face](https://huggingface.co/stanford-star/rt-plurel).
 - [07/2026] Released **v1.1.0** on [PyPI](https://pypi.org/project/plurel/) with the latest features and performance improvements.
 - [04/2026] PluRel is accepted to **ICML 2026!**
@@ -43,12 +44,15 @@ as you need.
 
 ## Installation
 
-PluRel needs Python 3.12 or newer. This README describes PluRel 2, which is not on PyPI yet; install
-it from the `v2` branch, or pin a commit to reproduce a run (`pip install plurel` gives 1.1.0, the
-[earlier API](https://github.com/stanford-star/plurel/tree/v1.1.0)):
+PluRel needs Python 3.12 or newer.
+
+> [!IMPORTANT]
+> PluRel v2 is under active development toward a v2-alpha release. It is not on PyPI yet and its
+> API may still change; install it from `main`, or pin a commit to reproduce a run
+> (`pip install plurel` gives 1.1.0, the [earlier API](https://github.com/stanford-star/plurel/tree/v1.1.0)):
 
 ```bash
-pip install "git+https://github.com/stanford-star/plurel.git@v2"
+pip install "git+https://github.com/stanford-star/plurel.git"
 ```
 
 ## Quickstart

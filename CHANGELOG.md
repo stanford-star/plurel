@@ -5,7 +5,9 @@ given beside it; a change that moves seeded draws says so and updates `test/fing
 (see [COMPATIBILITY.md](COMPATIBILITY.md)). Every PR that breaks the API or moves draws adds a line
 here.
 
-## v2, unreleased (the `v2` branch)
+## v2, unreleased
+
+PluRel v2 is under active development toward a v2-alpha release.
 
 - **Moves draws** of `SchemaPrior`: it warps its table prior once per database, and each table
   warps around that, since warping a warped `Range` now centres the new preference on a draw from
