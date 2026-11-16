@@ -70,11 +70,13 @@ UNITS = {
 
 
 def drawn(value: object, rng: np.random.Generator) -> object:
-    """The value with every drawable in it drawn, through mappings and tuples."""
+    """The value with every drawable in it drawn, through mappings and tuples; a mapping's items in
+    the order of their keys' reprs, so writing them in another order draws the same."""
     if hasattr(value, "draw"):
         return value.draw(rng)
     if isinstance(value, Mapping):
-        return {key: drawn(item, rng) for key, item in value.items()}
+        draws = {repr(key): drawn(value[key], rng) for key in sorted(value, key=repr)}
+        return {key: draws[repr(key)] for key in value}
     return tuple(drawn(item, rng) for item in value) if isinstance(value, tuple) else value
 
 
@@ -352,7 +354,8 @@ class Numeric(Declaration):
     share `zeros` of the rows record the marginal's floor, or 0, and `clip` (either side may be
     None) and `round` (a step) apply last. `how` combines the causes: their sum, largest, smallest,
     compounding product, or `rules`, a sum whose pairs are thresholds. A pair in `causes` is the
-    product of two columns. `missing_by` puts the blanks on the `high` or `low` rows of a column."""
+    product of two columns. `missing_by` puts the blanks on the `high` or `low` rows of a numeric
+    column or a `Hidden` cause."""
 
     marginal: Distribution | Scaled | ByLevel | None = None
     causes: Causes = field(default_factory=dict)
@@ -426,6 +429,12 @@ class Categorical(Declaration):
     def __post_init__(self) -> None:
         if isinstance(self.levels, str):
             raise ValueError("levels are a sequence or a mapping, not one string")
+        levels = self.levels.levels if isinstance(self.levels, Shares) else self.levels
+        if strays := [level for level in levels if not isinstance(level, str)]:
+            raise ValueError(
+                f"levels are strings, so a saved database keeps them, not {strays}: e.g."
+                f" {tuple(str(level) for level in levels)}"
+            )
         if self.scores is not None:
             if self.causes or self.how != "sum" or self.ordered:
                 raise ValueError("scores take the place of causes, how and an order")
@@ -563,6 +572,11 @@ class Derived:
         args = [frame[name].to_numpy(dtype=float) for name in self.inputs]
         with np.errstate(all="ignore"):
             computed = np.round(np.asarray(self.function(*args), dtype=float), 6)
+        if computed.shape != args[0].shape:
+            raise ValueError(
+                f"a derived column gives one value per row, shape {args[0].shape}, not"
+                f" {computed.shape}: compute it from the arrays its parameters receive"
+            )
         blank = np.isnan(args).any(0)
         if not np.isfinite(computed[~blank]).all():
             raise ValueError(f"{self.inputs} gave a non-finite value, such as a division by zero")

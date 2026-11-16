@@ -9,6 +9,24 @@ here.
 
 PluRel v2 is under active development toward a v2-alpha release.
 
+- Fixes from the review before merging into `main`:
+  - **Breaking:** a table without a time column may not hold a key into a table with one, since a
+    time cut would leave its rows pointing at dropped events; give it a `time_column`.
+  - **Breaking:** categorical levels are strings, as a saved database needs; write `("1", "2")`
+    for `(1, 2)`.
+  - **Moves draws** of `TablePrior` and `SchemaPrior`: a table has at most one column per slot
+    its nodes offer, so no column copies another; structured missingness blanks at its rate,
+    by a numeric indicator node, instead of above it. A time series whose autocorrelation is too
+    small to divide by is its noise, instead of non-finite (seed 1355 of `SchemaPrior`).
+  - **Moves draws** where a column has a range by level and blanks: blanks no longer change the
+    values left.
+  - **Moves draws** of ranged causes written out of order: a mapping's ranges draw in the order
+    of their keys, so the order they are written in no longer matters.
+  - Negating a shaped `Range` mirrors its shape; a `TablePrior` whose families that fit any
+    widths all weigh zero raises when built; a `Derived` function giving other than one value
+    per row raises a `ValueError`; `realize` handles a key with given positions into a counted
+    table; `missing_by` may name a one-dimensional `Hidden` node.
+
 - **Moves draws** of `SchemaPrior`: it warps its table prior once per database, and each table
   warps around that, since warping a warped `Range` now centres the new preference on a draw from
   the old one. Databases differ more as wholes, in their mechanism mix, missingness and kinds,

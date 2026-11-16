@@ -109,7 +109,12 @@ def calibration_rows(schema, given: Mapping[str, int] | None) -> dict[str, int]:
         if t not in schema.sized
     }
     for fk in schema.keys.values():
-        if fk.values is not None and schema.parent_keys(fk) is None and fk.values.notna().any():
+        if (
+            fk.values is not None
+            and fk.parent in rows
+            and schema.parent_keys(fk) is None
+            and fk.values.notna().any()
+        ):
             rows[fk.parent] = max(rows[fk.parent], int(fk.values.max()) + 1)
     rows |= given
     for (table, _), fk in schema.keys.items():

@@ -83,6 +83,8 @@ def random_schema(rng):
             tables[t]["z"] = Column(Node(edges, noise=Normal(std=0.1)))
         if parent in eventful:
             eventful.add(t)
+            if "stamp" not in tables[t]:
+                tables[t]["stamp"] = Column(Node(noise=DEFAULT_CALENDAR), "timestamp")
         if t not in eventful:
             how = str(rng.choice(["count", "sum", "mean", "max"]))
             summary = Summary(t, key, "y", how, fill=None if how in COMPLETE else 0.0)

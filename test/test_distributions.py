@@ -84,7 +84,7 @@ def test_mixture_follows_its_weights():
 def test_autoregressive_is_persistent():
     values = AutoRegressive(0.9, 1.0).sample(20_000, np.random.default_rng(4))
     assert np.corrcoef(values[:-1], values[1:])[0, 1] == pytest.approx(0.9, abs=0.02)
-    for rho, n in ((0.0, 50), (0.5, 7), (0.999, 3000), (1e-6, 1000), (0.9, 20_001)):
+    for rho, n in ((0.0, 50), (0.5, 7), (0.999, 3000), (1e-6, 1000), (6.4e-323, 50), (0.9, 20_001)):
         expected = np.random.default_rng(4).normal(0.0, 2.0, n)
         for index in range(1, n):
             expected[index] += rho * expected[index - 1]

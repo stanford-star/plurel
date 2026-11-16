@@ -68,7 +68,8 @@ class Range:
         return self.low + (self.high - self.low) * self.unit(rng)
 
     def __neg__(self) -> "Range":
-        return replace(self, low=-self.high, high=-self.low)
+        shape = None if self.shape is None else self.shape[::-1]
+        return replace(self, low=-self.high, high=-self.low, shape=shape)
 
     def warp(self, rng: np.random.Generator) -> "Range":
         """A preference within the range. Warping a warped range draws the new preference near

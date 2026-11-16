@@ -97,7 +97,7 @@ def test_table_prior_realizes_valid_diverse_tables():
                 assert time or not isinstance(node.noise, TimeSeries)
         for name, column in scm.columns.items():
             kinds.add(column.kind)
-            missing.add(type(column.missing))
+            missing.add(column.missing_by is not None if column.kind != "key" else None)
             if (
                 column.kind != "key"
                 and isinstance(column.marginal, Mixture)
@@ -124,7 +124,7 @@ def test_table_prior_realizes_valid_diverse_tables():
         NegativeBinomial,
         TimeSeries,
     }
-    assert missing == {float, str}
+    assert missing == {None, False, True}
     assert len(calendars) > 1
 
 
@@ -218,19 +218,44 @@ def test_table_prior_caps_concat_widths():
         scm.sample(50, seed=seed)
 
 
-def test_structured_missingness_follows_its_indicator_node():
+def test_structured_missingness_follows_its_indicator_node_at_its_rate():
     always = Range(1.0, 1.0)
     prior = TablePrior(column_missing_share=always, column_missing_structured_share=always)
-    for seed in range(5):
+    ratios = []
+    for seed in range(20):
         scm = prior.realize(seed)
-        frame, latents = scm.sample_with_latents(300, seed=seed)
+        frame, latents = scm.sample_with_latents(4000, seed=seed)
         for name, column in scm.columns.items():
             if column.kind == "key":
                 continue
-            indicator = scm.nodes[column.missing]
-            assert indicator.onehot and indicator.dim == 2 and len(indicator.parents) == 1
-            flagged = latents[column.missing][:, 1] == 1.0
-            assert (frame[name].isna().to_numpy() == flagged).all()
+            by, side = column.missing_by
+            indicator = scm.nodes[by]
+            assert side == "high" and indicator.dim == 1 and len(indicator.parents) == 1
+            blank = frame[name].isna().to_numpy()
+            assert latents[by][blank, 0].mean() > latents[by][~blank, 0].mean()
+            ratios.append(blank.mean() / column.missing)
+    assert 0.9 < np.median(ratios) < 1.1
+
+
+def test_columns_of_a_prior_table_read_distinct_slots():
+    for seed in range(100):
+        scm = TablePrior().realize(seed)
+        reads = [
+            (column.node.edges[0].parent, column.node.edges[0].slot)
+            for name, column in scm.columns.items()
+            if column.kind != "key" and name != "time"
+        ]
+        assert len(reads) == len(set(reads))
+
+
+def test_a_prior_needs_a_weighted_family_that_fits_any_widths():
+    with pytest.raises(ValueError, match="positive weight"):
+        TablePrior(edge_families=Choices(("linear", "mlp"), (1.0, 0.0)))
+
+
+def test_a_negated_shaped_range_mirrors_its_shape():
+    rng = np.random.default_rng(0)
+    assert np.mean([(-Range(0.0, 1.0, shape=(9.0, 1.0))).draw(rng) for _ in range(2000)]) < -0.85
 
 
 def test_warping_gives_each_realization_its_own_style():

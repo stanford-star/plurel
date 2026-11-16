@@ -120,7 +120,7 @@ A `Table` is a dict of columns:
 |---|---|
 | `PrimaryKey()` | Row positions, or the given `values` |
 | `Numeric(marginal, causes, noise, missing, clip, round, zeros)` | Numbers following `marginal`, any distribution such as `Normal(50, 10)`, `Uniform(18, 80)`, `LogNormal(3, 0.5)` or `Poisson(4)` |
-| `Categorical(levels, causes, noise, missing, ordered, scores)` | Levels, as a sequence of equally common levels or a dict of level to share |
+| `Categorical(levels, causes, noise, missing, ordered, scores)` | String levels, as a sequence of equally common levels or a dict of level to share |
 | `Timestamp(start, end, causes, noise, missing)` | Times in the span; without one, the causes' sum in epoch seconds |
 | `Hidden(causes, noise)` | A cause that other columns read but no column records |
 | `Derived(function)` | A number computed from recorded numbers, named by the function's parameters |
@@ -154,7 +154,8 @@ covers blanks and fills.
 ## Link tables into a database
 
 A `ForeignKey` points at another table, `"key.column"` reads a column of the row it points at, and
-`time_column` names the column that orders a table's events:
+`time_column` names the column that orders a table's events. A table holding a key into a table
+with events has events of its own, so no key points at a row a time cut drops:
 
 ```python
 from plurel import Categorical, ForeignKey, LogNormal, Numeric, PrimaryKey, Schema, Table, Timestamp, Uniform
